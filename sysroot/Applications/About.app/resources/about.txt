@@ -1,0 +1,3 @@
+About ojjyOS
+
+This system app provides version info, display details, and credits.

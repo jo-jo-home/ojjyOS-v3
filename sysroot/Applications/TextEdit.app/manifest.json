@@ -1,0 +1,9 @@
+{
+    "name": "TextEdit",
+    "bundle_id": "com.ojjyos.textedit",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "productivity",
+    "description": "Basic text editor"
+}

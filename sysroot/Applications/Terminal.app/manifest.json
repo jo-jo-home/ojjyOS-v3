@@ -1,0 +1,9 @@
+{
+    "name": "Terminal",
+    "bundle_id": "com.ojjyos.terminal",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Command line interface"
+}

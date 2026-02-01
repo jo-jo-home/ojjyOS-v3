@@ -1,0 +1,9 @@
+{
+    "name": "Notes",
+    "bundle_id": "com.ojjyos.notes",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "productivity",
+    "description": "Quick notes"
+}

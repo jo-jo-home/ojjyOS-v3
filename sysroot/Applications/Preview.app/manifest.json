@@ -1,0 +1,9 @@
+{
+    "name": "Preview",
+    "bundle_id": "com.ojjyos.preview",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Image viewer"
+}

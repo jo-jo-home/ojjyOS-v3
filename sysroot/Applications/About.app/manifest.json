@@ -1,0 +1,9 @@
+{
+    "name": "About ojjyOS",
+    "bundle_id": "com.ojjyos.about",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "system",
+    "description": "System information and credits"
+}

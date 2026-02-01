@@ -1,0 +1,9 @@
+{
+    "name": "Finder",
+    "bundle_id": "com.ojjyos.finder",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "system",
+    "description": "File manager"
+}

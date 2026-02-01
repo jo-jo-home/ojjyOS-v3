@@ -1,0 +1,9 @@
+{
+    "name": "Calendar",
+    "bundle_id": "com.ojjyos.calendar",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "productivity",
+    "description": "Calendar"
+}

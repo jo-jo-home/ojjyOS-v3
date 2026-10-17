@@ -4,6 +4,8 @@ build/
 *.vdi
 *.efi
 *.o
+*.obj
+*.lib
 *.d
 kernel.bin
 

@@ -410,7 +410,7 @@ static Color wallpaper_sample_procedural(int x, int y)
         base = lerp_color(theme->horizon, bottom, (uint8_t)(((t - 190) * 255) / 65));
     }
 
-    int wave_y = (int)(comp_height * 0.34) + tri_wave(x, 480, 50);
+    int wave_y = (((int)comp_height * 34) / 100) + tri_wave(x, 480, 50);
     int crest = wave_y - 8;
 
     if (y > crest && y < crest + 22) {

@@ -11,6 +11,17 @@
 #include "string.h"
 
 /*
+ * Write a null-terminated string
+ */
+void serial_puts(const char *str)
+{
+    if (!str) return;
+    while (*str) {
+        serial_putc(*str++);
+    }
+}
+
+/*
  * Write a hex number (with 0x prefix)
  */
 void serial_puthex(uint64_t value)

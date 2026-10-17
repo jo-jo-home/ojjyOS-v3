@@ -125,8 +125,9 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     /* Clear screen and show banner */
     ST->ConOut->ClearScreen(ST->ConOut);
-    Print(L"ojjyOS v3 Bootloader\n");
-    Print(L"====================\n\n");
+    Print(L"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    Print(L" ~ ojjyOS v3 UEFI Bootloader ~\n");
+    Print(L"~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
 
     /* Allocate boot info in EfiLoaderData RAM (preserved by kernel PMM).
      * On aarch64 QEMU virt, 0x500 is pflash0 ROM, so dynamic allocation is

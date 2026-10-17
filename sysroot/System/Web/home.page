@@ -1,5 +1,19 @@
 # Welcome to ojjyOS Web
 
+      *             .           *      .
+          /\                   *
+         /  \       /\        .      *
+        /    \     /  \    *
+   *   /      \   /    \       .
+      /        \ /      \        *
+     /   /\             \
+    /   /  \   /\        \    .
+   /___/    \ /  \___     \       *
+
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+   ~   T a h o e  -  L i q u i d   ~
+  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 This is the offline browser for ojjyOS. Pages are stored on the
 system disk under /System/Web - no network connection needed.
 

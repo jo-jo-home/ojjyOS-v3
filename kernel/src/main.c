@@ -374,6 +374,41 @@ static void save_persistent_state(void)
 #define BOOT_ART     COLOR_SKY_BLUE
 #define BOOT_BRIGHT  COLOR_TEXT_LIGHT
 
+/*
+ * Tahoe boot scene: stars, twin peaks and the lake at night.
+ * Pure ASCII (the kernel font covers ASCII 32..126 only).
+ */
+static const char *boot_scene[] = {
+    "      *             .           *      .",
+    "          /\\                   *       ",
+    "         /  \\       /\\        .      *",
+    "        /    \\     /  \\    *        ",
+    "   *   /      \\   /    \\       .      ",
+    "      /        \\ /      \\        *   ",
+    "     /   /\\             \\           ",
+    "    /   /  \\   /\\        \\    .      ",
+    "   /___/    \\ /  \\___     \\       *",
+    "  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+    "   ~   T a h o e  -  L i q u i d   ~    ",
+    "  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+};
+
+/* Per-line scene colors: stars/sky, peaks, then the lake waves */
+static const Color boot_scene_colors[] = {
+    RGB(240, 224, 202),    /* stars: horizon cream         */
+    COLOR_DEEP_BLUE,
+    COLOR_DEEP_BLUE,
+    COLOR_ROYAL_BLUE,
+    COLOR_ROYAL_BLUE,
+    COLOR_ROYAL_BLUE,
+    COLOR_ROYAL_BLUE,
+    COLOR_DEEP_BLUE,
+    COLOR_DEEP_BLUE,
+    COLOR_SKY_BLUE,        /* waves                        */
+    COLOR_OCEAN,           /* Tahoe - Liquid               */
+    COLOR_SKY_BLUE,
+};
+
 static const char *boot_art[] = {
     " ___     _     _     _    ___    ____ ",
     "/ _ \\   (_)   (_)   | |  / _ \\  / ___|",
@@ -381,6 +416,57 @@ static const char *boot_art[] = {
     "| |_| _ | | _ | | | (_| | |_| |  ___)|",
     "\\___/ (_)_/ (_)_/  \\__|  \\___/  |____/",
 };
+
+/* Logo gradient: sky -> ocean -> deep, top to bottom */
+static const Color boot_art_colors[] = {
+    COLOR_SKY_BLUE,
+    COLOR_OCEAN,
+    COLOR_OCEAN,
+    COLOR_ROYAL_BLUE,
+    COLOR_DEEP_BLUE,
+};
+
+/* Small wave banner reused on the login/About/Terminal surfaces */
+static const char *wave_art[] = {
+    "    ~  ~  ojjyOS  ~  ~    ",
+    "  ~~~  ~  ~  ~  ~  ~  ~~~  ",
+};
+
+/* Moon + stars for the shutdown screen */
+static const char *goodbye_art[] = {
+    "     *    .        *     .   ",
+    "  .         ___          * ",
+    "       *   (   )      .      ",
+    "            \\__/    *        ",
+    "    .                   .     ",
+    "        *       .       *     ",
+};
+
+/*
+ * Draw a block of ASCII art centered as a UNIT: every line is left-aligned
+ * to a common x derived from the widest line. (Centering each line by its
+ * own length shuffled the letters - the old splash bug.)
+ */
+static void draw_art_lines(const char *const *lines, const Color *colors,
+                           int n, int y, Color bg)
+{
+    int max_w = 0;
+    for (int i = 0; i < n; i++) {
+        int lw = (int)strlen(lines[i]) * FONT_WIDTH;
+        if (lw > max_w) max_w = lw;
+    }
+
+    int x = ((int)fb_get_width() - max_w) / 2;
+    if (x < 0) x = 0;
+
+    for (int i = 0; i < n; i++) {
+        if (colors) {
+            fb_draw_string(x, y + i * 16, lines[i], colors[i], bg);
+        } else {
+            fb_draw_string(x, y + i * 16, lines[i], BOOT_ART, bg);
+        }
+    }
+}
 
 static void splash_render(const char *status, int pct)
 {
@@ -390,16 +476,14 @@ static void splash_render(const char *status, int pct)
 
     fb_clear(bg);
 
-    /* ASCII art logo, centered */
-    int art_lines = (int)(sizeof(boot_art) / sizeof(boot_art[0]));
-    int art_h = art_lines * 16;
-    int base_y = (int)height / 2 - art_h - 60;
+    /* Tahoe scene on top */
+    int scene_lines = (int)(sizeof(boot_scene) / sizeof(boot_scene[0]));
+    draw_art_lines(boot_scene, boot_scene_colors, scene_lines, 36, bg);
 
-    for (int i = 0; i < art_lines; i++) {
-        int lw = (int)strlen(boot_art[i]) * FONT_WIDTH;
-        int x = ((int)width - lw) / 2;
-        fb_draw_string(x, base_y + i * 16, boot_art[i], BOOT_ART, bg);
-    }
+    /* ASCII art logo, centered as a unit */
+    int art_lines = (int)(sizeof(boot_art) / sizeof(boot_art[0]));
+    int art_y = 36 + scene_lines * 16 + 18;
+    draw_art_lines(boot_art, boot_art_colors, art_lines, art_y, bg);
 
     /* Version + credit */
     char version_str[64];
@@ -407,17 +491,17 @@ static void splash_render(const char *status, int pct)
     str_append(version_str, sizeof(version_str), OJJYOS_VERSION);
     str_append(version_str, sizeof(version_str), " - the \"Make It Work\" release");
     int vx = ((int)width - (int)strlen(version_str) * FONT_WIDTH) / 2;
-    fb_draw_string(vx, base_y + art_h + 16, version_str, COLOR_OCEAN, bg);
+    fb_draw_string(vx, art_y + art_lines * 16 + 14, version_str, COLOR_OCEAN, bg);
 
     const char *credit = "Created by Jonas Lee";
     int cx = ((int)width - (int)strlen(credit) * FONT_WIDTH) / 2;
-    fb_draw_string(cx, base_y + art_h + 36, credit, BOOT_BRIGHT, bg);
+    fb_draw_string(cx, art_y + art_lines * 16 + 34, credit, BOOT_BRIGHT, bg);
 
     /* Progress bar */
     int bar_w = 420;
     if ((int)width - 60 < bar_w) bar_w = (int)width - 60;
     int bar_x = ((int)width - bar_w) / 2;
-    int bar_y = (int)height / 2 + 60;
+    int bar_y = art_y + art_lines * 16 + 78;
     int bar_h = 14;
 
     fb_draw_rect(bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2,
@@ -455,12 +539,28 @@ static void show_power_screen(const char *line1, const char *line2)
 
     fb_clear(BOOT_BG);
 
+    /* Moon and stars above the message */
+    int gb_lines = (int)(sizeof(goodbye_art) / sizeof(goodbye_art[0]));
+    Color gb_colors[6];
+    for (int i = 0; i < gb_lines; i++) {
+        gb_colors[i] = (i % 2 == 0) ? fb_blend(BOOT_BG, COLOR_TEXT_LIGHT, 130)
+                                   : COLOR_SKY_BLUE;
+    }
+    draw_art_lines(goodbye_art, gb_colors, gb_lines,
+                   (int)height / 2 - 140, BOOT_BG);
+
     int x1 = ((int)width - (int)strlen(line1) * 8) / 2;
     fb_draw_string(x1, (int)height / 2 - 24, line1, BOOT_BRIGHT, BOOT_BG);
     if (line2) {
         int x2 = ((int)width - (int)strlen(line2) * 8) / 2;
         fb_draw_string(x2, (int)height / 2 + 8, line2, BOOT_BRIGHT, BOOT_BG);
     }
+
+    /* Small waves under the message */
+    int wv_lines = (int)(sizeof(wave_art) / sizeof(wave_art[0]));
+    Color wv_colors[2] = { COLOR_OCEAN, COLOR_ROYAL_BLUE };
+    draw_art_lines(wave_art, wv_colors, wv_lines,
+                   (int)height / 2 + 44, BOOT_BG);
 
     const char *credit = "ojjyOS - Created by Jonas Lee";
     int x3 = ((int)width - (int)strlen(credit) * 8) / 2;
@@ -714,6 +814,18 @@ void kernel_main(BootInfo *boot_info)
     /* Initialize serial first for debugging */
     serial_init(COM1_PORT);
     serial_printf("\n\n");
+    serial_puts("      *             .           *      .\n");
+    serial_puts("          /\\                   *       \n");
+    serial_puts("         /  \\       /\\        .      *\n");
+    serial_puts("        /    \\     /  \\    *        \n");
+    serial_puts("   *   /      \\   /    \\       .      \n");
+    serial_puts("      /        \\ /      \\        *   \n");
+    serial_puts("     /   /\\             \\           \n");
+    serial_puts("    /   /  \\   /\\        \\    .      \n");
+    serial_puts("   /___/    \\ /  \\___     \\       *\n");
+    serial_puts("  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    serial_puts("   ~   T a h o e  -  L i q u i d   ~    \n");
+    serial_puts("  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
     serial_puts(" ___     _     _     _    ___    ____ \n");
     serial_puts("/ _ \\   (_)   (_)   | |  / _ \\  / ___|\n");
     serial_puts("| | |   | |   | |  / _ \\ | | | | \\___ \\\n");
@@ -723,7 +835,9 @@ void kernel_main(BootInfo *boot_info)
     serial_printf("  ojjyOS v%s - the \"Make It Work\" release\n", OJJYOS_VERSION);
     serial_printf("  Created by %s\n", OJJYOS_AUTHOR);
     serial_printf("  A custom kernel - not based on Linux, BSD, Windows or macOS\n");
-    serial_printf("========================================\n\n");
+    serial_printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+    serial_printf(" ~  ojjyOS  -  Tahoe Liquid Glass  ~\n");
+    serial_printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
 
     serial_printf("[BOOT] Framebuffer: %dx%d @ 0x%p\n",
         boot_info->fb_width, boot_info->fb_height, boot_info->fb_addr);
@@ -829,11 +943,16 @@ void kernel_main(BootInfo *boot_info)
     /* Boot complete: show the welcome banner */
     console_clear();
     console_set_colors(COLOR_TEXT_LIGHT, BOOT_BG);
+    for (int i = 0; i < (int)(sizeof(boot_scene) / sizeof(boot_scene[0])); i++) {
+        console_printf("%s\n", boot_scene[i]);
+    }
+    console_printf("\n");
+    console_set_colors(COLOR_SKY_BLUE, BOOT_BG);
     for (int i = 0; i < (int)(sizeof(boot_art) / sizeof(boot_art[0])); i++) {
         console_printf("%s\n", boot_art[i]);
     }
     console_printf("\n");
-    console_set_colors(COLOR_SKY_BLUE, BOOT_BG);
+    console_set_colors(COLOR_OCEAN, BOOT_BG);
     console_printf("  Welcome to ojjyOS v%s\n", OJJYOS_VERSION);
     console_printf("  Created by %s\n\n", OJJYOS_AUTHOR);
     console_set_colors(COLOR_TEXT_LIGHT, BOOT_BG);
@@ -855,7 +974,12 @@ void kernel_main(BootInfo *boot_info)
     console_printf("  [ OK ] Process table: %d tasks active\n", proc_count());
     console_printf("  [ OK ] Keyboard and mouse ready\n");
     console_printf("  [ OK ] Interrupts enabled\n\n");
-    console_printf("  Tip: type 'ui' to start the desktop, 'help' for commands\n\n");
+    console_set_colors(COLOR_OCEAN, BOOT_BG);
+    for (int i = 0; i < (int)(sizeof(wave_art) / sizeof(wave_art[0])); i++) {
+        console_printf("%s\n", wave_art[i]);
+    }
+    console_set_colors(COLOR_TEXT_LIGHT, BOOT_BG);
+    console_printf("\n  Tip: type 'ui' to start the desktop, 'help' for commands\n\n");
     console_set_colors(COLOR_TEXT, COLOR_CREAM);
 
     /* Show available apps */

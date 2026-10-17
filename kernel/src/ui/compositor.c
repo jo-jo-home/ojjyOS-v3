@@ -1501,6 +1501,18 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 110);
 
+    /* Wave banner */
+    {
+        static const char *about_waves[] = {
+            "    ~  ~  ojjyOS  ~  ~    ",
+            "  ~~~  ~  ~  ~  ~  ~  ~~~  ",
+        };
+        int max_w = (int)strlen(about_waves[1]) * FONT_WIDTH;
+        int wx = content_x + (content_w - max_w) / 2;
+        fb_draw_string(wx, content_y + 10, about_waves[0], COLOR_SKY_BLUE, theme->dock_tint);
+        fb_draw_string(wx, content_y + 26, about_waves[1], theme->accent_soft, theme->dock_tint);
+    }
+
     int cx = content_x + 24;
     fb_draw_string(cx, content_y + 16, "ojjyOS", theme->text, theme->dock_tint);
     fb_draw_string(cx, content_y + 36, "Version 3.1.0", theme->text_muted, theme->dock_tint);
@@ -2126,6 +2138,22 @@ static void draw_login_screen(void)
     str_append(clock_str, sizeof(clock_str), num);
     fb_draw_string(((int)comp_width - (int)strlen(clock_str) * FONT_WIDTH) / 2, 42,
                    clock_str, COLOR_WHITE, theme->midnight);
+
+    /* ojjyOS wave banner under the clock */
+    {
+        static const char *login_waves[] = {
+            "    ~  ~  ojjyOS  ~  ~    ",
+            "  ~~~  ~  ~  ~  ~  ~  ~~~  ",
+        };
+        int max_w = 0;
+        for (int i = 0; i < 2; i++) {
+            int lw = (int)strlen(login_waves[i]) * FONT_WIDTH;
+            if (lw > max_w) max_w = lw;
+        }
+        int wx = ((int)comp_width - max_w) / 2;
+        fb_draw_string(wx, 66, login_waves[0], COLOR_SKY_BLUE, theme->midnight);
+        fb_draw_string(wx, 82, login_waves[1], COLOR_OCEAN, theme->midnight);
+    }
 
     const char *brand = "ojjyOS Tahoe  •  Created by Jonas Lee";
     fb_draw_string(((int)comp_width - (int)strlen(brand) * FONT_WIDTH) / 2,
@@ -4823,6 +4851,7 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         terminal_append_line(&state->terminal, "|     Welcome to the ojjyOS Shell      |");
         terminal_append_line(&state->terminal, "|        Created by Jonas Lee          |");
         terminal_append_line(&state->terminal, "+--------------------------------------+");
+        terminal_append_line(&state->terminal, "  ~  ~  ~  Tahoe  -  Liquid  ~  ~  ~");
         terminal_append_line(&state->terminal, "Type 'help' for commands.");
         strncpy(state->terminal.cwd, users_current_home(), sizeof(state->terminal.cwd) - 1);
         state->terminal.cwd[sizeof(state->terminal.cwd) - 1] = '\0';

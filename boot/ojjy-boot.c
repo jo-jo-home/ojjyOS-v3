@@ -39,7 +39,13 @@ typedef struct {
 } __attribute__((packed)) BootInfo;
 
 /* Kernel entry point signature */
+#ifdef __x86_64__
+/* The standalone UEFI compiler targets the Microsoft ABI, but the ELF
+ * kernel entry uses SysV (BootInfo in RDI, not RCX). */
+typedef void (__attribute__((sysv_abi)) *KernelEntry)(BootInfo *info);
+#else
 typedef void (*KernelEntry)(BootInfo *info);
+#endif
 
 /* Fixed addresses - boot info at 0x500 (below 1MB, reserved by kernel PMM) */
 #define BOOT_INFO_ADDR      0x500
@@ -461,6 +467,20 @@ LoadKernel(EFI_HANDLE ImageHandle, UINT64 *entry_point)
         if (EFI_ERROR(status)) {
             Print(L"[FAIL] Could not allocate kernel segment at 0x%lx (%d pages): %r\n",
                   (UINT64)seg_start, (UINT32)pages, status);
+            /* Fixed-address ELF loads must not overwrite firmware-owned
+             * ranges. Show the actual conflicting map entries for diagnosis. */
+            BootInfo map_info;
+            UINTN map_key;
+            if (!EFI_ERROR(GetMemoryMap(&map_info, &map_key))) {
+                for (UINT64 off = 0; off < map_info.mmap_size; off += map_info.mmap_desc_size) {
+                    EFI_MEMORY_DESCRIPTOR *desc = (EFI_MEMORY_DESCRIPTOR *)(UINTN)(map_info.mmap_addr + off);
+                    UINT64 end = desc->PhysicalStart + desc->NumberOfPages * 4096;
+                    if (desc->PhysicalStart < seg_end && end > seg_start) {
+                        Print(L"  [MAP] 0x%lx..0x%lx type %d\n", desc->PhysicalStart, end, desc->Type);
+                    }
+                }
+                BS->FreePool((void *)(UINTN)map_info.mmap_addr);
+            }
             kernel_file->Close(kernel_file);
             root->Close(root);
             return status;

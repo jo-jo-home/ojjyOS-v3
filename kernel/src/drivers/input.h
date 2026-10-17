@@ -25,7 +25,7 @@ typedef enum {
     /* Keyboard events */
     INPUT_EVENT_KEY_PRESS,          /* Key pressed */
     INPUT_EVENT_KEY_RELEASE,        /* Key released */
-    INPUT_EVENT_KEY_REPEAT,         /* Key auto-repeat (future) */
+    INPUT_EVENT_KEY_REPEAT,         /* Delayed, rate-limited editing repeat */
 
     /* Mouse events */
     INPUT_EVENT_MOUSE_MOVE,         /* Mouse moved */

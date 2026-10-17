@@ -24,6 +24,7 @@ COMMON_CFLAGS = -ffreestanding \
                 -fno-pic \
                 -Wall \
                 -Wextra \
+                -Werror=return-type \
                 -Wno-unused-parameter \
                 -O2 \
                 -Isrc
@@ -91,7 +92,8 @@ ARCH_C_SOURCES = src/gdt.c \
                  src/drivers/ata.c \
                  src/drivers/rtc.c \
                  src/drivers/block_cache.c \
-                 src/drivers/acpi.c \
+                  src/drivers/acpi.c \
+                  src/drivers/acpi_aml.c \
                  src/drivers/blockdev_x86.c
 
 ASM_SOURCES = src/entry.asm
@@ -107,7 +109,7 @@ ALL_CLEAN_OBJECTS = $(COMMON_C_SOURCES:.c=.o) \
                     src/gdt.o src/idt.o src/paging.o src/timer.o src/serial.o \
                     src/drivers/ps2_keyboard.o src/drivers/ps2_mouse.o \
                     src/drivers/ata.o src/drivers/rtc.o src/drivers/block_cache.o \
-                    src/drivers/acpi.o src/drivers/blockdev_x86.o src/entry.o \
+                    src/drivers/acpi.o src/drivers/acpi_aml.o src/drivers/blockdev_x86.o src/entry.o \
                     src/arch/aarch64/arch64.o src/arch/aarch64/gicv2.o \
                     src/arch/aarch64/timer_a64.o src/arch/aarch64/pl011.o \
                     src/arch/aarch64/pl031.o src/arch/aarch64/virtio.o \

@@ -28,6 +28,55 @@ static uint8_t mouse_buttons = 0;
 /* Current keyboard state */
 static uint8_t current_modifiers = 0;
 static uint8_t key_states[KEY_MAX / 8 + 1];  /* Bitmap for key states */
+static uint64_t key_pressed_at[KEY_MAX];
+static uint64_t key_repeated_at[KEY_MAX];
+
+/* The current kernel is single-CPU. Preserve IRQ state when main-loop
+ * consumption shares the queue with PS/2 IRQ producers. */
+static uint64_t input_lock(void)
+{
+#ifdef OJJY_HOST_TEST
+    return 0;
+#elif defined(__x86_64__)
+    uint64_t flags;
+    __asm__ volatile("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
+    return flags;
+#else
+    uint64_t flags;
+    __asm__ volatile("mrs %0, daif; msr daifset, #2" : "=r"(flags) : : "memory");
+    return flags;
+#endif
+}
+
+static void input_unlock(uint64_t flags)
+{
+#ifdef OJJY_HOST_TEST
+    (void)flags;
+#elif defined(__x86_64__)
+    if (flags & (1ULL << 9)) __asm__ volatile("sti" ::: "memory");
+#else
+    __asm__ volatile("msr daif, %0" : : "r"(flags) : "memory");
+#endif
+}
+
+static void update_key_modifiers(void)
+{
+    uint8_t mods = current_modifiers & (INPUT_MOD_CAPSLOCK | INPUT_MOD_NUMLOCK);
+    if (input_is_key_down(KEY_LSHIFT) || input_is_key_down(KEY_RSHIFT)) mods |= INPUT_MOD_SHIFT;
+    if (input_is_key_down(KEY_LCTRL) || input_is_key_down(KEY_RCTRL)) mods |= INPUT_MOD_CTRL;
+    if (input_is_key_down(KEY_LALT) || input_is_key_down(KEY_RALT)) mods |= INPUT_MOD_ALT;
+    if (input_is_key_down(KEY_LSUPER) || input_is_key_down(KEY_RSUPER)) mods |= INPUT_MOD_SUPER;
+    current_modifiers = mods;
+}
+
+static bool repeatable_key(KeyCode keycode, char ascii)
+{
+    if (current_modifiers & (INPUT_MOD_CTRL | INPUT_MOD_ALT | INPUT_MOD_SUPER)) return false;
+    return (ascii >= 32 && ascii <= 126) || keycode == KEY_BACKSPACE ||
+        keycode == KEY_DELETE || keycode == KEY_LEFT || keycode == KEY_RIGHT ||
+        keycode == KEY_UP || keycode == KEY_DOWN || keycode == KEY_HOME ||
+        keycode == KEY_END || keycode == KEY_PAGEUP || keycode == KEY_PAGEDOWN;
+}
 
 /* Statistics */
 static uint64_t total_events = 0;
@@ -49,6 +98,8 @@ void input_init(void)
     current_modifiers = 0;
 
     memset(key_states, 0, sizeof(key_states));
+    memset(key_pressed_at, 0, sizeof(key_pressed_at));
+    memset(key_repeated_at, 0, sizeof(key_repeated_at));
     memset(event_queue, 0, sizeof(event_queue));
 
     total_events = 0;
@@ -63,14 +114,55 @@ void input_init(void)
 void input_post_event(const InputEvent *event)
 {
     if (!event) return;
+    uint64_t flags = input_lock();
+
+    /* Coalesce adjacent pointer moves, preserving their position in the
+     * stream relative to clicks and keys. Never print from the overflow path. */
+    if (event->type == INPUT_EVENT_MOUSE_MOVE && queue_head != queue_tail) {
+        InputEvent *last = &event_queue[(queue_head - 1) & INPUT_QUEUE_MASK];
+        if (last->type == INPUT_EVENT_MOUSE_MOVE) {
+            int64_t dx = (int64_t)last->motion.dx + event->motion.dx;
+            int64_t dy = (int64_t)last->motion.dy + event->motion.dy;
+            if (dx >= -2147483648LL && dx <= 2147483647LL &&
+                dy >= -2147483648LL && dy <= 2147483647LL) {
+                last->motion = event->motion;
+                last->motion.dx = (int32_t)dx;
+                last->motion.dy = (int32_t)dy;
+                last->timestamp = timer_get_ticks();
+                total_events++;
+                input_unlock(flags);
+                return;
+            }
+        }
+    }
+
+    /* Keep room for key/button transitions when motion or repeats flood in. */
+    uint32_t free_slots = (queue_tail - queue_head - 1) & INPUT_QUEUE_MASK;
+    if (free_slots <= 16 && (event->type == INPUT_EVENT_KEY_REPEAT ||
+        event->type == INPUT_EVENT_MOUSE_MOVE || event->type == INPUT_EVENT_MOUSE_SCROLL)) {
+        dropped_events++;
+        input_unlock(flags);
+        return;
+    }
 
     /* Check for queue overflow */
     uint32_t next_head = (queue_head + 1) & INPUT_QUEUE_MASK;
     if (next_head == queue_tail) {
-        /* Queue full - drop event */
+        /* Prefer losing an old non-release over a new key/button release.
+         * Shift the bounded ring while IRQs are masked, keeping FIFO order. */
         dropped_events++;
-        serial_printf("[INPUT] WARNING: Queue overflow, dropped event\n");
-        return;
+        uint32_t victim = queue_tail;
+        for (uint32_t pos = queue_tail; pos != queue_head; pos = (pos + 1) & INPUT_QUEUE_MASK) {
+            InputEventType type = event_queue[pos].type;
+            if (type != INPUT_EVENT_KEY_RELEASE && type != INPUT_EVENT_MOUSE_BUTTON_UP) {
+                victim = pos;
+                break;
+            }
+        }
+        for (uint32_t pos = victim; pos != queue_tail; pos = (pos - 1) & INPUT_QUEUE_MASK) {
+            event_queue[pos] = event_queue[(pos - 1) & INPUT_QUEUE_MASK];
+        }
+        queue_tail = (queue_tail + 1) & INPUT_QUEUE_MASK;
     }
 
     /* Copy event to queue and add timestamp */
@@ -78,6 +170,7 @@ void input_post_event(const InputEvent *event)
     event_queue[queue_head].timestamp = timer_get_ticks();
     queue_head = next_head;
     total_events++;
+    input_unlock(flags);
 }
 
 /*
@@ -86,6 +179,26 @@ void input_post_event(const InputEvent *event)
 void input_post_key_event(InputEventType type, uint8_t scancode,
                           KeyCode keycode, char ascii)
 {
+    if (keycode <= KEY_NONE || keycode >= KEY_MAX) return;
+    uint64_t flags = input_lock();
+    uint64_t now = timer_get_ticks();
+    bool was_down = input_is_key_down(keycode);
+    if (type == INPUT_EVENT_KEY_PRESS && was_down) type = INPUT_EVENT_KEY_REPEAT;
+    if (type == INPUT_EVENT_KEY_REPEAT) {
+        if (!was_down || !repeatable_key(keycode, ascii) ||
+            now - key_pressed_at[keycode] < 450 || now - key_repeated_at[keycode] < 35) {
+            input_unlock(flags);
+            return;
+        }
+        key_repeated_at[keycode] = now;
+    } else if (type == INPUT_EVENT_KEY_PRESS) {
+        key_pressed_at[keycode] = key_repeated_at[keycode] = now;
+        if (keycode == KEY_CAPSLOCK) current_modifiers ^= INPUT_MOD_CAPSLOCK;
+        if (keycode == KEY_NUMLOCK) current_modifiers ^= INPUT_MOD_NUMLOCK;
+    } else if (type != INPUT_EVENT_KEY_RELEASE) {
+        input_unlock(flags);
+        return;
+    }
     /* Update key state tracking */
     if (keycode < KEY_MAX) {
         if (type == INPUT_EVENT_KEY_PRESS) {
@@ -94,6 +207,7 @@ void input_post_key_event(InputEventType type, uint8_t scancode,
             key_states[keycode / 8] &= ~(1 << (keycode % 8));
         }
     }
+    update_key_modifiers();
 
     InputEvent event = {0};
     event.type = type;
@@ -103,6 +217,7 @@ void input_post_key_event(InputEventType type, uint8_t scancode,
     event.key.modifiers = current_modifiers;
 
     input_post_event(&event);
+    input_unlock(flags);
 }
 
 /*
@@ -180,7 +295,9 @@ bool input_has_event(void)
  */
 bool input_poll_event(InputEvent *event)
 {
+    uint64_t flags = input_lock();
     if (!input_has_event()) {
+        input_unlock(flags);
         return false;
     }
 
@@ -188,6 +305,7 @@ bool input_poll_event(InputEvent *event)
         *event = event_queue[queue_tail];
     }
     queue_tail = (queue_tail + 1) & INPUT_QUEUE_MASK;
+    input_unlock(flags);
     return true;
 }
 
@@ -209,13 +327,16 @@ bool input_wait_event(InputEvent *event)
  */
 bool input_peek_event(InputEvent *event)
 {
+    uint64_t flags = input_lock();
     if (!input_has_event()) {
+        input_unlock(flags);
         return false;
     }
 
     if (event) {
         *event = event_queue[queue_tail];
     }
+    input_unlock(flags);
     return true;
 }
 

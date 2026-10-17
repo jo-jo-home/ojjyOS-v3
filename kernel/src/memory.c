@@ -190,8 +190,8 @@ void pmm_init(BootInfo *info)
         (int)(total_memory / (1024 * 1024)));
     serial_printf("[PMM] Free memory:  %d MB\n",
         (int)(free_memory / (1024 * 1024)));
-    serial_printf("[PMM] Kernel reserved: 1MB - 0x%x\n",
-        (unsigned int)(uintptr_t)_kernel_end);
+    serial_printf("[PMM] Kernel reserved: %p - %p\n",
+        (uint64_t)(uintptr_t)_kernel_start, (uint64_t)(uintptr_t)_kernel_end);
     serial_printf("[PMM] Page bitmap covers %d pages\n", (int)bitmap_pages);
 }
 

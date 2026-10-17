@@ -16,3 +16,5 @@ kernel/src/fs/system_fs.h
 .DS_Store
 *.swp
 *~
+__pycache__/
+*.pyc

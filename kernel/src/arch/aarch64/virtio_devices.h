@@ -14,8 +14,9 @@
 
 /* Device attach hooks called by the transport during bus scan.
  * Return 0 on success. */
-int virtio_blk_attach(uint32_t mmio_base);
+int virtio_blk_attach(uint32_t mmio_base, bool supports_flush);
 int virtio_input_attach(uint32_t mmio_base);
+void virtio_input_handle_key(uint16_t code, int32_t value);
 
 /* Finalize device bring-up (set DRIVER_OK). */
 void virtio_dev_ready(uint32_t base);

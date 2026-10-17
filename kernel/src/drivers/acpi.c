@@ -9,6 +9,7 @@
  */
 
 #include "acpi.h"
+#include "acpi_aml.h"
 #include "arch_power.h"
 #include "serial.h"
 #include "string.h"
@@ -104,41 +105,6 @@ static const void *find_fadt(void)
     return NULL;
 }
 
-/*
- * Scan the DSDT AML for the S5 package (_S5_) to learn the SLP_TYP
- * value required for the PM1a control register.
- * Returns true and fills slp_typ on success.
- */
-static bool find_s5_slp_typ(const uint8_t *dsdt, uint32_t dsdt_len,
-                            uint8_t *slp_typ)
-{
-    if (!dsdt || dsdt_len < 8) return false;
-
-    /* NameOp (0x08) + "_S5_" */
-    const uint8_t pattern[5] = { 0x08, '_', 'S', '5', '_' };
-
-    for (uint32_t i = 0; i + 16 < dsdt_len; i++) {
-        if (memcmp(dsdt + i, pattern, 5) != 0) continue;
-
-        /* Expect PackageOp (0x12) shortly after */
-        uint32_t j = i + 5;
-        while (j < dsdt_len && dsdt[j] != 0x12) {
-            j++;
-        }
-        if (j >= dsdt_len) continue;
-
-        /* Skip: PackageOp(1) + pkg length(1, assume < 63) + count(1)
-         * then expect BytePrefix (0x0A) + SLP_TYP */
-        j += 3;
-        if (j < dsdt_len && dsdt[j] == 0x0A && j + 1 < dsdt_len) {
-            *slp_typ = dsdt[j + 1];
-            return true;
-        }
-    }
-
-    return false;
-}
-
 int acpi_power_off(void)
 {
     const uint8_t *fadt = (const uint8_t *)find_fadt();
@@ -146,6 +112,8 @@ int acpi_power_off(void)
         serial_printf("[ACPI] FADT not found - cannot power off\n");
         return -1;
     }
+    uint32_t fadt_len = read32(fadt + 4);
+    if (fadt_len < 72 || fadt_len > 4096 || !checksum_ok(fadt, fadt_len)) return -1;
 
     /* FADT layout (offsets from the ACPI spec):
      *   0x24 firmware_ctrl, 0x28 DSDT, 0x30 SMI_CMD,
@@ -154,8 +122,9 @@ int acpi_power_off(void)
     uint32_t smi_cmd = read32(fadt + 0x30);
     uint8_t acpi_enable = fadt[0x34];
     uint32_t pm1a_cnt = read32(fadt + 0x40);
+    uint32_t pm1b_cnt = read32(fadt + 0x44);
 
-    if (!pm1a_cnt) {
+    if (!pm1a_cnt || pm1a_cnt > 0xFFFF || pm1b_cnt > 0xFFFF) {
         serial_printf("[ACPI] No PM1a control block\n");
         return -1;
     }
@@ -166,10 +135,12 @@ int acpi_power_off(void)
     }
 
     /* Find the S5 sleep type in the DSDT */
-    uint8_t slp_typ = 0;
+    uint8_t slp_typ[2] = {0, 0};
     if (dsdt_addr) {
-        uint32_t dsdt_len = read32((const void *)(uint64_t)dsdt_addr + 4);
-        if (!find_s5_slp_typ((const uint8_t *)(uint64_t)dsdt_addr, dsdt_len, &slp_typ)) {
+        const uint8_t *dsdt = (const uint8_t *)(uint64_t)dsdt_addr;
+        uint32_t dsdt_len = read32(dsdt + 4);
+        if (dsdt_len < 36 || dsdt_len > 16 * 1024 * 1024 || memcmp(dsdt, "DSDT", 4) != 0 ||
+            !checksum_ok(dsdt, dsdt_len) || !acpi_aml_s5(dsdt + 36, dsdt_len - 36, slp_typ)) {
             serial_printf("[ACPI] S5 object not found - cannot power off\n");
             return -1;
         }
@@ -178,12 +149,15 @@ int acpi_power_off(void)
         return -1;
     }
 
-    serial_printf("[ACPI] Powering off (SLP_TYP=0x%x)\n", slp_typ);
+    serial_printf("[ACPI] Powering off (SLP_TYP=0x%x)\n", slp_typ[0]);
 
     /* SLP_EN (bit 13) + SLP_TYP (bits 10-12) */
     interrupts_disable();
-    uint16_t val = (uint16_t)((slp_typ << 10) | (1 << 13));
+    uint16_t val = (uint16_t)((inw((uint16_t)pm1a_cnt) & ~(7 << 10)) |
+                              (slp_typ[0] << 10) | (1 << 13));
     outw((uint16_t)pm1a_cnt, val);
+    if (pm1b_cnt) outw((uint16_t)pm1b_cnt,
+        (uint16_t)((inw((uint16_t)pm1b_cnt) & ~(7 << 10)) | (slp_typ[1] << 10) | (1 << 13)));
 
     /* Some firmware needs the write repeated */
     for (int i = 0; i < 1000; i++) {

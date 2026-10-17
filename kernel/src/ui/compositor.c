@@ -7128,10 +7128,12 @@ static bool update_animations(void)
 
     if (anim_app_switcher < target_switcher) { anim_app_switcher = MIN(1000, anim_app_switcher + step); changed = true; }
     if (anim_app_switcher > target_switcher) { anim_app_switcher = MAX(0, anim_app_switcher - step); changed = true; }
+    return changed;
 }
 
 void compositor_handle_right_click(int x, int y)
 {
+    mark_dirty();
     cursor_x = x;
     cursor_y = y;
 
@@ -7148,6 +7150,7 @@ void compositor_handle_right_click(int x, int y)
 
 void compositor_tick(uint64_t now_ms)
 {
+    static bool login_frame_visible;
     uint64_t delta = now_ms - last_frame_ms;
     if (delta < 33) {
         return;
@@ -7182,6 +7185,7 @@ void compositor_tick(uint64_t now_ms)
         draw_login_screen();
         draw_cursor(cursor_x, cursor_y);
         fb_present();
+        login_frame_visible = true;
         return;
     }
 
@@ -7225,4 +7229,8 @@ void compositor_tick(uint64_t now_ms)
 
     draw_cursor(cursor_x, cursor_y);
     fb_present();
+    if (login_frame_visible) {
+        serial_printf("[UI] Desktop presented\n");
+        login_frame_visible = false;
+    }
 }

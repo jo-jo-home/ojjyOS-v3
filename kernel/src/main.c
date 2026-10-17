@@ -345,6 +345,9 @@ static void cmd_ui(const char *arg)
         compositor_init(fb_get_width(), fb_get_height());
         ui_initialized = true;
     }
+    /* Shift+Esc switches to direct console drawing; restore buffering on
+     * every UI entry, not just the first compositor initialization. */
+    fb_use_backbuffer(true);
 
     bool use_dark = (arg && strcmp(arg, "dark") == 0);
     settings_get()->dark_mode = use_dark;
@@ -362,12 +365,13 @@ static void cmd_ui(const char *arg)
 /*
  * Save persistent state (if a data disk is attached).
  */
-static void save_persistent_state(void)
+static bool save_persistent_state(void)
 {
-    if (!persist_instances[0]) return;
+    if (!persist_instances[0]) return true;
     if (block_available()) {
-        persist_save(persist_instances, 2);
+        return persist_save(persist_instances, 2) == 0;
     }
+    return !persist_any_dirty(persist_instances, 2);
 }
 
 #define BOOT_BG      RGB(13, 27, 62)      /* Deep boot blue */
@@ -583,14 +587,18 @@ static void show_power_screen(const char *line1, const char *line2)
  */
 static void power_sequence(PowerRequest request)
 {
+    /* Flush the writable filesystems to the data partition */
+    if (!save_persistent_state()) {
+        serial_printf("[POWER] Save failed; power request cancelled\n");
+        show_power_screen("Save failed. Shutdown cancelled.",
+                          "Your unsaved files are still in memory.");
+        if (ui_mode) fb_use_backbuffer(true);
+        return;
+    }
     interrupts_disable();
-
     show_power_screen(
         request == POWER_REQ_RESTART ? "Restarting ojjyOS..." : "Shutting down...",
         request == POWER_REQ_RESTART ? NULL : "It is now safe to power off your computer.");
-
-    /* Flush the writable filesystems to the data partition */
-    save_persistent_state();
 
     serial_printf("[POWER] %s\n",
         request == POWER_REQ_RESTART ? "Restart" : "Shutdown");
@@ -764,8 +772,8 @@ static void process_command(void)
     } else if (strcmp(cmd, "reboot") == 0) {
         system_request_restart();
     } else if (strcmp(cmd, "sync") == 0) {
-        save_persistent_state();
-        console_printf("State saved to disk.\n");
+        console_printf(save_persistent_state() ? "State saved to disk.\n" :
+                       "Save failed; unsaved changes remain in memory.\n");
     } else if (strcmp(cmd, "tree") == 0) {
         if (root_fs) {
             ojfs_print_tree(root_fs);
@@ -1019,7 +1027,7 @@ void kernel_main(BootInfo *boot_info)
         PowerRequest preq = system_get_request();
         if (preq != POWER_REQ_NONE) {
             system_clear_request();
-            power_sequence(preq);  /* Does not return */
+            power_sequence(preq);  /* Returns only if saving failed */
         }
 
         /* Auto-save the writable filesystems every 30 seconds when
@@ -1028,14 +1036,17 @@ void kernel_main(BootInfo *boot_info)
         if (persist_instances[0] &&
             now_ms - last_autosave_ms >= 30000) {
             last_autosave_ms = now_ms;
-            if (block_available() && persist_any_dirty(persist_instances, 2)) {
-                persist_save(persist_instances, 2);
+            if (block_available() && !persist_save_active() && persist_any_dirty(persist_instances, 2) &&
+                persist_begin_save(persist_instances, 2) == 0) {
                 if (!autosave_announced) {
                     autosave_announced = true;
                     serial_printf("[PERSIST] Autosave active\n");
                 }
             }
         }
+
+        /* Leave input/rendering time between bounded autosave batches. */
+        if (persist_save_active()) persist_step();
 
         /* Explicit sync request (e.g. from the Terminal) */
         if (system_sync_pending()) {
@@ -1047,13 +1058,14 @@ void kernel_main(BootInfo *boot_info)
 #endif
 
         /* Process input events */
-        while (input_has_event()) {
+        for (unsigned budget = 0; budget < 128 && input_has_event(); budget++) {
             InputEvent event;
             input_poll_event(&event);
 
             if (ui_mode) {
                 switch (event.type) {
                     case INPUT_EVENT_KEY_PRESS:
+                    case INPUT_EVENT_KEY_REPEAT:
                         if (event.key.keycode == KEY_ESCAPE &&
                             (event.key.modifiers & INPUT_MOD_SHIFT) &&
                             !compositor_overlay_active()) {
@@ -1101,6 +1113,7 @@ void kernel_main(BootInfo *boot_info)
             } else {
                 switch (event.type) {
                     case INPUT_EVENT_KEY_PRESS:
+                    case INPUT_EVENT_KEY_REPEAT:
                         if (event.key.ascii) {
                             if (event.key.ascii == '\n') {
                                 console_putc('\n');

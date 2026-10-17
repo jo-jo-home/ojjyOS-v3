@@ -31,31 +31,6 @@
 #define EV_REL    2
 #define EV_ABS    3
 
-/* Linux key codes used below */
-#define KEY_BACKSPACE  14
-#define KEY_TAB        15
-#define KEY_ENTER      28
-#define KEY_LEFTCTRL   29
-#define KEY_LEFTSHIFT  42
-#define KEY_RIGHTSHIFT 54
-#define KEY_LEFTALT    56
-#define KEY_SPACE      57
-#define KEY_CAPSLOCK   58
-#define KEY_RIGHTCTRL  97
-#define KEY_RIGHTALT   100
-#define KEY_HOME      102
-#define KEY_UP        103
-#define KEY_PAGEUP    104
-#define KEY_LEFT      105
-#define KEY_RIGHT     106
-#define KEY_END       107
-#define KEY_DOWN      108
-#define KEY_PAGEDOWN  109
-#define KEY_INSERT    110
-#define KEY_DELETE    111
-#define KEY_LEFTMETA  125
-#define KEY_RIGHTMETA 126
-
 /* mouse buttons */
 #define BTN_LEFT     0x110
 #define BTN_RIGHT    0x111
@@ -89,10 +64,6 @@ typedef struct {
 static InputDevState input_devs[MAX_INPUT_DEVICES];
 static int input_dev_count = 0;
 
-/* Modifier state (shared across devices, like a real system) */
-static bool in_shift, in_ctrl, in_alt, in_super, in_caps, in_numlock;
-static bool caps_down;
-
 /* Linux keycode -> kernel KeyCode (full keyboard + modifiers + nav) */
 static const KeyCode key_to_keycode[128] = {
     [1] = KEY_ESCAPE,
@@ -123,7 +94,7 @@ static const KeyCode key_to_keycode[128] = {
     [59] = KEY_F1,  [60] = KEY_F2,  [61] = KEY_F3,
     [62] = KEY_F4,  [63] = KEY_F5,  [64] = KEY_F6,
     [65] = KEY_F7,  [66] = KEY_F8,  [67] = KEY_F9,
-    [68] = KEY_F10, [69] = KEY_F11, [70] = KEY_F12,
+    [68] = KEY_F10, [69] = KEY_NUMLOCK, [70] = KEY_SCROLLLOCK,
     [87] = KEY_F11, [88] = KEY_F12,
     [96] = KEY_ENTER,
     [97] = KEY_RCTRL,
@@ -178,20 +149,9 @@ static const char key_to_ascii_shift[128] = {
     [55] = '*', [57] = ' ', [96] = '\n',
 };
 
-static void update_modifiers(void)
+void virtio_input_handle_key(uint16_t code, int32_t value)
 {
-    uint8_t mods = 0;
-    if (in_shift) mods |= INPUT_MOD_SHIFT;
-    if (in_ctrl)  mods |= INPUT_MOD_CTRL;
-    if (in_alt)   mods |= INPUT_MOD_ALT;
-    if (in_super) mods |= INPUT_MOD_SUPER;
-    if (in_caps)  mods |= INPUT_MOD_CAPSLOCK;
-    if (in_numlock) mods |= INPUT_MOD_NUMLOCK;
-    input_set_modifiers(mods);
-}
-
-static void handle_key_event(int code, int value)
-{
+    if (value < 0 || value > 2) return;
     bool down = (value != 0);
 
     /* Pointer buttons */
@@ -209,35 +169,6 @@ static void handle_key_event(int code, int value)
         return;
     }
 
-    /* Modifier bookkeeping */
-    switch (code) {
-        case KEY_LEFTSHIFT:
-        case KEY_RIGHTSHIFT:
-            in_shift = down;
-            update_modifiers();
-            break;
-        case KEY_LEFTCTRL:
-        case KEY_RIGHTCTRL:
-            in_ctrl = down;
-            update_modifiers();
-            break;
-        case KEY_LEFTALT:
-        case KEY_RIGHTALT:
-            in_alt = down;
-            update_modifiers();
-            break;
-        case KEY_LEFTMETA:
-        case KEY_RIGHTMETA:
-            in_super = down;
-            update_modifiers();
-            break;
-        case KEY_CAPSLOCK:
-            if (down && !caps_down) in_caps = !in_caps;
-            caps_down = down;
-            update_modifiers();
-            break;
-    }
-
     KeyCode keycode = key_to_keycode[code];
     if (keycode == KEY_NONE) {
         return;
@@ -246,15 +177,17 @@ static void handle_key_event(int code, int value)
     char ascii = 0;
     const char plain = key_to_ascii[code];
     if (plain) {
-        bool shifted = in_shift;
-        if (in_caps && plain >= 'a' && plain <= 'z') {
+        uint8_t mods = input_get_modifiers();
+        bool shifted = (mods & INPUT_MOD_SHIFT) != 0;
+        if ((mods & INPUT_MOD_CAPSLOCK) && plain >= 'a' && plain <= 'z') {
             shifted = !shifted;
         }
         ascii = shifted ? key_to_ascii_shift[code] : plain;
     }
 
     input_post_key_event(
-        down ? INPUT_EVENT_KEY_PRESS : INPUT_EVENT_KEY_RELEASE,
+        value == 2 ? INPUT_EVENT_KEY_REPEAT :
+            (down ? INPUT_EVENT_KEY_PRESS : INPUT_EVENT_KEY_RELEASE),
         (uint8_t)code, keycode, ascii);
 }
 
@@ -290,7 +223,7 @@ static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
 {
     switch (ev->type) {
         case EV_KEY:
-            handle_key_event(ev->code, ev->value);
+            virtio_input_handle_key(ev->code, ev->value);
             break;
         case EV_REL:
             if (ev->code == REL_WHEEL && ev->value != 0) {
@@ -316,7 +249,7 @@ static uint32_t input_abs_max(uint32_t mmio, uint8_t axis)
     volatile uint8_t *cfg = (volatile uint8_t *)(uintptr_t)(mmio + VIO_CFG);
     cfg[0] = VIRTIO_INPUT_CFG_ABS_INFO;
     cfg[1] = axis;
-    __asm__ volatile("dmb ish" ::: "memory");
+    virtio_memory_barrier();
 
     /* absinfo: min(u32), max(u32), fuzz, flat, res at CFG+8 */
     volatile uint32_t *data = (volatile uint32_t *)(uintptr_t)(mmio + VIO_CFG + 8);
@@ -329,7 +262,7 @@ int virtio_input_attach(uint32_t mmio_base)
         return -1;
     }
 
-    int idx = input_dev_count++;
+    int idx = input_dev_count;
     InputDevState *dev = &input_devs[idx];
     memset(dev, 0, sizeof(*dev));
 
@@ -353,22 +286,24 @@ int virtio_input_attach(uint32_t mmio_base)
     /* Prime the queue with 64 individual 8-byte event descriptors
      * (QEMU virtio-input requires one descriptor per VirtioInputEvent,
      * and drops batches if fewer descriptors than batch_size are available). */
-    for (uint16_t b = 0; b < INPUT_EVENTS_PER_BUF; b++) {
+    uint16_t count = MIN(INPUT_EVENTS_PER_BUF, dev->vq.size);
+    for (uint16_t b = 0; b < count; b++) {
         dev->vq.mem->desc[b].addr  = (uint64_t)(uintptr_t)&dev->events[b];
         dev->vq.mem->desc[b].len   = sizeof(VirtioInputEvent);
         dev->vq.mem->desc[b].flags = VRING_DESC_F_WRITE;
         dev->vq.mem->desc[b].next  = 0;
         dev->vq.mem->avail.ring[b] = b;
     }
-    __asm__ volatile("dmb ish" ::: "memory");
-    dev->vq.avail_idx = INPUT_EVENTS_PER_BUF;
-    dev->vq.mem->avail.idx = INPUT_EVENTS_PER_BUF;
-    __asm__ volatile("dmb ish" ::: "memory");
+    virtio_memory_barrier();
+    dev->vq.avail_idx = count;
+    dev->vq.mem->avail.idx = count;
+    virtio_memory_barrier();
     *(volatile uint32_t *)(uintptr_t)(mmio_base + VIO_QUEUE_NOTIFY) = 0;
 
     serial_printf("[VIRTIO-INPUT] Device %d attached (%s, abs %dx%d)\n",
         idx, dev->has_pointer ? "pointer" : "keyboard",
         (int)dev->abs_max_x, (int)dev->abs_max_y);
+    input_dev_count++;
     return 0;
 }
 
@@ -382,19 +317,25 @@ void virtio_input_poll(void)
         VirtQueue *vq = &dev->vq;
         bool recycled = false;
 
-        while (vq->used_idx != vq->mem->used.idx) {
-            __asm__ volatile("dmb ish" ::: "memory");
-            uint16_t u_slot = vq->used_idx & (VQ_SIZE - 1);
-            uint16_t desc_id = (uint16_t)vq->mem->used.elems[u_slot].id;
+        /* Bound each harvest so a busy device cannot starve the main loop.
+         * Device-owned indices must be reloaded even under optimization. */
+        for (unsigned budget = 0; budget < vq->size &&
+             vq->used_idx != *(volatile uint16_t *)&vq->mem->used.idx; budget++) {
+            virtio_memory_barrier();
+            uint16_t u_slot = vq->used_idx & (vq->size - 1);
+            uint32_t desc_id = vq->mem->used.elems[u_slot].id;
             vq->used_idx = (uint16_t)(vq->used_idx + 1);
 
-            if (desc_id < INPUT_EVENTS_PER_BUF) {
-                handle_event(dev, &dev->events[desc_id]);
+            if (desc_id < MIN(INPUT_EVENTS_PER_BUF, vq->size)) {
+                if (vq->mem->used.elems[u_slot].len == sizeof(VirtioInputEvent)) {
+                    VirtioInputEvent event = dev->events[desc_id];
+                    handle_event(dev, &event);
+                }
 
                 /* Re-publish this descriptor in the available ring */
-                uint16_t a_slot = vq->avail_idx & (VQ_SIZE - 1);
+                uint16_t a_slot = vq->avail_idx & (vq->size - 1);
                 vq->mem->avail.ring[a_slot] = desc_id;
-                __asm__ volatile("dmb ish" ::: "memory");
+                virtio_memory_barrier();
                 vq->avail_idx = (uint16_t)(vq->avail_idx + 1);
                 vq->mem->avail.idx = vq->avail_idx;
                 recycled = true;
@@ -402,7 +343,7 @@ void virtio_input_poll(void)
         }
 
         if (recycled) {
-            __asm__ volatile("dmb ish" ::: "memory");
+            virtio_memory_barrier();
             *(volatile uint32_t *)(uintptr_t)(vq->mmio + VIO_QUEUE_NOTIFY) = 0;
         }
     }

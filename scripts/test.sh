@@ -1,0 +1,29 @@
+#!/bin/bash
+# Host regression suite. Created by Jonas Lee.
+set -euo pipefail
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
+OUT="${OJJY_TEST_DIR:-$ROOT_DIR/build/tests}"
+HOST_CC="${HOST_CC:-clang}"
+mkdir -p "$OUT"
+FLAGS=(-O1 -fno-builtin -Wno-incompatible-library-redeclaration -Wall -Wextra -Werror=return-type -Ikernel/src)
+if [ "${OJJY_SANITIZE:-0}" = "1" ]; then
+    FLAGS+=(-g -fsanitize=address,undefined -fno-omit-frame-pointer)
+    # The freestanding libc must not interpose on ASan's own startup calls.
+    # Still instrument and exercise the real implementations under prefixes.
+    for symbol in memset memcpy memmove memcmp strlen strcpy strncpy strcmp strncmp; do
+        FLAGS+=("-D$symbol=ojjy_$symbol")
+    done
+fi
+"$HOST_CC" "${FLAGS[@]}" tests/test_fs.c kernel/src/fs/{ojfs,vfs}.c kernel/src/string.c -o "$OUT/test_fs"
+"$HOST_CC" "${FLAGS[@]}" tests/test_ramfs.c kernel/src/fs/{ramfs,vfs}.c kernel/src/{users,memory,proc,string}.c -o "$OUT/test_ramfs"
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_input.c kernel/src/drivers/{input,ps2_keyboard}.c \
+    kernel/src/arch/aarch64/virtio_input.c kernel/src/string.c -o "$OUT/test_input"
+"$HOST_CC" "${FLAGS[@]}" tests/test_persist.c kernel/src/fs/{persist,ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_persist"
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_virtqueue.c kernel/src/arch/aarch64/virtio.c kernel/src/string.c -o "$OUT/test_virtqueue"
+"$HOST_CC" "${FLAGS[@]}" tests/test_acpi_aml.c kernel/src/drivers/acpi_aml.c kernel/src/string.c -o "$OUT/test_acpi_aml"
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml; do
+    echo "Running $test"
+    "$OUT/$test"
+done
+python3 -B tests/test_image.py

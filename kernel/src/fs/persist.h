@@ -5,9 +5,9 @@
  * "ojjyOS Data" disk partition and restores them on the next boot, so
  * documents, notes, calendar events and settings survive a reboot.
  *
- * The on-disk layout is simply:
- *
- *   [PersistHeader][RamfsInstance #0][RamfsInstance #1]...
+ * Two 8 MiB slots each contain a checksummed commit header and payload.
+ * Payload is flushed before its header. The previous valid slot survives
+ * interrupted writes. Legacy v1 checkpoints are validated and migrated.
  *
  * RAMFS instances are flat structures (no pointers), so the kernel can
  * snapshot them byte-for-byte and memcpy them back at boot.
@@ -28,6 +28,7 @@
 
 /* Maximum instances in one checkpoint (two RAMFS mounts today) */
 #define PERSIST_MAX_INSTANCES    4
+#define PERSIST_SLOT_SECTORS     16384ULL
 
 /*
  * Try to restore the writable filesystems from the disk.
@@ -42,6 +43,13 @@ int persist_load(void **instances, int count);
  * Returns 0 on success, -1 if there is no disk or the write failed.
  */
 int persist_save(void **instances, int count);
+
+/* Incremental autosave: immutable snapshot, at most eight payload sectors
+ * per step. Returns 1 while working, 0 when complete, -1 on failure. */
+int persist_begin_save(void **instances, int count);
+int persist_step(void);
+bool persist_save_active(void);
+void persist_cancel_save(void);
 
 /*
  * True when any of the instances has unsaved changes.

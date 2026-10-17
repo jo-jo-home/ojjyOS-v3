@@ -10,11 +10,9 @@
 #include "../string.h"
 #include "../serial.h"
 
-#define RAMFS_MAX_NODES    256
 #define RAMFS_MAX_FILES    64
 #define RAMFS_MAX_DIRS     32
 #define RAMFS_MAX_INSTANCES 4
-#define RAMFS_DATA_SIZE    (1024 * 1024)
 
 /*
  * Data pool block header for the first-fit allocator.
@@ -40,6 +38,8 @@ typedef struct {
 
     bool dirty;     /* Modified since the last persistence save */
 } RamfsInstance;
+
+_Static_assert(sizeof(RamfsInstance) <= RAMFS_SNAPSHOT_MAX_BYTES, "snapshot capacity");
 
 static RamfsInstance ramfs_instances[RAMFS_MAX_INSTANCES];
 static int ramfs_instance_count = 0;
@@ -641,6 +641,7 @@ static int ramfs_rename(void *fs_data, const char *from, const char *to)
 
     int parent = find_node(fs, to_dir[0] ? to_dir : "/");
     if (parent < 0) return -1;
+    if (fs->nodes[parent].type != VFS_TYPE_DIR) return -1;
 
     /* No-op rename */
     if (parent == (int)fs->nodes[idx].parent &&
@@ -741,6 +742,83 @@ void ramfs_clear_dirty(void *fs_data)
     if (fs) fs->dirty = false;
 }
 
+void ramfs_mark_dirty(void *fs_data)
+{
+    RamfsInstance *fs = (RamfsInstance *)fs_data;
+    if (fs) fs->dirty = true;
+}
+
+/* Check untrusted disk bytes before replacing a live filesystem. This also
+ * makes the legacy (unchecksummed) checkpoint migration fail safely. */
+bool ramfs_validate_snapshot(const void *snapshot, size_t size)
+{
+    if (!snapshot || size != sizeof(RamfsInstance)) return false;
+    const RamfsInstance *fs = snapshot;
+    if (fs->node_count < 1 || fs->node_count > RAMFS_MAX_NODES ||
+        fs->nodes[0].type != VFS_TYPE_DIR || fs->nodes[0].parent != 0xFFFFFFFF ||
+        fs->nodes[0].name[0] != '\0') return false;
+
+    uint64_t off = 0;
+    while (off < RAMFS_DATA_SIZE) {
+        if (RAMFS_DATA_SIZE - off < RAMFS_BLOCK_HDR) return false;
+        const RamfsBlock *block = (const RamfsBlock *)(fs->data_pool + off);
+        if (block->free > 1 || block->size == 0 ||
+            block->size > RAMFS_DATA_SIZE - off - RAMFS_BLOCK_HDR) return false;
+        off += RAMFS_BLOCK_HDR + block->size;
+        if (off % 4 != 0) return false;
+    }
+
+    for (int i = 0; i < fs->node_count; i++) {
+        const RamfsNode *node = &fs->nodes[i];
+        if (node->type == VFS_TYPE_UNKNOWN) continue;
+        if (node->type != VFS_TYPE_FILE && node->type != VFS_TYPE_DIR &&
+            node->type != VFS_TYPE_BUNDLE) return false;
+        unsigned len = 0;
+        while (len <= VFS_NAME_MAX && node->name[len]) {
+            if (node->name[len] == '/') return false;
+            len++;
+        }
+        if (len > VFS_NAME_MAX || (i && !valid_component(node->name))) return false;
+        if (i) {
+            uint32_t parent = node->parent;
+            for (int depth = 0; ; depth++) {
+                if (parent >= (uint32_t)fs->node_count || depth >= fs->node_count ||
+                    (fs->nodes[parent].type != VFS_TYPE_DIR &&
+                     fs->nodes[parent].type != VFS_TYPE_BUNDLE)) return false;
+                if (parent == 0) break;
+                parent = fs->nodes[parent].parent;
+            }
+            for (int j = 1; j < i; j++) {
+                if (fs->nodes[j].type != VFS_TYPE_UNKNOWN &&
+                    fs->nodes[j].parent == node->parent &&
+                    strcmp(fs->nodes[j].name, node->name) == 0) return false;
+            }
+        }
+        if (node->type != VFS_TYPE_FILE) {
+            if (node->size || node->capacity || node->data_offset) return false;
+            continue;
+        }
+        if (node->size > node->capacity) return false;
+        if (!node->capacity) {
+            if (node->data_offset) return false;
+            continue;
+        }
+        bool found = false;
+        for (off = 0; off < RAMFS_DATA_SIZE; ) {
+            const RamfsBlock *block = (const RamfsBlock *)(fs->data_pool + off);
+            if (off + RAMFS_BLOCK_HDR == node->data_offset && !block->free &&
+                node->capacity <= block->size) found = true;
+            off += RAMFS_BLOCK_HDR + block->size;
+        }
+        if (!found) return false;
+        for (int j = 1; j < i; j++) {
+            if (fs->nodes[j].type == VFS_TYPE_FILE && fs->nodes[j].capacity &&
+                fs->nodes[j].data_offset == node->data_offset) return false;
+        }
+    }
+    return true;
+}
+
 int ramfs_create_dir(void *fs_data, const char *path)
 {
     return ramfs_mkdir(fs_data, path);
@@ -751,5 +829,7 @@ int ramfs_create_file(void *fs_data, const char *path)
     RamfsInstance *fs = (RamfsInstance *)fs_data;
     if (!fs || !path) return -1;
     if (find_node(fs, path) >= 0) return -1;
-    return create_node(fs, path, VFS_TYPE_FILE) >= 0 ? 0 : -1;
+    if (create_node(fs, path, VFS_TYPE_FILE) < 0) return -1;
+    fs->dirty = true;
+    return 0;
 }

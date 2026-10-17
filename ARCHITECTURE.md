@@ -26,7 +26,7 @@
 ojjyOS v3 is a custom operating system built entirely from scratch by **Jonas Lee** with the following goals:
 
 - **Not based on Linux, BSD, Windows, or macOS** - A truly custom kernel and userspace
-- **Native Dual-Architecture Support (`aarch64` & `x86_64`)** - Runs natively on Apple Silicon Macs via `qemu-system-aarch64 -M virt,gic-version=2 -accel hvf` as well as on `x86_64` in QEMU and VirtualBox using UEFI GOP
+- **Dual-Architecture Guests (`aarch64` & `x86_64`)** - Runs in QEMU using UEFI GOP. The ARM64 runner currently uses TCG with one vCPU, not HVF or bare-metal Apple Silicon support.
 - **macOS Tahoe-inspired UI** - Blue liquid-glass glassmorphism aesthetic
 - **Educational & Functional** - Clean, well-documented code that actually works
 
@@ -83,6 +83,12 @@ Kernel Main (main.c)
 ```
 
 ### Memory Layout
+
+The diagrams and milestone lists below describe the project's evolution, not
+proof of a protected userspace. Current apps share the kernel address space.
+`proc.c` provides task records and estimated accounting, not a scheduler or
+independently executing daemons. User ownership/access enforcement remains work
+for a later milestone. See the current platform and persistence sections below.
 
 ```
 0x0000_0000_0000_0000 ┌─────────────────────┐
@@ -930,23 +936,26 @@ This section documents the upgrade to a writable RAM-backed filesystem and premi
 
 ## Dual-Architecture Platform Layer (v3.1.0: `aarch64` & `x86_64`)
 
-In v3.1.0, ojjyOS supports both **Apple Silicon / ARM64 (`aarch64`)** and **Intel/AMD (`x86_64`)** from a single unified codebase. All upper layers—`main.c`, `memory.c`, `framebuffer.c`, `console.c`, `fs/*` (VFS, OJFS, RAMFS, bundles, persistence), and `ui/*` (Tahoe compositor, all 8 built-in apps, theme, services)—are 100% architecture-neutral.
+ojjyOS builds ARM64 and Intel/AMD guests from one codebase. The desktop and 11
+built-in apps use shared input, filesystem, and drawing interfaces. The Intel
+UEFI-to-ELF handoff explicitly uses SysV ABI, including when UEFI is compiled
+for Microsoft's PE/COFF ABI on macOS.
 
 ### Architecture Comparison Table
 
-| Subsystem | `x86_64` (`QEMU -M pc` / VirtualBox) | `aarch64` (`QEMU -M virt,gic-version=2 -accel hvf`) |
+| Subsystem | `x86_64` (`QEMU -M pc` / VirtualBox) | `aarch64` (`QEMU -M virt,gic-version=2 -accel tcg`) |
 |-----------|--------------------------------------|-----------------------------------------------------|
 | **UEFI Bootloader** | `BOOTX64.EFI` (`EM_X86_64 = 62`) | `BOOTAA64.EFI` (`EM_AARCH64 = 183`) |
-| **Kernel Link Base** | `0x00100000` (`kernel/linker.ld`) | `0x41000000` (`kernel/linker-aarch64.ld`) |
+| **Kernel Link Base** | `0x04000000` (`kernel/linker.ld`, above OVMF's reserved low-memory ranges) | `0x41000000` (`kernel/linker-aarch64.ld`) |
 | **Entry Assembly** | `src/entry.asm` (NASM, 64 KB stack) | `src/arch/aarch64/entry.S` (clang, EL3/EL2$\rightarrow$EL1 drop, 128 KB stack) |
-| **Exception Handling** | 256-entry IDT (`idt.c`) + visual panic screen | `VBAR_EL1` vector table + `a64_exception_handler` visual panic screen (`ESR_EL1`, `ELR_EL1`, `FAR_EL1`) |
+| **Exception Handling** | 256-entry IDT (`idt.c`) + direct-scanout panic screen | `VBAR_EL1` vector table + direct-scanout panic screen (`ESR_EL1`, `ELR_EL1`, `SPSR_EL1`) |
 | **Page Tables / MMU** | Custom 4-level page tables (`paging.c`) + on-demand `paging_map()` for high GOP framebuffers | Inherits UEFI's identity-mapped page tables (covering RAM at `0x40000000+` and MMIO below `0x40000000`) |
 | **Interrupt Controller** | Dual 8259 PIC (remapped to vectors `32..47`, auto-unmasking IRQ2 cascade) | ARM GICv2 (`gicv2.c`, GICD `0x08000000`, GICC `0x08010000`) |
 | **System Timer** | 8254 PIT at 1000 Hz (IRQ 0) | ARM Generic Physical Timer (`CNTP_*_EL0`, PPI 30) at 1000 Hz |
 | **Serial Console** | 16550 UART on I/O port `0x3F8` (`serial.c`) | ARM PL011 UART at MMIO `0x09000000` (`pl011.c`) + shared `serial_core.c` |
 | **Real-Time Clock** | CMOS RTC on ports `0x70`/`0x71` (`drivers/rtc.c`) | ARM PL031 RTC at MMIO `0x09010000` (`pl031.c`, UNIX epoch $\rightarrow$ civil calendar) |
 | **Keyboard & Pointer** | IRQ-driven PS/2 keyboard (`0xE0` extended scancodes + Super release) & 3-button scroll mouse | `virtio-mmio` v2 (`0x0A000000`..`+0x3E00`) `virtio-keyboard` & `virtio-tablet` polled each frame via `a64_poll_input()` |
-| **Disk / Block I/O** | PIIX4 ATA PIO (LBA28/LBA48) + 64-entry LRU block cache (`blockdev_x86.c`) | `virtio-blk` over `virtio-mmio` v2 implementing the `block_*` API directly (`virtio_blk.c`) |
+| **Disk / Block I/O** | PIIX4 ATA PIO (LBA28/LBA48), explicit flush through `blockdev_x86.c` | `virtio-blk` over `virtio-mmio` v2, negotiated FLUSH, bounded request wait |
 | **Power Management** | ACPI S5 (`\_S5` AML scan + `PM1a_CNT`) & 8042 reset (`drivers/acpi.c`) | ARM PSCI (`hvc #0` with `smc #0` fallback: `SYSTEM_OFF = 0x84000008`, `SYSTEM_RESET = 0x84000009` in `psci.c`) |
 
 ---
@@ -954,16 +963,35 @@ In v3.1.0, ojjyOS supports both **Apple Silicon / ARM64 (`aarch64`)** and **Inte
 ## Disk Persistence & Power Management (v3.1.0)
 
 ### 1. GPT Disk Layout (`scripts/mkimg.sh`)
-The 128 MB raw disk image (`build/ojjyos3.img`) contains two GPT partitions:
-1. **Partition 1 (LBA `2048..67583`, 32 MB):** FAT32 EFI System Partition containing `\EFI\BOOT\BOOTAA64.EFI` (or `BOOTX64.EFI`) and `\kernel.bin`.
-2. **Partition 2 (LBA `67584..198655`, 64 MB):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`).
+Each 128 MiB raw image (`build/<arch>/ojjyos3.img`) contains two GPT partitions:
+1. **Partition 1 (LBA `2048..67583`, 32 MiB):** FAT EFI System Partition containing `\EFI\BOOT\BOOTAA64.EFI` (or `BOOTX64.EFI`) and `\EFI\ojjyos\kernel.bin`. The standalone Python path uses FAT16; the Linux mtools path uses FAT32.
+2. **Partition 2 (LBA `67584..262110`):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`).
+
+`tools/finalize_image.py` validates GPT CRCs/layout, refuses a running VM's
+POSIX disk lock, backs up an existing image, copies the entire data partition
+into a separately assembled candidate, fsyncs, and atomically replaces the disk.
+The first architecture-specific build can import legacy `build/ojjyos3.img`
+without altering it. Existing VirtualBox VDIs are never silently regenerated.
 
 ### 2. RAMFS Checkpointing (`kernel/src/fs/persist.c`)
-- Because each `RamFs` instance (`ramfs_users` mounted at `/Users` and `ramfs_library` mounted at `/Library`) uses self-contained flat node and data arrays, `persist_save()` writes a 512-byte header (`magic = "OJJYPERS"`, `version = 1`, sizes, and CRC-32 checksums of both trees) at LBA `67584` followed by the two `RamFs` structs.
-- On boot, `persist_load()` verifies the magic, version, byte sizes, and CRC-32 checksums before restoring `/Users` and `/Library`. If no valid checkpoint exists (first boot), `seed_ramfs()` populates default directories and files and immediately writes an initial checkpoint.
-- Any mutating RAMFS operation sets a `dirty` flag; the kernel main loop auto-flushes dirty state every 30 seconds, and `sync`, `shutdown`, and `reboot` flush immediately.
+- The two 8 MiB slots start at LBA `67584` and `83968`. Each holds a 512-byte commit sector followed by packed RAMFS instances. Version 2 uses magic `0x4A534F50`, sizes/count, a 64-bit generation, payload CRC-32, and header CRC-32.
+- Saves target the inactive slot. Payload is flushed before the header is published and flushed. A torn or corrupt newest save falls back to the previous valid slot.
+- Restore stages bytes in scratch memory, validates checksums and RAMFS node/allocator structure, and only then replaces both live filesystems. A failed restore leaves live filesystems untouched.
+- Legacy v1 has **no checksums**. It is accepted only after structural validation, and its first v2 replacement goes to slot 1 so the legacy record remains intact. CRC-32 detects accidental corruption; it is not authentication or encryption.
+- Autosave captures an immutable snapshot, then writes up to eight payload sectors per main-loop turn. Edits made after capture remain dirty. This reduces input stalls but is not a hard real-time latency guarantee: snapshot capture/CRC and individual block requests are still synchronous.
+- `sync`, shutdown, and restart wait for completion. Failure retains dirty state and cancels power transitions rather than falsely claiming a successful save.
+
+### 3. Input queue invariants
+
+Virtqueues store their **negotiated** depth. QEMU input may offer 64 entries even
+though the guest's static storage holds 128. Available/used ring positions and
+descriptor limits wrap at the negotiated depth; 16-bit index counters wrap
+independently. Using the storage capacity as the ring mask reads stale entries.
+The shared input subsystem tracks left/right modifiers independently, separates
+fresh presses from repeats (450 ms delay, at least 35 ms between editing repeats),
+coalesces adjacent pointer moves, and reserves space for key/button transitions.
+Processing is bounded per main-loop turn; this is a single-CPU design, not SMP.
 
 ---
 
 *This document is maintained alongside the codebase. For the latest bug-fix log and handoff details, see `BUGFIXES.md` and `AGENTS.md`.*
-

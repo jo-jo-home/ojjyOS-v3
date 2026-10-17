@@ -13,6 +13,15 @@
 
 #include "types.h"
 
+static inline void virtio_memory_barrier(void)
+{
+#ifdef OJJY_HOST_TEST
+    barrier();
+#else
+    __asm__ volatile("dmb ish" ::: "memory");
+#endif
+}
+
 /* virtio-mmio slot region on the QEMU virt machine */
 #define VIRTIO_MMIO_BASE        0x0A000000UL
 #define VIRTIO_MMIO_STRIDE      0x200
@@ -104,6 +113,7 @@ typedef struct {
     uint16_t free_head;
     uint16_t avail_idx;        /* our next available index */
     uint16_t used_idx;        /* last processed used index */
+    uint16_t size;            /* negotiated ring size, not storage capacity */
     uint32_t mmio;            /* device MMIO base address */
 } VirtQueue;
 

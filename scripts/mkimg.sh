@@ -15,7 +15,6 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-BUILD_DIR="$ROOT_DIR/build"
 
 ARCH="${ARCH:-x86_64}"
 if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
@@ -26,11 +25,15 @@ else
     EFI_NAME="BOOTX64.EFI"
 fi
 
+BUILD_DIR="${OJJY_BUILD_DIR:-$ROOT_DIR/build/$ARCH}"
+mkdir -p "$BUILD_DIR"
 BOOTLOADER="$BUILD_DIR/$EFI_NAME"
 KERNEL="$BUILD_DIR/kernel.bin"
-IMAGE="$BUILD_DIR/ojjyos3.img"
-VDI_IMAGE="$BUILD_DIR/ojjyos3.vdi"
-ESP_IMG="$BUILD_DIR/esp.img"
+FINAL_IMAGE="$BUILD_DIR/ojjyos3.img"
+# Assemble away from the live disk. A failed build never truncates saved data.
+IMAGE="$(mktemp "$BUILD_DIR/.ojjyos3.XXXXXX")"
+ESP_IMG="$(mktemp "$BUILD_DIR/.esp.XXXXXX")"
+trap 'rm -f "$IMAGE" "$ESP_IMG"' EXIT
 
 IMG_SIZE_MB=128
 SECTORS=$((IMG_SIZE_MB * 2048))
@@ -260,18 +263,10 @@ with open(img_path, "wb") as f:
 PYEOF
 fi
 
-# Also convert to VirtualBox .vdi automatically if VBoxManage is available
-VBOX_MGR="$(command -v VBoxManage 2>/dev/null || true)"
-if [ -z "$VBOX_MGR" ] && [ -x "/Applications/VirtualBox.app/Contents/MacOS/VBoxManage" ]; then
-    VBOX_MGR="/Applications/VirtualBox.app/Contents/MacOS/VBoxManage"
-fi
-if [ -n "$VBOX_MGR" ]; then
-    rm -f "$VDI_IMAGE"
-    "$VBOX_MGR" convertfromraw "$IMAGE" "$VDI_IMAGE" --format VDI >/dev/null 2>&1 || true
-    if [ -f "$VDI_IMAGE" ]; then
-        echo "  VirtualBox disk created: $VDI_IMAGE"
-    fi
-fi
+# Migrate saved data from the old shared build path only on the first build
+# of each architecture. The legacy disk remains untouched.
+python3 "$ROOT_DIR/tools/finalize_image.py" "$IMAGE" "$FINAL_IMAGE" \
+    --legacy "$ROOT_DIR/build/ojjyos3.img"
 
-echo "  Disk image created: $IMAGE"
-ls -lh "$IMAGE"
+echo "  Disk image created: $FINAL_IMAGE"
+ls -lh "$FINAL_IMAGE"

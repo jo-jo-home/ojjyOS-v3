@@ -18,6 +18,7 @@
 
 #define VIRTIO_BLK_T_IN    0
 #define VIRTIO_BLK_T_OUT   1
+#define VIRTIO_BLK_T_FLUSH 4
 
 /* Capacity: #sectors as u64 in the device config at VIO_CFG + 0 */
 #define VIRTIO_BLK_CFG_CAPACITY   0
@@ -38,8 +39,10 @@ typedef struct {
 
 static BlkDevState blk_dev;
 static bool blk_present = false;
+static bool blk_flush_supported = false;
+static uint64_t blk_sectors = 0;
 
-int virtio_blk_attach(uint32_t mmio_base)
+int virtio_blk_attach(uint32_t mmio_base, bool supports_flush)
 {
     if (blk_present) {
         return -1;   /* One block device is enough */
@@ -51,10 +54,12 @@ int virtio_blk_attach(uint32_t mmio_base)
 
     virtio_dev_ready(mmio_base);
     blk_present = true;
+    blk_flush_supported = supports_flush;
 
     /* Capacity: 8 bytes at config offset 0 (little-endian) */
     volatile uint32_t *cfg = (volatile uint32_t *)(uintptr_t)(mmio_base + VIO_CFG);
     uint64_t sectors = (uint64_t)cfg[0] | ((uint64_t)cfg[1] << 32);
+    blk_sectors = sectors;
 
     serial_printf("[VIRTIO-BLK] Attached: %d MB (%d sectors)\n",
         (int)(sectors * 512 / (1024 * 1024)), (int)sectors);
@@ -64,13 +69,16 @@ int virtio_blk_attach(uint32_t mmio_base)
 /*
  * One synchronous 512-byte sector transfer.
  */
-static int blk_transfer_sector(uint64_t lba, void *buf, bool write)
+static int blk_request(uint64_t lba, void *buf, uint32_t type)
 {
     if (!blk_present) return -1;
+    bool write = type == VIRTIO_BLK_T_OUT;
+    bool flush = type == VIRTIO_BLK_T_FLUSH;
+    if (!flush && lba >= blk_sectors) return -1;
 
     VirtQueue *vq = &blk_dev.vq;
 
-    blk_dev.req.type = write ? VIRTIO_BLK_T_OUT : VIRTIO_BLK_T_IN;
+    blk_dev.req.type = type;
     blk_dev.req.reserved = 0;
     blk_dev.req.sector = lba;
     blk_dev.status = 0xFF;    /* Sentinel: the device must set 0 */
@@ -89,7 +97,8 @@ static int blk_transfer_sector(uint64_t lba, void *buf, bool write)
      * The data buffer is device-writable for reads, device-readable
      * for writes. The status byte is always device-writable. */
     uint16_t d0 = virtio_desc_add(vq, req_addr, sizeof(VirtioBlkReq), VRING_DESC_F_NEXT);
-    uint16_t d1 = virtio_desc_add(vq, data_addr, 512,
+    uint16_t d1 = 0;
+    if (!flush) d1 = virtio_desc_add(vq, data_addr, 512,
         write ? VRING_DESC_F_NEXT : (VRING_DESC_F_NEXT | VRING_DESC_F_WRITE));
     uint16_t d2 = virtio_desc_add(vq, status_addr, 1, VRING_DESC_F_WRITE);
     if (d0 == 0xFFFF || d1 == 0xFFFF || d2 == 0xFFFF) {
@@ -103,6 +112,8 @@ static int blk_transfer_sector(uint64_t lba, void *buf, bool write)
     while (!virtio_poll_used(vq, &len)) {
         if (++spins > 5000000) {
             serial_printf("[VIRTIO-BLK] Timeout at sector %d\n", (int)lba);
+            /* Do not reuse DMA buffers after an uncompleted request. */
+            blk_present = false;
             return -1;
         }
     }
@@ -113,7 +124,7 @@ static int blk_transfer_sector(uint64_t lba, void *buf, bool write)
         return -1;
     }
 
-    if (!write) {
+    if (!write && !flush) {
         memcpy(buf, blk_dev.data, 512);
     }
     return 0;
@@ -124,9 +135,9 @@ static int blk_transfer_sector(uint64_t lba, void *buf, bool write)
  */
 int block_read_sectors(uint64_t lba, void *buf, uint32_t count)
 {
-    if (!buf || count == 0) return -1;
+    if (!buf || count == 0 || lba >= blk_sectors || count > blk_sectors - lba) return -1;
     for (uint32_t s = 0; s < count; s++) {
-        if (blk_transfer_sector(lba + s, (uint8_t *)buf + s * 512, false) != 0) {
+        if (blk_request(lba + s, (uint8_t *)buf + s * 512, VIRTIO_BLK_T_IN) != 0) {
             return -1;
         }
     }
@@ -135,9 +146,9 @@ int block_read_sectors(uint64_t lba, void *buf, uint32_t count)
 
 int block_write_sectors(uint64_t lba, const void *buf, uint32_t count)
 {
-    if (!buf || count == 0) return -1;
+    if (!buf || count == 0 || lba >= blk_sectors || count > blk_sectors - lba) return -1;
     for (uint32_t s = 0; s < count; s++) {
-        if (blk_transfer_sector(lba + s, (void *)((const uint8_t *)buf + s * 512), true) != 0) {
+        if (blk_request(lba + s, (void *)((const uint8_t *)buf + s * 512), VIRTIO_BLK_T_OUT) != 0) {
             return -1;
         }
     }
@@ -147,4 +158,16 @@ int block_write_sectors(uint64_t lba, const void *buf, uint32_t count)
 bool block_available(void)
 {
     return blk_present;
+}
+
+uint64_t block_sector_count(void)
+{
+    return blk_present ? blk_sectors : 0;
+}
+
+int block_flush(void)
+{
+    if (!blk_present) return -1;
+    /* Virtio devices without negotiated FLUSH use write-through semantics. */
+    return blk_flush_supported ? blk_request(0, NULL, VIRTIO_BLK_T_FLUSH) : 0;
 }

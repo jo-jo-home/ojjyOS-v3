@@ -16,4 +16,7 @@ Driver *ps2_keyboard_get_driver(void);
 /* Initialize PS/2 keyboard (registers driver) */
 void ps2_keyboard_init(void);
 
+/* Set-1 decoder used by IRQ 1; does not perform port I/O. */
+void ps2_keyboard_handle_scancode(uint8_t scancode);
+
 #endif /* _OJJY_PS2_KEYBOARD_H */

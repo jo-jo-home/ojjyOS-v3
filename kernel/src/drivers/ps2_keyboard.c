@@ -16,18 +16,9 @@
 #define PS2_DATA_PORT   0x60
 #define PS2_STATUS_PORT 0x64
 
-/* Modifier state */
-static bool shift_pressed = false;
-static bool ctrl_pressed = false;
-static bool alt_pressed = false;
-static bool super_pressed = false;
-static bool caps_lock = false;
-static bool num_lock = false;
-static bool caps_down = false;    /* Physical key state (for auto-repeat) */
-static bool num_down = false;
-
 /* Extended (0xE0-prefixed) scancode state */
 static bool e0_prefix = false;
+static uint8_t pause_remaining;
 
 /* Forward declarations */
 static bool ps2_kbd_probe(Driver *drv);
@@ -150,43 +141,11 @@ static const KeyCode e0_scancode_to_keycode[128] = {
 };
 
 /*
- * Update modifier state and push to input subsystem
- */
-static void update_modifiers(void)
-{
-    uint8_t mods = 0;
-    if (shift_pressed) mods |= INPUT_MOD_SHIFT;
-    if (ctrl_pressed)  mods |= INPUT_MOD_CTRL;
-    if (alt_pressed)   mods |= INPUT_MOD_ALT;
-    if (super_pressed) mods |= INPUT_MOD_SUPER;
-    if (caps_lock)     mods |= INPUT_MOD_CAPSLOCK;
-    if (num_lock)      mods |= INPUT_MOD_NUMLOCK;
-
-    input_set_modifiers(mods);
-}
-
-/*
  * Handle a 0xE0-prefixed (extended) scancode.
  * Nav cluster, right modifiers and the Super (Command) keys.
  */
 static bool handle_extended_key(uint8_t code, bool released)
 {
-    switch (code) {
-        case 0x1D:  /* Right Ctrl - treated same as left */
-            ctrl_pressed = !released;
-            update_modifiers();
-            break;
-        case 0x38:  /* Right Alt - treated same as left */
-            alt_pressed = !released;
-            update_modifiers();
-            break;
-        case 0x5B:  /* Left Super/Command */
-        case 0x5C:  /* Right Super/Command */
-            super_pressed = !released;
-            update_modifiers();
-            break;
-    }
-
     KeyCode keycode = KEY_NONE;
     if (code < 128) {
         keycode = e0_scancode_to_keycode[code];
@@ -194,7 +153,8 @@ static bool handle_extended_key(uint8_t code, bool released)
 
     if (keycode != KEY_NONE) {
         InputEventType type = released ? INPUT_EVENT_KEY_RELEASE : INPUT_EVENT_KEY_PRESS;
-        input_post_key_event(type, code | 0x80, keycode, 0);
+        char ascii = code == 0x1C ? '\n' : code == 0x35 ? '/' : 0;
+        input_post_key_event(type, code | 0x80, keycode, ascii);
     }
 
     return true;
@@ -225,17 +185,8 @@ static int ps2_kbd_init(Driver *drv)
 {
     serial_printf("[PS2_KBD] Initializing...\n");
 
-    /* Reset modifier state */
-    shift_pressed = false;
-    ctrl_pressed = false;
-    alt_pressed = false;
-    super_pressed = false;
-    caps_lock = false;
-    num_lock = false;
-    caps_down = false;
-    num_down = false;
     e0_prefix = false;
-    update_modifiers();
+    pause_remaining = 0;
 
     /* Register IRQ handler */
     driver_register_irq(drv, 1);  /* Keyboard is IRQ 1 */
@@ -267,18 +218,29 @@ static bool ps2_kbd_handle_irq(Driver *drv, uint8_t irq)
     (void)drv;
     (void)irq;
 
-    uint8_t scancode = inb(PS2_DATA_PORT);
+    ps2_keyboard_handle_scancode(inb(PS2_DATA_PORT));
+    return true;
+}
+
+/* Decode separately from port I/O so both keyboard paths can be tested. */
+void ps2_keyboard_handle_scancode(uint8_t scancode)
+{
+    if (pause_remaining) {
+        pause_remaining--;
+        return;
+    }
 
     /* Extended key sequences: 0xE0 <code>. All nav-cluster keys, the
      * right modifiers and the Super (Command) keys live here. */
     if (scancode == SC_E0) {
         e0_prefix = true;
-        return true;
+        return;
     }
     if (scancode == SC_E1) {
-        /* Pause/Break sends 0xE1 14 77 - swallow the sequence */
+        /* Set-1 Pause: E1 1D 45 E1 9D C5. Do not manufacture Ctrl/NumLock. */
         e0_prefix = false;
-        return true;
+        pause_remaining = 5;
+        return;
     }
 
     bool released = (scancode & 0x80) != 0;
@@ -289,41 +251,10 @@ static bool ps2_kbd_handle_irq(Driver *drv, uint8_t irq)
     if (extended) {
         /* 0x12 only appears inside PrintScreen sequences - ignore it */
         if (code == 0x12) {
-            return true;
+            return;
         }
-        return handle_extended_key(code, released);
-    }
-
-    /* Handle modifier keys (still post key press/release events with ascii=0) */
-    switch (code) {
-        case SC_LSHIFT:
-        case SC_RSHIFT:
-            shift_pressed = !released;
-            update_modifiers();
-            break;
-        case SC_LCTRL:
-            ctrl_pressed = !released;
-            update_modifiers();
-            break;
-        case SC_LALT:
-            alt_pressed = !released;
-            update_modifiers();
-            break;
-        case SC_CAPS:
-            /* Toggle only on the initial press, not on auto-repeat */
-            if (!released && !caps_down) {
-                caps_lock = !caps_lock;
-            }
-            caps_down = !released;
-            update_modifiers();
-            break;
-        case SC_NUMLOCK:
-            if (!released && !num_down) {
-                num_lock = !num_lock;
-            }
-            num_down = !released;
-            update_modifiers();
-            break;
+        handle_extended_key(code, released);
+        return;
     }
 
     /* Get keycode */
@@ -335,10 +266,11 @@ static bool ps2_kbd_handle_irq(Driver *drv, uint8_t irq)
     /* Convert to ASCII */
     char ascii = 0;
     if (code < 128) {
-        bool shifted = shift_pressed;
+        uint8_t mods = input_get_modifiers();
+        bool shifted = (mods & INPUT_MOD_SHIFT) != 0;
 
         /* Caps lock affects letters */
-        if (caps_lock) {
+        if (mods & INPUT_MOD_CAPSLOCK) {
             char c = scancode_to_ascii[code];
             if (c >= 'a' && c <= 'z') {
                 shifted = !shifted;
@@ -352,8 +284,6 @@ static bool ps2_kbd_handle_irq(Driver *drv, uint8_t irq)
     /* Post event */
     InputEventType type = released ? INPUT_EVENT_KEY_RELEASE : INPUT_EVENT_KEY_PRESS;
     input_post_key_event(type, scancode, keycode, ascii);
-
-    return true;
 }
 
 /*

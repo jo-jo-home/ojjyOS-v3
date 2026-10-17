@@ -9,19 +9,32 @@
 #include "serial.h"
 #include "string.h"
 
+#ifndef OJJY_HOST_TEST
 static inline volatile uint32_t *vio_reg(uint32_t base, uint32_t off)
 {
     return (volatile uint32_t *)(uintptr_t)(base + off);
 }
+#else
+uint32_t virtio_host_mmio_read(uint32_t base, uint32_t off);
+void virtio_host_mmio_write(uint32_t base, uint32_t off, uint32_t value);
+#endif
 
 static inline uint32_t vio_read(uint32_t base, uint32_t off)
 {
+#ifdef OJJY_HOST_TEST
+    return virtio_host_mmio_read(base, off);
+#else
     return *vio_reg(base, off);
+#endif
 }
 
 static inline void vio_write(uint32_t base, uint32_t off, uint32_t value)
 {
+#ifdef OJJY_HOST_TEST
+    virtio_host_mmio_write(base, off, value);
+#else
     *vio_reg(base, off) = value;
+#endif
 }
 
 /*
@@ -29,7 +42,7 @@ static inline void vio_write(uint32_t base, uint32_t off, uint32_t value)
  * Negotiates no optional features, which every QEMU device accepts.
  * Returns 0 on success.
  */
-static int virtio_dev_start(uint32_t base)
+static int virtio_dev_start(uint32_t base, uint32_t features)
 {
     vio_write(base, VIO_STATUS, 0);                     /* Reset */
     vio_write(base, VIO_STATUS, VIO_STATUS_ACKNOWLEDGE | VIO_STATUS_DRIVER);
@@ -38,7 +51,7 @@ static int virtio_dev_start(uint32_t base)
      * Selector 1: negotiate VIRTIO_F_VERSION_1 (bit 32 = word 1 bit 0),
      * required by VirtIO 1.0+ (virtio-mmio version 2). */
     vio_write(base, VIO_DRVFEAT_SEL, 0);
-    vio_write(base, VIO_DRVFEAT, 0);
+    vio_write(base, VIO_DRVFEAT, features);
     vio_write(base, VIO_DRVFEAT_SEL, 1);
     vio_write(base, VIO_DRVFEAT, 1u);
 
@@ -70,8 +83,12 @@ int virtio_queue_init(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem)
     }
 
     /* Our static queue memory supports VQ_SIZE descriptors */
-    uint32_t n = max < VQ_SIZE ? max : VQ_SIZE;
-    vio_write(mmio_base, VIO_QUEUE_NUM, n);
+    /* Storage capacity is 128, but QEMU input commonly offers only 64.
+     * Every ring index must wrap at this negotiated size. */
+    uint16_t size = VQ_SIZE;
+    while (size > max) size >>= 1;
+    vq->size = size;
+    vio_write(mmio_base, VIO_QUEUE_NUM, size);
 
     /* Identity-mapped: virtual == physical */
     uint64_t desc_addr = (uint64_t)(uintptr_t)&mem->desc[0];
@@ -99,7 +116,7 @@ int virtio_queue_init(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem)
 uint16_t virtio_desc_add(VirtQueue *vq, uint64_t addr, uint32_t len, uint16_t flags)
 {
     uint16_t idx = vq->free_head;
-    if (idx >= VQ_SIZE) return 0xFFFF;
+    if (idx >= vq->size) return 0xFFFF;
 
     VringDesc *d = &vq->mem->desc[idx];
     d->addr = addr;
@@ -107,7 +124,7 @@ uint16_t virtio_desc_add(VirtQueue *vq, uint64_t addr, uint32_t len, uint16_t fl
     d->flags = flags;
     d->next = (flags & VRING_DESC_F_NEXT) ? (uint16_t)(idx + 1) : 0;
 
-    if (idx + 1 < VQ_SIZE) {
+    if (idx + 1 < vq->size) {
         vq->free_head = (uint16_t)(idx + 1);
     } else {
         vq->free_head = 0xFFFF;    /* Table exhausted until recycle */
@@ -119,11 +136,11 @@ void virtio_submit(VirtQueue *vq, uint16_t head)
 {
     /* Publish the head descriptor in the available ring */
     uint16_t idx = vq->avail_idx;
-    vq->mem->avail.ring[idx & (VQ_SIZE - 1)] = head;
-    __asm__ volatile("dmb ish" ::: "memory");     /* Ring before index */
+    vq->mem->avail.ring[idx & (vq->size - 1)] = head;
+    virtio_memory_barrier();     /* Ring before index */
     vq->mem->avail.idx = (uint16_t)(idx + 1);
     vq->avail_idx = (uint16_t)(idx + 1);
-    __asm__ volatile("dmb ish" ::: "memory");
+    virtio_memory_barrier();
 
     /* Kick the device */
     vio_write(vq->mmio, VIO_QUEUE_NOTIFY, 0);
@@ -131,14 +148,14 @@ void virtio_submit(VirtQueue *vq, uint16_t head)
 
 int virtio_poll_used(VirtQueue *vq, uint32_t *out_len)
 {
-    uint16_t used_idx = vq->mem->used.idx;
+    uint16_t used_idx = *(volatile uint16_t *)&vq->mem->used.idx;
     if (used_idx == vq->used_idx) {
         return 0;
     }
 
-    __asm__ volatile("dmb ish" ::: "memory");
+    virtio_memory_barrier();
 
-    VringUsedElem *elem = &vq->mem->used.elems[vq->used_idx & (VQ_SIZE - 1)];
+    VringUsedElem *elem = &vq->mem->used.elems[vq->used_idx & (vq->size - 1)];
     if (out_len) *out_len = elem->len;
 
     /* Recycle the chain: the descriptors were allocated contiguously
@@ -174,13 +191,16 @@ void virtio_mmio_init(void)
             continue;     /* Empty slot */
         }
 
-        if (virtio_dev_start(base) != 0) {
+        vio_write(base, VIO_DEVFEAT_SEL, 0);
+        uint32_t features = dev_id == VIRTIO_ID_BLOCK ?
+            (vio_read(base, VIO_DEVFEAT) & (1u << 9)) : 0; /* BLK_F_FLUSH */
+        if (virtio_dev_start(base, features) != 0) {
             continue;
         }
 
         switch (dev_id) {
             case VIRTIO_ID_BLOCK:
-                if (virtio_blk_attach(base) == 0) found++;
+                if (virtio_blk_attach(base, features != 0) == 0) found++;
                 break;
             case VIRTIO_ID_INPUT:
                 if (virtio_input_attach(base) == 0) found++;

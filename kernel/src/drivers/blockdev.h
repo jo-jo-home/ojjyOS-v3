@@ -32,4 +32,8 @@ int block_write_sectors(uint64_t lba, const void *buf, uint32_t count);
  */
 bool block_available(void);
 
+uint64_t block_sector_count(void);
+/* Make prior writes durable before publishing a checkpoint header. */
+int block_flush(void);
+
 #endif /* _OJJY_BLOCKDEV_H */

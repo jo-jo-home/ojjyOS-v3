@@ -1,7 +1,9 @@
 /*
  * ojjyOS v3 Kernel Linker Script
  *
- * Kernel is loaded at 1MB (0x100000) by the bootloader.
+ * Kernel is loaded at 64MB (0x4000000) by the bootloader. Modern OVMF
+ * reserves ACPI NVS and boot-services ranges around 8-24MB, which the
+ * growing static BSS cannot safely straddle when linked at 1MB.
  * Entry point is _start in entry.asm.
  */
 
@@ -9,8 +11,8 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Kernel starts at 1MB */
-    . = 0x100000;
+    /* Keep the fixed-address kernel above OVMF's reserved low-memory area. */
+    . = 0x4000000;
     _kernel_start = .;
 
     /* Code section */

@@ -19,6 +19,8 @@ static void draw_panic_screen(const char *message
 #endif
 )
 {
+    /* A halted kernel cannot reach the compositor's next fb_present(). */
+    fb_use_backbuffer(false);
     uint32_t width = fb_get_width();
     uint32_t height = fb_get_height();
 

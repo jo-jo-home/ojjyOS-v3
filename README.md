@@ -6,7 +6,7 @@
 
 - **100% Original Custom Kernel:** Not based on Linux, BSD, Windows, or macOS. Host operating systems are used strictly as build/VM hosts.
 - **Native Dual-Architecture Support (`aarch64` + `x86_64`):**
-  - **Apple Silicon Native (`aarch64`):** Runs near-natively on Apple Silicon Macs (M1/M2/M3/M4) via `qemu-system-aarch64 -M virt,gic-version=2 -accel hvf` with `ramfb` GOP display, PL011 UART, PL031 RTC, `virtio-mmio` v2 (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), ARM Generic Timer, and PSCI power management.
+  - **ARM64 guest on Apple Silicon (`aarch64`):** Runs in QEMU's `virt` machine using TCG emulation, `ramfb` GOP display, PL011 UART, PL031 RTC, `virtio-mmio` v2 (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), ARM Generic Timer, and PSCI power management. This is not bare-metal Mac support; HVF acceleration is not enabled by the current runner.
   - **Intel/AMD (`x86_64`):** Runs in QEMU or VirtualBox via UEFI GOP, GDT/IDT/4-level paging, 8259 PIC + PIT, PS/2 keyboard & scroll mouse, PIIX4 ATA/IDE + LRU block cache, CMOS RTC, and ACPI S5 power management.
 - **macOS Tahoe Blue Glass Desktop:** Translucent blue glass windows, multi-sample wallpaper blur, First-Boot Account Setup Assistant, Tahoe Lock/Login Screen with salted SHA-256 credentials, traffic-light window controls (close, minimize, maximize/zoom), bottom-right drag resizing, Dock with hover magnification, interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`), Desktop right-click context menu, Spotlight, Launchpad, Control Center, Mission Control, App Switcher, Desktop icons, and 11 built-in apps.
 
@@ -27,12 +27,12 @@ Per project documentation standards, features are categorized into **Implemented
 - **User Accounts & Salted SHA-256 Credentials (`kernel/src/users.c`):**
   - **Salted FIPS 180-4 SHA-256 Password Hashing:** Domain-separated 32-bit salt + 256-bit SHA-256 digest with constant-time verification (`hash_equal_ct`), stored in `/Library/Accounts/users.db` and persisted across reboots.
   - **First-Boot Account Setup Assistant & Tahoe Lock/Login Screen:** When no accounts exist (`users_count() == 0`) or **+ New Account** is clicked, presents a glass Setup Assistant card (`Full Name`, `Username`, `Password`, `Confirm`). When locked or logged out, presents the macOS Tahoe Lock Screen with clock, user avatar initials, `@username` badge, masked password field, **Sign In**, **Switch User**, and **+ New Account**.
-  - **Per-User Home Directory Isolation (`/Users/<username>`):** Automatically provisions `/Users/<username>/Desktop` and `/Users/<username>/Documents` with starter `Welcome.txt`, `Notes.txt`, and `Calendar.txt`. Finder, Desktop icons, Terminal (`<user>@ojjyos:~ %`), Notes, Calendar, TextEdit, and Spotlight dynamically bind to the logged-in user's home directory.
+   - **Per-User Home Directories (`/Users/<username>`):** Automatically provisions `/Users/<username>/Desktop` and `/Users/<username>/Documents` with starter `Welcome.txt`, `Notes.txt`, and `Calendar.txt`. Apps bind to the logged-in user's home directory. These are not enforced user-access boundaries; file ownership checks and account-security hardening remain future work.
 - **Filesystems & Disk Persistence (`kernel/src/fs/`):**
   - **VFS (`vfs.c`):** Unified mount table (`/`, `/Users`, `/Library`), path normalization (`.`, `..`, duplicate slashes), per-mount `fs_data` isolation.
   - **OJFS (`ojfs.c`):** Custom read-only system filesystem embedded in the kernel (`/` with `/System` and `/Applications`).
   - **RAMFS (`ramfs.c`):** Writable filesystem with first-fit free-list data pool allocator and node reuse on unlink, mounted independently at `/Users` and `/Library`.
-  - **Disk Persistence (`persist.c`):** Snapshots `/Users` and `/Library` to the `ojjyOS Data` GPT partition (LBA `67584`) with CRC-32 verification. Restores automatically on boot, autosaves every 30 seconds when dirty, and flushes on `sync`, `shutdown`, and `reboot`.
+   - **Disk Persistence (`persist.c`):** Alternates two 8 MiB checkpoint slots in the data partition (LBA `67584`). CRC-32 protects the payload and commit header. Payload is flushed before its header; restore falls back to the previous valid checkpoint. Legacy v1 snapshots are structurally validated and migrated without overwriting the old snapshot first. Autosaves use bounded batches between input/render turns; explicit `sync`, shutdown, and restart wait for completion. Failed saves remain dirty and cancel shutdown/restart.
 - **macOS Tahoe Blue Glass Desktop (`kernel/src/ui/`):**
   - **Window Management:** Close (red), Minimize to Dock (yellow), Maximize/Zoom (green) traffic lights, `Cmd+Q` close, titlebar drag, and bottom-right corner drag resize (`360x220` minimum).
   - **Interactive Menu Bar & Desktop Context Menu:** Dropdown menus for `ojjy` (About, Settings, Activity Monitor, Lock Screen, Switch User, Restart, Shut Down), `File`, `Edit`, `View`, and `Window`, plus clickable active username pill (`Settings → Users & Accounts`) and right-click desktop context menu (New Folder on Desktop, New Text Note, Open Home in Finder, Open Terminal, Open Calculator, Toggle Dark/Light, Lock Screen).
@@ -42,9 +42,14 @@ Per project documentation standards, features are categorized into **Implemented
 
 ### Tested
 - **Freestanding Cross-Compilation (`clang`):** Every C and assembly translation unit compiles cleanly with `-Wall -Wextra` zero warnings and zero errors under both `ARCH=aarch64` (`aarch64-unknown-none-elf`) and `ARCH=x86_64` (`x86_64-unknown-none-elf`).
-- **Host Unit Test Suites (`tests/` — 96 total assertions):**
+- **Host Unit Test Suites (`tests/`):**
   - `tests/test_fs.c` (37 assertions): OJFS validation, root & nested directory listing (all 11 `.app` bundles + `/System/Web/accounts.page`), file reads, VFS path normalization, and exact-`n` `strncpy` bounds.
-  - `tests/test_ramfs.c` (59 assertions): RAMFS free-list allocation, repeated file growth/shrink/unlink cycles without pool exhaustion, `mkdir` return semantics, rename validation, and full `users.c` account creation, salted SHA-256 authentication, password change, home directory provisioning, and `/Library/Accounts/users.db` reload verification.
+   - `tests/test_ramfs.c` (81 assertions): RAMFS allocation and file operations, accounts, heap allocation, process bookkeeping, and syscall dispatch.
+   - `tests/test_input.c`: Real evdev and PS/2 decoders, key mappings, left/right modifiers, delayed repeats, Backspace, queue overflow, and releases.
+   - `tests/test_virtqueue.c`: Negotiated queue depths (8/64/128), repeated ring wraps, and 16-bit index rollover.
+   - `tests/test_persist.c`: Checksums, fallback, torn writes, flush failures, concurrent edits during autosave, and legacy migration using real RAMFS and a fault-injected block device.
+   - `tests/test_image.py`: Data-preserving rebuilds, backups, migration, invalid layouts, and running-VM disk locks (real QEMU check when installed).
+   - `tests/qemu_smoke.py`: Opt-in live VM setup/login, typing/Backspace, command responsiveness, sync/shutdown, and cold-boot credential recovery. Always uses a private disk copy.
 - **Host Asset & Filesystem Builders (`tools/`):** `mkojfs`, `mkicon`, `mkwallpaper`, and `mkarray` build and generate `build/system.ojfs` and `kernel/src/fs/system_fs.h`.
 
 ### Planned (Future Milestones)
@@ -56,28 +61,30 @@ Per project documentation standards, features are categorized into **Implemented
 
 ---
 
-## Running Natively on Apple Silicon (macOS + QEMU HVF)
+## Running on Apple Silicon (macOS + QEMU ARM64)
 
-On an Apple Silicon Mac (M1/M2/M3/M4), ojjyOS v3 runs natively as an `aarch64` guest using macOS Hypervisor.framework (`-accel hvf`):
+The current runner uses one ARM64 vCPU under TCG, not Hypervisor.framework acceleration:
 
 ### 1. Install QEMU on macOS
 ```bash
-brew install qemu nasm
+brew install qemu nasm lld
 ```
 
-### 2. Build the `aarch64` Disk Image (on Debian ARM64 or Linux build host / container)
-Building the full linkable `BOOTAA64.EFI` + `kernel.bin` + GPT disk image requires `gnu-efi`, `ld.lld`, `mtools`, `dosfstools`, and `gdisk`:
+### 2. Build the `aarch64` Disk Image
+macOS builds use standalone UEFI definitions, clang/lld, and a Python GPT/FAT image builder; no Linux container or gnu-efi is required:
 ```bash
 chmod +x scripts/*.sh
 ARCH=aarch64 ./scripts/build.sh
 ```
-*(On macOS without `ld.lld`/`gnu-efi`, you can compile-check all kernel objects for both architectures directly with `make -C kernel ARCH=aarch64 objs` and `make -C kernel ARCH=x86_64 objs`.)*
+Outputs are isolated under `build/aarch64/` and `build/x86_64/`. Shut down a VM before rebuilding its disk. A rebuild preserves the data partition and creates a complete disk backup under that architecture's `backups/` directory. The first per-architecture build imports saved data from legacy `build/ojjyos3.img` if present, leaving the legacy image unchanged. Corrupt or unfamiliar layouts and locked disks are refused instead of reformatted. Backups are retained until you explicitly remove them.
 
-### 3. Launch in QEMU with Apple Silicon HVF Acceleration
+### 3. Launch in QEMU
 ```bash
 ./scripts/run-qemu.sh aarch64
 ```
-`scripts/run-qemu.sh` automatically locates Homebrew's `edk2-aarch64-code.fd` UEFI firmware, enables `-accel hvf` on Apple Silicon (falling back to `-accel tcg` if unavailable), attaches `ramfb`, `virtio-keyboard-device`, `virtio-tablet-device`, and `virtio-blk-device`, and logs serial output to `/tmp/ojjyos-serial.log`.
+`scripts/run-qemu.sh` locates firmware, uses TCG with one vCPU, attaches the devices above, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. A 1024x768 guest still has aspect-ratio bars on widescreen displays; VNC stretching has not been verified or added.
+
+The VirtualBox runner preserves an existing VDI rather than recreating it and refuses to force-stop a running VM. A VDI has its own saved data; rebuilding a raw QEMU image does not update that VDI.
 
 ---
 
@@ -127,14 +134,25 @@ ARCH=x86_64 ./scripts/build.sh
 ## Running the Host Unit Tests
 
 ```bash
-mkdir -p build/tests
-clang -fno-builtin -Wno-incompatible-library-redeclaration -Ikernel/src -O2 \
-  -o build/tests/test_fs tests/test_fs.c kernel/src/fs/ojfs.c kernel/src/fs/vfs.c kernel/src/string.c
-clang -fno-builtin -Wno-incompatible-library-redeclaration -Ikernel/src -O2 \
-  -o build/tests/test_ramfs tests/test_ramfs.c kernel/src/fs/ramfs.c kernel/src/fs/vfs.c kernel/src/users.c kernel/src/string.c
-./build/tests/test_fs
-./build/tests/test_ramfs
+bash scripts/mkfs.sh  # Generate the embedded system filesystem if needed
+bash scripts/test.sh
+
+# Optional ASan/UBSan; use a compiler runtime compatible with your macOS:
+HOST_CC=/opt/homebrew/opt/llvm/bin/clang OJJY_SANITIZE=1 bash scripts/test.sh
+
+# Optional live check against a fresh build (choose a NEW output directory):
+python3 tests/qemu_smoke.py --arch aarch64 \
+  --image build/aarch64/ojjyos3.img --output build/smoke-arm --fresh-data
 ```
+
+`--fresh-data` resets only the newly created private smoke-test disk, never the
+source image. The smoke test also rebuilds that private disk and corrupts its
+newest checkpoint to verify recovery. Evidence stays in its output directory.
+
+Process entries and syscall dispatch exist, but apps still execute in the kernel.
+Activity Monitor's task ticks are estimates, not scheduler measurements. Protected
+userspace, app crash isolation, strong password derivation, and enforced file
+authorization are not implemented by this reliability pass.
 
 ---
 

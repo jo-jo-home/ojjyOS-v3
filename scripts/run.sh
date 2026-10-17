@@ -17,7 +17,7 @@ VM_VRAM=128           # MB
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/build"
-IMAGE="$BUILD_DIR/ojjyos3.img"
+IMAGE="$BUILD_DIR/x86_64/ojjyos3.img"
 
 # Serial log location
 SERIAL_LOG="/tmp/ojjyos-serial.log"
@@ -48,25 +48,26 @@ if ! command -v VBoxManage &> /dev/null; then
     exit 1
 fi
 
-# Convert raw image to VDI format (VirtualBox native)
+if VBoxManage list runningvms | grep -q "\"$VM_NAME\""; then
+    echo "VM is running. Shut it down inside ojjyOS first; refusing to discard unsaved files." >&2
+    exit 1
+fi
+
+# A VDI contains its own saved user data. Never recreate it on every launch.
 VDI_IMAGE="$BUILD_DIR/ojjyos3.vdi"
-echo -e "${YELLOW}Converting disk image to VDI format...${NC}"
-rm -f "$VDI_IMAGE"
-VBoxManage convertfromraw "$IMAGE" "$VDI_IMAGE" --format VDI 2>/dev/null || {
-    echo -e "${YELLOW}Falling back to raw image...${NC}"
-    VDI_IMAGE="$IMAGE"
-}
+if [ ! -f "$VDI_IMAGE" ]; then
+    VDI_IMAGE="$BUILD_DIR/x86_64/ojjyos3.vdi"
+fi
+if [ ! -f "$VDI_IMAGE" ]; then
+    VBoxManage convertfromraw "$IMAGE" "$VDI_IMAGE" --format VDI
+else
+    echo "Reusing existing VDI and its saved files: $VDI_IMAGE"
+    echo "Raw-image rebuilds do not update an existing VDI. Use QEMU to test the rebuilt kernel."
+fi
 
 # Check if VM already exists
 if VBoxManage showvminfo "$VM_NAME" &>/dev/null; then
     echo -e "${YELLOW}VM '$VM_NAME' already exists.${NC}"
-
-    # Check if running
-    if VBoxManage list runningvms | grep -q "\"$VM_NAME\""; then
-        echo -e "${YELLOW}VM is running. Stopping...${NC}"
-        VBoxManage controlvm "$VM_NAME" poweroff 2>/dev/null || true
-        sleep 2
-    fi
 
     # Ensure IDE controller exists (ATA driver expects PIIX4 IDE)
     VBoxManage storagectl "$VM_NAME" --name "IDE" --add ide --controller PIIX4 2>/dev/null || true

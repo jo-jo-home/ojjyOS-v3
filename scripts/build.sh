@@ -23,18 +23,23 @@ if [ "$HOST_ARCH" = "arm64" ]; then
     HOST_ARCH="aarch64"
 fi
 ARCH="${ARCH:-${1:-$HOST_ARCH}}"
+if [ "$ARCH" = "arm64" ]; then ARCH="aarch64"; fi
 
 if [ "$ARCH" = "aarch64" ]; then
     EFI_NAME="BOOTAA64.EFI"
 else
-    ARCH="x86_64"
+    if [ "$ARCH" != "x86_64" ]; then
+        echo "Unknown architecture: $ARCH" >&2
+        exit 1
+    fi
     EFI_NAME="BOOTX64.EFI"
 fi
 
 # Directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-BUILD_DIR="$ROOT_DIR/build"
+BUILD_DIR="$ROOT_DIR/build/$ARCH"
+export OJJY_BUILD_DIR="$BUILD_DIR"
 BOOT_DIR="$ROOT_DIR/boot"
 KERNEL_DIR="$ROOT_DIR/kernel"
 
@@ -50,6 +55,15 @@ echo
 
 # Create build directory
 mkdir -p "$BUILD_DIR"
+# The boot/kernel objects and generated system image are shared build inputs.
+# Refuse concurrent full builds rather than mixing architectures silently.
+LOCK_DIR="$ROOT_DIR/build/.build-lock"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "Another build is active (or left $LOCK_DIR after interruption)." >&2
+    echo "Check for an active build before removing that lock directory." >&2
+    exit 1
+fi
+trap 'rmdir "$LOCK_DIR"' EXIT
 
 # Step 1: Build bootloader
 echo -e "${YELLOW}[1/5] Building bootloader ($ARCH)...${NC}"

@@ -60,6 +60,7 @@ void a64_irq_handler(void)
 void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
 {
     cli();
+    fb_use_backbuffer(false);
     serial_printf("\n[PANIC] Exception at EL1\n");
     serial_printf("  ESR_EL1 = 0x%x  (EC=0x%x, ISS=0x%x)\n",
         (unsigned int)esr,
@@ -94,7 +95,8 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
 /*
  * Polled device harvest: called from the kernel main loop.
  * The 1 kHz timer interrupt keeps the loop alive (wfi wakes on IRQ),
- * so input latency is at most one millisecond.
+     * so idle input is checked each tick. Rendering and blocking I/O can
+     * still delay a harvest; do not claim a hard one-millisecond bound.
  */
 void a64_poll_input(void)
 {

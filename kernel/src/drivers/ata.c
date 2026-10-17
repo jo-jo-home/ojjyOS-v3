@@ -344,7 +344,7 @@ int ata_read_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, void *buffer)
     }
 
     /* Bounds check against device capacity */
-    if (lba + count > dev->sectors) {
+    if (lba >= dev->sectors || count > dev->sectors - lba) {
         return -1;
     }
 
@@ -431,7 +431,7 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
     }
 
     /* Bounds check against device capacity */
-    if (lba + count > dev->sectors) {
+    if (lba >= dev->sectors || count > dev->sectors - lba) {
         return -1;
     }
 
@@ -494,8 +494,7 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
         }
 
         /* Flush cache */
-        outb(ch->io_base + ATA_REG_COMMAND, ATA_CMD_FLUSH);
-        if (!ata_wait_busy(ch, 500)) {
+        if (ata_flush(dev) != 0) {
             driver_report_error(&ata_driver, "Flush timeout during write");
             return -1;
         }
@@ -505,6 +504,17 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
     }
 
     return 0;
+}
+
+int ata_flush(AtaDevice *dev)
+{
+    if (!dev || !dev->present || dev->is_atapi) return -1;
+    AtaChannel *ch = &channels[dev->channel];
+    if (!ata_wait_busy(ch, 500)) return -1;
+    ata_select_drive(ch, dev->drive);
+    outb(ch->io_base + ATA_REG_COMMAND, ATA_CMD_FLUSH);
+    if (!ata_wait_busy(ch, 500)) return -1;
+    return (inb(ch->io_base + ATA_REG_STATUS) & (ATA_SR_ERR | ATA_SR_DF)) ? -1 : 0;
 }
 
 /*

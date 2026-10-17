@@ -69,6 +69,24 @@ Why: isolates external storage while keeping a consistent Finder path.
 
 ## 2) Filesystem Plan
 
+### Current writable storage (reliability pass)
+
+`/Users` and `/Library` are independent RAMFS instances checkpointed to disk.
+The data partition contains two alternating 8 MiB slots with CRC-32 protected
+payloads and commit headers. Boot restores the newest structurally valid,
+checksummed save, falling back to the older slot on corruption. Legacy v1
+snapshots have no checksum; structural validation permits migration without
+overwriting the old record first. Autosaves write in bounded batches; shutdown
+and explicit sync wait for a durable commit. CRC-32 does not provide encryption
+or protection against intentional disk edits.
+
+Rebuilding `build/<arch>/ojjyos3.img` preserves its data partition and keeps a
+full backup. Do not run old image-building scripts against saved disks. Never
+share one writable disk between VMs. User home folders are separate directories,
+not yet enforced authorization boundaries.
+
+The following phase descriptions are historical strategy notes.
+
 ### MVP (Phase 1) - Read-only packed filesystem
 
 Goal: get a reliable read-only system image working in VM.

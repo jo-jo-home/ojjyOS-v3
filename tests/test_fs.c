@@ -27,7 +27,6 @@ extern long write(int fd, const void *buf, unsigned long count);
 /* Test results */
 static int tests_run = 0;
 static int tests_failed = 0;
-static char outbuf[512];
 
 static void emit(const char *s)
 {

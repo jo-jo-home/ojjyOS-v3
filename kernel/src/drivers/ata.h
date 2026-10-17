@@ -50,6 +50,7 @@ int ata_read_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, void *buffer)
 
 /* Write sectors (blocking) */
 int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *buffer);
+int ata_flush(AtaDevice *dev);
 
 /* Print device info */
 void ata_print_devices(void);

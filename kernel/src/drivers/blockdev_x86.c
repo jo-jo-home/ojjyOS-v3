@@ -27,3 +27,15 @@ bool block_available(void)
 {
     return ata_get_primary_disk() != NULL;
 }
+
+uint64_t block_sector_count(void)
+{
+    AtaDevice *dev = ata_get_primary_disk();
+    return dev ? dev->sectors : 0;
+}
+
+int block_flush(void)
+{
+    AtaDevice *dev = ata_get_primary_disk();
+    return dev ? ata_flush(dev) : -1;
+}

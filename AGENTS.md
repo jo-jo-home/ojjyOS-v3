@@ -34,6 +34,21 @@ and the ordered roadmap of what comes next.
 
 All checklist items through Session 5 are **DONE and verified**:
 
+- **Session 6 (usability fixes + font, commit `6eea513`):** fixed the
+  constant screen flashing (compositor never enabled the back buffer —
+  every frame redrew straight into the live ramfb scanout; now renders
+  off-screen + presents once, with dirty-tracking so idle frames draw
+  **nothing** — verified 0.000% framebuffer diff when idle), 2x guest
+  cursor, `show-cursor=on` host cursor, `-smp 1` + MPIDR secondary-core
+  parking in entry.S, and a **new anti-aliased font** generated from
+  JetBrains Mono (SIL OFL 1.1, `fonts/`) via `tools/mkfont.py` —
+  `font_get_glyph_aa()` + per-pixel `fb_blend` in `fb_draw_char`.
+  Display tips: QEMU View → Zoom To Fit + Ctrl-⌘-F fullscreen (the
+  guest is 1024x768 — ramfb's only mode in this QEMU; virtio-gpu has no
+  GOP driver in the edk2 build, tested and rejected).
+
+All checklist items through Session 5 are **DONE and verified**:
+
 1. [x] Verified current state builds & host unit tests pass (§6):
    - `aarch64`: **28/28 kernel objects compile with 0 warnings, 0 errors**.
    - `x86_64`: **30/30 kernel objects compile with 0 warnings, 0 errors**.

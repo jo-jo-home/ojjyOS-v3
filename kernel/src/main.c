@@ -474,6 +474,11 @@ static void splash_render(const char *status, int pct)
     uint32_t height = fb_get_height();
     Color bg = BOOT_BG;
 
+    /* Render each splash stage into the off-screen buffer and present
+     * it in one go - drawing straight to the scanout made every boot
+     * stage flash visibly. */
+    fb_use_backbuffer(true);
+
     fb_clear(bg);
 
     /* Tahoe scene on top */
@@ -527,6 +532,8 @@ static void splash_render(const char *status, int pct)
     int hx = ((int)width - (int)strlen(hint) * FONT_WIDTH) / 2;
     fb_draw_string(hx, (int)height - 40, hint,
                    fb_blend(bg, COLOR_TEXT_LIGHT, 90), bg);
+
+    fb_present();
 }
 
 /*
@@ -537,6 +544,8 @@ static void show_power_screen(const char *line1, const char *line2)
     uint32_t width = fb_get_width();
     uint32_t height = fb_get_height();
 
+    /* Always target the live screen (the UI may be in back-buffer mode) */
+    fb_use_backbuffer(false);
     fb_clear(BOOT_BG);
 
     /* Moon and stars above the message */
@@ -940,7 +949,9 @@ void kernel_main(BootInfo *boot_info)
     interrupts_enable();
     splash_render("Welcome to ojjyOS", 100);
 
-    /* Boot complete: show the welcome banner */
+    /* Boot complete: show the welcome banner on the live screen
+     * (the splash rendered through the back buffer) */
+    fb_use_backbuffer(false);
     console_clear();
     console_set_colors(COLOR_TEXT_LIGHT, BOOT_BG);
     for (int i = 0; i < (int)(sizeof(boot_scene) / sizeof(boot_scene[0])); i++) {
@@ -1047,6 +1058,8 @@ void kernel_main(BootInfo *boot_info)
                             (event.key.modifiers & INPUT_MOD_SHIFT) &&
                             !compositor_overlay_active()) {
                             ui_mode = false;
+                            /* Console draws straight to the live screen */
+                            fb_use_backbuffer(false);
                             console_clear();
                             console_printf("Type 'help' for available commands.\n\n> ");
                             break;

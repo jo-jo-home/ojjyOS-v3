@@ -76,11 +76,21 @@ if [ "$ARCH" = "aarch64" ]; then
         exit 1
     fi
 
-    # QEMU on macOS: Apple Hypervisor.framework (HVF) does not emulate GICv2
-    # or ramfb unaligned MMIO, so use multi-threaded TCG (4 cores) with
-    # modern virtio-mmio v2 (force-legacy=false) for reliable boot + input + disk.
-    ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "4")
-    ACCEL_DESC="MTTCG (4-core ARM64 multi-threaded JIT)"
+    # QEMU on macOS: Apple HVF does not emulate this machine config
+    # (GICv2/ramfb), so use multi-threaded TCG. The kernel is strictly
+    # single-CPU (secondary cores are parked in entry.S), so one vCPU
+    # is correct and fast; the io threads still run alongside.
+    ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "1")
+    ACCEL_DESC="MTTCG (ARM64 JIT, 1 vCPU)"
+
+    # On macOS use the native cocoa display. show-cursor keeps the host
+    # pointer visible on top of the guest cursor (with the absolute
+    # virtio-tablet the two track the same position).
+    if [ "$(uname -s)" = "Darwin" ]; then
+        DISPLAY_ARGS=(-display "cocoa,show-cursor=on")
+    else
+        DISPLAY_ARGS=()
+    fi
 
     echo -e "  Architecture: ${GREEN}aarch64 (virt, GICv2 + virtio-mmio v2)${NC}"
     echo -e "  Accelerator:  ${GREEN}$ACCEL_DESC${NC}"
@@ -91,11 +101,16 @@ if [ "$ARCH" = "aarch64" ]; then
     echo -e "In another terminal, watch serial output with:"
     echo -e "  ${YELLOW}tail -f $SERIAL_LOG${NC}"
     echo
+    echo -e "${YELLOW}Display tips (macOS):${NC}"
+    echo    "  - QEMU menu: View -> Zoom To Fit, then View -> Enter Full Screen (Ctrl-Cmd-F)"
+    echo    "  - The guest runs at 1024x768; Zoom To Fit scales it to your screen"
+    echo
 
     exec qemu-system-aarch64 \
         -M virt,gic-version=2 \
         -m 2048 \
         "${ACCEL_ARGS[@]}" \
+        "${DISPLAY_ARGS[@]}" \
         -bios "$FIRMWARE" \
         -global virtio-mmio.force-legacy=false \
         -device ramfb \

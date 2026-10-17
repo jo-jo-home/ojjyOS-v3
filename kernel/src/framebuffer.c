@@ -176,16 +176,25 @@ void fb_draw_rect(int x, int y, int w, int h, Color color)
 }
 
 /*
- * Draw a character using bitmap font
+ * Draw a character using the anti-aliased font:
+ * each pixel of the 8x16 cell is blended toward the foreground by
+ * its coverage value, which gives smooth, modern-looking text.
  */
 void fb_draw_char(int x, int y, char c, Color fg, Color bg)
 {
-    const uint8_t *glyph = font_get_glyph(c);
+    const uint8_t *glyph = font_get_glyph_aa(c);
 
     for (int row = 0; row < FONT_HEIGHT; row++) {
-        uint8_t bits = glyph[row];
         for (int col = 0; col < FONT_WIDTH; col++) {
-            Color color = (bits & (0x80 >> col)) ? fg : bg;
+            uint8_t cov = glyph[row * FONT_WIDTH + col];
+            Color color;
+            if (cov == 0) {
+                color = bg;
+            } else if (cov >= 255) {
+                color = fg;
+            } else {
+                color = fb_blend(bg, fg, cov);
+            }
             fb_put_pixel(x + col, y + row, color);
         }
     }

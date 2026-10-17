@@ -80,6 +80,10 @@ static int cursor_y = 0;
 
 static char active_app_name[32] = "Finder";
 
+/* Dirty tracking (see compositor_tick): redraw only when something changed */
+static volatile bool need_redraw = true;
+static int last_drawn_minute = -1;
+
 typedef enum {
     APP_DEMO = 0,
     APP_FINDER,
@@ -375,6 +379,7 @@ static void finder_set_path(FinderState *state, const char *path);
 static bool desktop_handle_click(int x, int y, uint64_t now_ms);
 static void web_load_page(WebState *web, const char *page_id);
 static void web_go_history(WebState *web, int delta);
+static void mark_dirty(void);
 
 static inline Color blend(Color bg, Color fg, uint8_t alpha)
 {
@@ -2882,10 +2887,12 @@ static void draw_cursor(int x, int y)
         0xFE, 0xF0, 0xD8, 0x8C, 0x0C, 0x06
     };
 
+    /* Drawn at 2x so the pointer is clearly visible on a 1:1
+     * emulated display (1024x768 ramfb on a Retina screen). */
     for (int row = 0; row < 12; row++) {
         for (int col = 0; col < 8; col++) {
             if (cursor[row] & (0x80 >> col)) {
-                fb_put_pixel(x + col, y + row, COLOR_BLACK);
+                fb_fill_rect(x + col * 2, y + row * 2, 2, 2, COLOR_BLACK);
             }
         }
     }
@@ -2894,7 +2901,7 @@ static void draw_cursor(int x, int y)
             uint8_t inner = cursor[row] & (0x80 >> col);
             uint8_t left = cursor[row] & (0x80 >> (col - 1));
             if (inner && left) {
-                fb_put_pixel(x + col, y + row, COLOR_WHITE);
+                fb_fill_rect(x + col * 2, y + row * 2, 2, 2, COLOR_WHITE);
             }
         }
     }
@@ -4970,6 +4977,16 @@ void compositor_init(uint32_t width, uint32_t height)
 {
     comp_width = width;
     comp_height = height;
+
+    /* Render into the off-screen back buffer; compositor_tick presents
+     * finished frames with fb_present(). Without this the whole desktop
+     * repaints directly into the live scanout, which reads as constant
+     * full-screen flashing under emulation. */
+    fb_use_backbuffer(true);
+
+    need_redraw = true;
+    last_drawn_minute = -1;
+
     theme = theme_light();
     window_count = 0;
     active_window_index = -1;
@@ -5019,7 +5036,9 @@ void compositor_init(uint32_t width, uint32_t height)
 
 void compositor_set_dark_mode(bool enabled)
 {
-    dark_mode = enabled;
+     mark_dirty();
+
+   dark_mode = enabled;
     theme = dark_mode ? theme_dark() : theme_light();
     settings_get()->dark_mode = enabled;
     if (!wallpaper_loaded) {
@@ -5031,7 +5050,9 @@ static void wallpaper_load_file(const char *path);
 
 void compositor_set_wallpaper(const char *path)
 {
-    wallpaper_load_file(path);
+     mark_dirty();
+
+   wallpaper_load_file(path);
     wallpaper_rebuild_cache();
 }
 
@@ -5083,12 +5104,16 @@ static void wallpaper_load_file(const char *path)
 
 int compositor_create_window(const char *title, int x, int y, int w, int h)
 {
-    return create_window_internal(title, x, y, w, h, APP_DEMO);
+     mark_dirty();
+
+   return create_window_internal(title, x, y, w, h, APP_DEMO);
 }
 
 void compositor_move_window(int id, int x, int y)
 {
-    for (int i = 0; i < window_count; i++) {
+     mark_dirty();
+
+   for (int i = 0; i < window_count; i++) {
         if (windows[i].id == id) {
             windows[i].x = x;
             windows[i].y = y;
@@ -5102,7 +5127,9 @@ void compositor_move_window(int id, int x, int y)
 
 void compositor_resize_window(int id, int w, int h)
 {
-    for (int i = 0; i < window_count; i++) {
+     mark_dirty();
+
+   for (int i = 0; i < window_count; i++) {
         if (windows[i].id == id) {
             windows[i].w = w;
             windows[i].h = h;
@@ -5126,7 +5153,9 @@ void compositor_set_demo(int id, bool demo)
 
 void compositor_set_active_app(const char *name)
 {
-    if (!name || name[0] == '\0') return;
+     mark_dirty();
+
+   if (!name || name[0] == '\0') return;
     strncpy(active_app_name, name, sizeof(active_app_name) - 1);
 }
 
@@ -5141,7 +5170,9 @@ void compositor_set_wm_hooks(const CompositorWmHooks *hooks)
 
 int compositor_destroy_window(int id)
 {
-    return destroy_window_internal(id);
+     mark_dirty();
+
+   return destroy_window_internal(id);
 }
 
 void compositor_open_default_apps(void)
@@ -5211,7 +5242,9 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
 
 void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
 {
-    if (login_screen_visible()) {
+     mark_dirty();
+
+   if (login_screen_visible()) {
         active_menu = 0;
         ctx_menu_open = false;
 
@@ -5780,7 +5813,9 @@ bool compositor_overlay_active(void)
 
 void compositor_handle_mouse(int x, int y, bool down, bool up)
 {
-    cursor_x = x;
+     mark_dirty();
+
+   cursor_x = x;
     cursor_y = y;
 
     /* Drag hover: highlight drop targets in any Finder window with an
@@ -6898,7 +6933,9 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
 
 void compositor_handle_mouse_move(int32_t dx, int32_t dy)
 {
-    int speed = settings_get()->mouse_speed;
+     mark_dirty();
+
+   int speed = settings_get()->mouse_speed;
     if (speed < 1) speed = 1;
     if (speed > 4) speed = 4;
 
@@ -6951,7 +6988,9 @@ void compositor_get_cursor(int32_t *x, int32_t *y)
  */
 void compositor_handle_scroll(int32_t dx, int32_t dy)
 {
-    (void)dx;
+     mark_dirty();
+
+   (void)dx;
 
     if (overlay != OVERLAY_NONE) return;
     if (active_window_index < 0 || active_window_index >= window_count) return;
@@ -7000,7 +7039,9 @@ void compositor_handle_scroll(int32_t dx, int32_t dy)
  */
 void compositor_handle_key_release(KeyCode keycode, uint8_t modifiers)
 {
-    bool super_now = (modifiers & INPUT_MOD_SUPER) != 0;
+     mark_dirty();
+
+   bool super_now = (modifiers & INPUT_MOD_SUPER) != 0;
 
     if ((keycode == KEY_LSUPER || keycode == KEY_RSUPER) && !super_now) {
         if (overlay == OVERLAY_APP_SWITCHER) {
@@ -7020,13 +7061,39 @@ void compositor_handle_key_release(KeyCode keycode, uint8_t modifiers)
     }
 }
 
-static void update_animations(void)
+/*
+ * Dirty tracking: with software rendering under emulation, redrawing
+ * the whole screen every frame makes the visible repaint sweep look
+ * like constant flashing. We now render to the off-screen back buffer
+ * and only redraw (and present) when something actually changed:
+ * input, animations, dock bounce, or the minute hand of the clock.
+ */
+static void mark_dirty(void)
 {
+    need_redraw = true;
+}
+
+static bool any_dock_bounce(uint64_t now_ms)
+{
+    int count = app_registry_count();
+    for (int i = 0; i < count; i++) {
+        AppInfo *app = app_registry_get(i);
+        if (app && app->bounce_until > now_ms) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool update_animations(void)
+{
+    bool changed = false;
     bool no_motion = settings_get()->reduced_motion;
 
     for (int i = 0; i < window_count; i++) {
         CompositorWindow *win = &windows[i];
         if (win->animating) {
+            changed = true;
             if (no_motion) {
                 win->anim_open = 1000;
                 win->animating = false;
@@ -7047,20 +7114,20 @@ static void update_animations(void)
     int target_mission = (overlay == OVERLAY_MISSION_CONTROL) ? 1000 : 0;
     int target_switcher = (overlay == OVERLAY_APP_SWITCHER) ? 1000 : 0;
 
-    if (anim_spotlight < target_spotlight) anim_spotlight = MIN(1000, anim_spotlight + step);
-    if (anim_spotlight > target_spotlight) anim_spotlight = MAX(0, anim_spotlight - step);
+    if (anim_spotlight < target_spotlight) { anim_spotlight = MIN(1000, anim_spotlight + step); changed = true; }
+    if (anim_spotlight > target_spotlight) { anim_spotlight = MAX(0, anim_spotlight - step); changed = true; }
 
-    if (anim_launchpad < target_launchpad) anim_launchpad = MIN(1000, anim_launchpad + step);
-    if (anim_launchpad > target_launchpad) anim_launchpad = MAX(0, anim_launchpad - step);
+    if (anim_launchpad < target_launchpad) { anim_launchpad = MIN(1000, anim_launchpad + step); changed = true; }
+    if (anim_launchpad > target_launchpad) { anim_launchpad = MAX(0, anim_launchpad - step); changed = true; }
 
-    if (anim_control_center < target_control) anim_control_center = MIN(1000, anim_control_center + step);
-    if (anim_control_center > target_control) anim_control_center = MAX(0, anim_control_center - step);
+    if (anim_control_center < target_control) { anim_control_center = MIN(1000, anim_control_center + step); changed = true; }
+    if (anim_control_center > target_control) { anim_control_center = MAX(0, anim_control_center - step); changed = true; }
 
-    if (anim_mission_control < target_mission) anim_mission_control = MIN(1000, anim_mission_control + step);
-    if (anim_mission_control > target_mission) anim_mission_control = MAX(0, anim_mission_control - step);
+    if (anim_mission_control < target_mission) { anim_mission_control = MIN(1000, anim_mission_control + step); changed = true; }
+    if (anim_mission_control > target_mission) { anim_mission_control = MAX(0, anim_mission_control - step); changed = true; }
 
-    if (anim_app_switcher < target_switcher) anim_app_switcher = MIN(1000, anim_app_switcher + step);
-    if (anim_app_switcher > target_switcher) anim_app_switcher = MAX(0, anim_app_switcher - step);
+    if (anim_app_switcher < target_switcher) { anim_app_switcher = MIN(1000, anim_app_switcher + step); changed = true; }
+    if (anim_app_switcher > target_switcher) { anim_app_switcher = MAX(0, anim_app_switcher - step); changed = true; }
 }
 
 void compositor_handle_right_click(int x, int y)
@@ -7090,7 +7157,24 @@ void compositor_tick(uint64_t now_ms)
     int focused_type = (active_window_index >= 0 && active_window_index < window_count)
                        ? (int)app_states[active_window_index].type : -1;
     proc_tick(delta > 100 ? 33 : delta, focused_type);
-    update_animations();
+    bool anim_changed = update_animations();
+
+    /* Clock hands: redraw when the displayed minute rolls over */
+    RtcTime tick_time;
+    rtc_read_time(&tick_time);
+    if (tick_time.minute != last_drawn_minute) {
+        last_drawn_minute = tick_time.minute;
+        need_redraw = true;
+    }
+
+    /* Dirty tracking: skip the frame entirely when nothing changed.
+     * This is what keeps the software-rendered desktop from
+     * flashing a full-screen repaint sweep under emulation. */
+    bool animating = anim_changed || any_dock_bounce(now_ms);
+    if (!need_redraw && !animating) {
+        return;
+    }
+    need_redraw = false;
 
     draw_wallpaper();
 

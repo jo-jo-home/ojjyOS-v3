@@ -19,6 +19,15 @@
 .extern a64_exception_handler
 
 _start:
+    /* Park secondary cores: this kernel is strictly single-CPU.
+     * Non-zero Aff0 cores wait here forever (WFE) without touching
+     * kernel state, so -smp N is safe. */
+    mrs x9, mpidr_el1
+    ands x9, x9, #0xFF
+    b.eq 1f
+2:  wfe
+    b 2b
+1:
     /* Preserve the BootInfo pointer across the BSS clear */
     mov x19, x0
 

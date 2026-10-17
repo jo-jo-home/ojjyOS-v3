@@ -90,58 +90,48 @@ with open(boot_path, "rb") as f:
 with open(kernel_path, "rb") as f:
     kernel_bytes = f.read()
 
-# Build 32 MB FAT32 image in memory
+# Build 32 MB FAT16 EFI System Partition in memory
+# (32 MB = 65536 sectors; with 4 sectors/cluster = 16343 clusters, which is
+# strictly within the Microsoft/UEFI FAT16 range 4085..65524)
 esp = bytearray(ESP_SECTORS * SECTOR)
-RSRV = 32
+RSRV = 4
 NFATS = 2
-SPF = 512  # 512 sectors per FAT -> 65536 clusters max (1 sector/cluster)
-SPC = 1
-DATA_SEC_START = RSRV + NFATS * SPF
+SPF = 64            # 64 sectors per FAT16 -> 16384 16-bit entries
+SPC = 4             # 4 sectors (2048 bytes) per cluster
+ROOT_ENTRIES = 512  # 32 sectors of root directory
+ROOT_SEC_START = RSRV + NFATS * SPF
+ROOT_SECS = (ROOT_ENTRIES * 32) // SECTOR
+DATA_SEC_START = ROOT_SEC_START + ROOT_SECS
+CLUS_BYTES = SPC * SECTOR
 
-# Boot Sector (BPB)
+# Boot Sector (FAT16 BPB)
 bpb = bytearray(SECTOR)
-bpb[0:3] = b"\xEB\x58\x90"
-bpb[3:11] = b"OJJYOS3 "
+bpb[0:3] = b"\xEB\x3C\x90"
+bpb[3:11] = b"MSDOS5.0"
 struct.pack_into("<H", bpb, 11, SECTOR)
 bpb[13] = SPC
 struct.pack_into("<H", bpb, 14, RSRV)
 bpb[16] = NFATS
-struct.pack_into("<H", bpb, 17, 0)
-struct.pack_into("<H", bpb, 19, 0)
+struct.pack_into("<H", bpb, 17, ROOT_ENTRIES)
+struct.pack_into("<H", bpb, 19, 0)              # TotalSectors16 = 0 (use TotalSectors32)
 bpb[21] = 0xF8
-struct.pack_into("<H", bpb, 22, 0)
+struct.pack_into("<H", bpb, 22, SPF)            # FATSz16
 struct.pack_into("<H", bpb, 24, 32)
 struct.pack_into("<H", bpb, 26, 8)
 struct.pack_into("<I", bpb, 28, ESP_START_LBA)
-struct.pack_into("<I", bpb, 32, ESP_SECTORS)
-struct.pack_into("<I", bpb, 36, SPF)
-struct.pack_into("<H", bpb, 40, 0)
-struct.pack_into("<H", bpb, 42, 0)
-struct.pack_into("<I", bpb, 44, 2)      # Root cluster = 2
-struct.pack_into("<H", bpb, 48, 1)      # FSInfo sector = 1
-struct.pack_into("<H", bpb, 50, 6)      # Backup boot sector = 6
-bpb[64] = 0x80
-bpb[66] = 0x29
-struct.pack_into("<I", bpb, 67, 0x4F4A4A59)
-bpb[71:82] = b"OJJYOS EFI "
-bpb[82:90] = b"FAT32   "
+struct.pack_into("<I", bpb, 32, ESP_SECTORS)    # TotalSectors32 = 65536
+bpb[36] = 0x80
+bpb[38] = 0x29
+struct.pack_into("<I", bpb, 39, 0x4F4A4A59)
+bpb[43:54] = b"OJJYOS EFI "
+bpb[54:62] = b"FAT16   "
 bpb[510:512] = b"\x55\xAA"
 esp[0:SECTOR] = bpb
-esp[6*SECTOR:7*SECTOR] = bpb
 
-# FSInfo sector
-fsinfo = bytearray(SECTOR)
-struct.pack_into("<I", fsinfo, 0, 0x41615252)
-struct.pack_into("<I", fsinfo, 484, 0x61417272)
-struct.pack_into("<I", fsinfo, 488, 0xFFFFFFFF)
-struct.pack_into("<I", fsinfo, 492, 0xFFFFFFFF)
-fsinfo[510:512] = b"\x55\xAA"
-esp[SECTOR:2*SECTOR] = fsinfo
-
-fat = [0] * (SPF * (SECTOR // 4))
-fat[0] = 0x0FFFFFF8
-fat[1] = 0x0FFFFFFF
-next_clus = 6  # Clusters: 2=root(/), 3=/EFI, 4=/EFI/BOOT, 5=/EFI/ojjyos
+fat = [0] * (SPF * (SECTOR // 2))
+fat[0] = 0xFFF8
+fat[1] = 0xFFFF
+next_clus = 5  # Clusters: 2=/EFI, 3=/EFI/BOOT, 4=/EFI/OJJYOS
 
 def clus_offset(c):
     return (DATA_SEC_START + (c - 2) * SPC) * SECTOR
@@ -151,14 +141,14 @@ def alloc_file(data):
     if len(data) == 0:
         c = next_clus
         next_clus += 1
-        fat[c] = 0x0FFFFFFF
+        fat[c] = 0xFFFF
         return c
-    n = (len(data) + SECTOR - 1) // SECTOR
+    n = (len(data) + CLUS_BYTES - 1) // CLUS_BYTES
     first = next_clus
     for i in range(n):
         c = first + i
-        fat[c] = (c + 1) if (i + 1 < n) else 0x0FFFFFFF
-        chunk = data[i*SECTOR:(i+1)*SECTOR]
+        fat[c] = (c + 1) if (i + 1 < n) else 0xFFFF
+        chunk = data[i*CLUS_BYTES:(i+1)*CLUS_BYTES]
         off = clus_offset(c)
         esp[off:off+len(chunk)] = chunk
     next_clus += n
@@ -169,43 +159,44 @@ def dirent_83(name8, ext3, attr, clus, size):
     ent[0:8] = name8.ljust(8, " ").encode("ascii")[:8]
     ent[8:11] = ext3.ljust(3, " ").encode("ascii")[:3]
     ent[11] = attr
-    struct.pack_into("<H", ent, 20, (clus >> 16) & 0xFFFF)
+    struct.pack_into("<H", ent, 20, 0)
     struct.pack_into("<H", ent, 26, clus & 0xFFFF)
     struct.pack_into("<I", ent, 28, size)
     return ent
 
-# Reserve directory clusters 2..5
-for c in (2, 3, 4, 5):
-    fat[c] = 0x0FFFFFFF
+# Reserve directory clusters 2..4
+for c in (2, 3, 4):
+    fat[c] = 0xFFFF
 
 boot_clus = alloc_file(boot_bytes)
 kern_clus = alloc_file(kernel_bytes)
 
-# Cluster 2: Root directory -> EFI
-esp[clus_offset(2):clus_offset(2)+32] = dirent_83("EFI", "", 0x10, 3, 0)
+# Root directory (at ROOT_SEC_START): -> EFI
+root_off = ROOT_SEC_START * SECTOR
+esp[root_off:root_off+32] = dirent_83("EFI", "", 0x10, 2, 0)
 
-# Cluster 3: /EFI -> ., .., BOOT, OJJYOS
-off3 = clus_offset(3)
-esp[off3+0:off3+32]   = dirent_83(".", "", 0x10, 3, 0)
-esp[off3+32:off3+64]  = dirent_83("..", "", 0x10, 0, 0)
-esp[off3+64:off3+96]  = dirent_83("BOOT", "", 0x10, 4, 0)
-esp[off3+96:off3+128] = dirent_83("OJJYOS", "", 0x10, 5, 0)
+# Cluster 2: /EFI -> ., .., BOOT, OJJYOS
+off2 = clus_offset(2)
+esp[off2+0:off2+32]   = dirent_83(".", "", 0x10, 2, 0)
+esp[off2+32:off2+64]  = dirent_83("..", "", 0x10, 0, 0)
+esp[off2+64:off2+96]  = dirent_83("BOOT", "", 0x10, 3, 0)
+esp[off2+96:off2+128] = dirent_83("OJJYOS", "", 0x10, 4, 0)
 
-# Cluster 4: /EFI/BOOT -> ., .., BOOTAA64.EFI or BOOTX64.EFI
+# Cluster 3: /EFI/BOOT -> ., .., BOOTAA64.EFI or BOOTX64.EFI
 bbase, bext = efi_name.split(".")
+off3 = clus_offset(3)
+esp[off3+0:off3+32]  = dirent_83(".", "", 0x10, 3, 0)
+esp[off3+32:off3+64] = dirent_83("..", "", 0x10, 2, 0)
+esp[off3+64:off3+96] = dirent_83(bbase.upper(), bext.upper(), 0x20, boot_clus, len(boot_bytes))
+
+# Cluster 4: /EFI/OJJYOS -> ., .., KERNEL.BIN
 off4 = clus_offset(4)
 esp[off4+0:off4+32]  = dirent_83(".", "", 0x10, 4, 0)
-esp[off4+32:off4+64] = dirent_83("..", "", 0x10, 3, 0)
-esp[off4+64:off4+96] = dirent_83(bbase.upper(), bext.upper(), 0x20, boot_clus, len(boot_bytes))
+esp[off4+32:off4+64] = dirent_83("..", "", 0x10, 2, 0)
+esp[off4+64:off4+96] = dirent_83("KERNEL", "BIN", 0x20, kern_clus, len(kernel_bytes))
 
-# Cluster 5: /EFI/OJJYOS -> ., .., KERNEL.BIN
-off5 = clus_offset(5)
-esp[off5+0:off5+32]  = dirent_83(".", "", 0x10, 5, 0)
-esp[off5+32:off5+64] = dirent_83("..", "", 0x10, 3, 0)
-esp[off5+64:off5+96] = dirent_83("KERNEL", "BIN", 0x20, kern_clus, len(kernel_bytes))
-
-# Write both FAT copies
-fat_bytes = struct.pack(f"<{len(fat)}I", *fat)
+# Write both FAT16 copies
+fat_bytes = struct.pack(f"<{len(fat)}H", *fat)
 for fidx in range(NFATS):
     foff = (RSRV + fidx * SPF) * SECTOR
     esp[foff:foff+len(fat_bytes)] = fat_bytes

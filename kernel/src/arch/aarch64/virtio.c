@@ -34,11 +34,13 @@ static int virtio_dev_start(uint32_t base)
     vio_write(base, VIO_STATUS, 0);                     /* Reset */
     vio_write(base, VIO_STATUS, VIO_STATUS_ACKNOWLEDGE | VIO_STATUS_DRIVER);
 
-    /* Offer no features for selector 0 and 1 */
+    /* Selector 0: no optional device-specific features.
+     * Selector 1: negotiate VIRTIO_F_VERSION_1 (bit 32 = word 1 bit 0),
+     * required by VirtIO 1.0+ (virtio-mmio version 2). */
     vio_write(base, VIO_DRVFEAT_SEL, 0);
     vio_write(base, VIO_DRVFEAT, 0);
     vio_write(base, VIO_DRVFEAT_SEL, 1);
-    vio_write(base, VIO_DRVFEAT, 0);
+    vio_write(base, VIO_DRVFEAT, 1u);
 
     vio_write(base, VIO_STATUS,
         VIO_STATUS_ACKNOWLEDGE | VIO_STATUS_DRIVER | VIO_STATUS_FEATURES_OK);

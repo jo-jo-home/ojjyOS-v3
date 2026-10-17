@@ -8,21 +8,89 @@
 #include "font.h"
 #include "string.h"
 
-/* Framebuffer state */
+/* Framebuffer state: fb_base/fb_pitch describe the CURRENT draw target,
+ * which is either the real screen or the off-screen back buffer. */
 static uint32_t *fb_base = NULL;
 static uint32_t fb_width = 0;
 static uint32_t fb_height = 0;
 static uint32_t fb_pitch = 0;   /* In pixels, not bytes */
+
+/* Real (visible) screen */
+static uint32_t *fb_screen = NULL;
+static uint32_t fb_screen_pitch = 0;
+
+/* Off-screen back buffer (static: the kernel heap is far too small) */
+#define FB_BACK_MAX_PIXELS  (1920 * 1200)
+static uint32_t fb_back[FB_BACK_MAX_PIXELS];
+static bool fb_back_active = false;
 
 /*
  * Initialize framebuffer from boot info
  */
 void fb_init(BootInfo *info)
 {
-    fb_base = (uint32_t *)info->fb_addr;
+    fb_screen = (uint32_t *)info->fb_addr;
     fb_width = info->fb_width;
     fb_height = info->fb_height;
-    fb_pitch = info->fb_pitch / 4;  /* Convert bytes to pixels */
+    fb_screen_pitch = info->fb_pitch / 4;  /* Convert bytes to pixels */
+    fb_base = fb_screen;
+    fb_pitch = fb_screen_pitch;
+    fb_back_active = false;
+}
+
+/*
+ * Route drawing to the off-screen back buffer (true) or straight to the
+ * screen (false). Returns false if the screen is too big for the buffer.
+ */
+bool fb_use_backbuffer(bool enable)
+{
+    if (enable) {
+        if ((uint64_t)fb_width * fb_height > FB_BACK_MAX_PIXELS) {
+            return false;
+        }
+        fb_base = fb_back;
+        fb_pitch = fb_width;
+        fb_back_active = true;
+    } else {
+        fb_base = fb_screen;
+        fb_pitch = fb_screen_pitch;
+        fb_back_active = false;
+    }
+    return true;
+}
+
+/*
+ * Copy the finished back-buffer frame to the visible screen.
+ */
+void fb_present(void)
+{
+    if (!fb_back_active || !fb_screen) return;
+    for (uint32_t y = 0; y < fb_height; y++) {
+        uint64_t *dst = (uint64_t *)(fb_screen + y * fb_screen_pitch);
+        const uint64_t *src = (const uint64_t *)(fb_back + y * fb_width);
+        uint32_t n = fb_width / 2;
+        for (uint32_t i = 0; i < n; i++) {
+            dst[i] = src[i];
+        }
+        if (fb_width & 1) {
+            fb_screen[y * fb_screen_pitch + fb_width - 1] = fb_back[y * fb_width + fb_width - 1];
+        }
+    }
+}
+
+/*
+ * Copy a full-screen image (width*height pixels, tightly packed) into
+ * the current draw target.
+ */
+void fb_blit_full(const uint32_t *src)
+{
+    for (uint32_t y = 0; y < fb_height; y++) {
+        uint32_t *row = fb_base + y * fb_pitch;
+        const uint32_t *srow = src + y * fb_width;
+        for (uint32_t x = 0; x < fb_width; x++) {
+            row[x] = srow[x];
+        }
+    }
 }
 
 /*

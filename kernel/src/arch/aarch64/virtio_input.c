@@ -22,8 +22,8 @@
 #include "serial.h"
 #include "string.h"
 
-/* virtio-input config selectors */
-#define VIRTIO_INPUT_CFG_ABS_INFO    6
+/* virtio-input config selectors (per Linux virtio_input.h) */
+#define VIRTIO_INPUT_CFG_ABS_INFO    0x12
 
 /* evdev event types */
 #define EV_SYN    0
@@ -68,7 +68,7 @@
 #define ABS_X        0
 #define ABS_Y        1
 
-#define INPUT_EVENTS_PER_BUF    32
+#define INPUT_EVENTS_PER_BUF    64
 #define MAX_INPUT_DEVICES       4
 
 typedef struct {
@@ -93,18 +93,38 @@ static int input_dev_count = 0;
 static bool in_shift, in_ctrl, in_alt, in_super, in_caps, in_numlock;
 static bool caps_down;
 
-/* Linux keycode -> kernel KeyCode */
+/* Linux keycode -> kernel KeyCode (full keyboard + modifiers + nav) */
 static const KeyCode key_to_keycode[128] = {
     [1] = KEY_ESCAPE,
+    [2] = KEY_1, [3] = KEY_2, [4] = KEY_3, [5] = KEY_4, [6] = KEY_5,
+    [7] = KEY_6, [8] = KEY_7, [9] = KEY_8, [10] = KEY_9, [11] = KEY_0,
+    [12] = KEY_MINUS, [13] = KEY_EQUALS,
     [14] = KEY_BACKSPACE,
     [15] = KEY_TAB,
+    [16] = KEY_Q, [17] = KEY_W, [18] = KEY_E, [19] = KEY_R, [20] = KEY_T,
+    [21] = KEY_Y, [22] = KEY_U, [23] = KEY_I, [24] = KEY_O, [25] = KEY_P,
+    [26] = KEY_LBRACKET, [27] = KEY_RBRACKET,
     [28] = KEY_ENTER,
     [29] = KEY_LCTRL,
+    [30] = KEY_A, [31] = KEY_S, [32] = KEY_D, [33] = KEY_F, [34] = KEY_G,
+    [35] = KEY_H, [36] = KEY_J, [37] = KEY_K, [38] = KEY_L,
+    [39] = KEY_SEMICOLON, [40] = KEY_QUOTE, [41] = KEY_BACKTICK,
     [42] = KEY_LSHIFT,
+    [43] = KEY_BACKSLASH,
+    [44] = KEY_Z, [45] = KEY_X, [46] = KEY_C, [47] = KEY_V, [48] = KEY_B,
+    [49] = KEY_N, [50] = KEY_M,
+    [51] = KEY_COMMA, [52] = KEY_PERIOD, [53] = KEY_SLASH,
     [54] = KEY_RSHIFT,
+    [55] = KEY_KPMULTIPLY,
     [56] = KEY_LALT,
     [57] = KEY_SPACE,
     [58] = KEY_CAPSLOCK,
+    /* F1..F12 = 59..68, 87, 88 */
+    [59] = KEY_F1,  [60] = KEY_F2,  [61] = KEY_F3,
+    [62] = KEY_F4,  [63] = KEY_F5,  [64] = KEY_F6,
+    [65] = KEY_F7,  [66] = KEY_F8,  [67] = KEY_F9,
+    [68] = KEY_F10, [69] = KEY_F11, [70] = KEY_F12,
+    [87] = KEY_F11, [88] = KEY_F12,
     [96] = KEY_ENTER,
     [97] = KEY_RCTRL,
     [100] = KEY_RALT,
@@ -120,21 +140,16 @@ static const KeyCode key_to_keycode[128] = {
     [111] = KEY_DELETE,
     [125] = KEY_LSUPER,
     [126] = KEY_RSUPER,
-    /* F1..F12 = 59..70 */
-    [59] = KEY_F1,  [60] = KEY_F2,  [61] = KEY_F3,
-    [62] = KEY_F4,  [63] = KEY_F5,  [64] = KEY_F6,
-    [65] = KEY_F7,  [66] = KEY_F8,  [67] = KEY_F9,
-    [68] = KEY_F10, [69] = KEY_F11, [70] = KEY_F12,
 };
 
 /* Linux keycode -> ASCII (unshifted) */
 static const char key_to_ascii[128] = {
     [2] = '1', [3] = '2', [4] = '3', [5] = '4', [6] = '5',
     [7] = '6', [8] = '7', [9] = '8', [10] = '9', [11] = '0',
-    [12] = '-', [13] = '=',
+    [12] = '-', [13] = '=', [14] = '\b', [15] = '\t',
     [16] = 'q', [17] = 'w', [18] = 'e', [19] = 'r', [20] = 't',
     [21] = 'y', [22] = 'u', [23] = 'i', [24] = 'o', [25] = 'p',
-    [26] = '[', [27] = ']',
+    [26] = '[', [27] = ']', [28] = '\n',
     [30] = 'a', [31] = 's', [32] = 'd', [33] = 'f', [34] = 'g',
     [35] = 'h', [36] = 'j', [37] = 'k', [38] = 'l',
     [39] = ';', [40] = '\'', [41] = '`',
@@ -142,17 +157,17 @@ static const char key_to_ascii[128] = {
     [44] = 'z', [45] = 'x', [46] = 'c', [47] = 'v', [48] = 'b',
     [49] = 'n', [50] = 'm',
     [51] = ',', [52] = '.', [53] = '/',
-    [57] = ' ',
+    [55] = '*', [57] = ' ', [96] = '\n',
 };
 
 /* Linux keycode -> ASCII (shifted) */
 static const char key_to_ascii_shift[128] = {
     [2] = '!', [3] = '@', [4] = '#', [5] = '$', [6] = '%',
     [7] = '^', [8] = '&', [9] = '*', [10] = '(', [11] = ')',
-    [12] = '_', [13] = '+',
+    [12] = '_', [13] = '+', [14] = '\b', [15] = '\t',
     [16] = 'Q', [17] = 'W', [18] = 'E', [19] = 'R', [20] = 'T',
     [21] = 'Y', [22] = 'U', [23] = 'I', [24] = 'O', [25] = 'P',
-    [26] = '{', [27] = '}',
+    [26] = '{', [27] = '}', [28] = '\n',
     [30] = 'A', [31] = 'S', [32] = 'D', [33] = 'F', [34] = 'G',
     [35] = 'H', [36] = 'J', [37] = 'K', [38] = 'L',
     [39] = ':', [40] = '"', [41] = '~',
@@ -160,7 +175,7 @@ static const char key_to_ascii_shift[128] = {
     [44] = 'Z', [45] = 'X', [46] = 'C', [47] = 'V', [48] = 'B',
     [49] = 'N', [50] = 'M',
     [51] = '<', [52] = '>', [53] = '?',
-    [57] = ' ',
+    [55] = '*', [57] = ' ', [96] = '\n',
 };
 
 static void update_modifiers(void)
@@ -335,12 +350,21 @@ int virtio_input_attach(uint32_t mmio_base)
 
     virtio_dev_ready(mmio_base);
 
-    /* Prime the queue with the event buffer (device-writable) */
-    uint16_t d = virtio_desc_add(&dev->vq,
-        (uint64_t)(uintptr_t)dev->events,
-        sizeof(dev->events),
-        VRING_DESC_F_WRITE);
-    virtio_submit(&dev->vq, d);
+    /* Prime the queue with 64 individual 8-byte event descriptors
+     * (QEMU virtio-input requires one descriptor per VirtioInputEvent,
+     * and drops batches if fewer descriptors than batch_size are available). */
+    for (uint16_t b = 0; b < INPUT_EVENTS_PER_BUF; b++) {
+        dev->vq.mem->desc[b].addr  = (uint64_t)(uintptr_t)&dev->events[b];
+        dev->vq.mem->desc[b].len   = sizeof(VirtioInputEvent);
+        dev->vq.mem->desc[b].flags = VRING_DESC_F_WRITE;
+        dev->vq.mem->desc[b].next  = 0;
+        dev->vq.mem->avail.ring[b] = b;
+    }
+    __asm__ volatile("dmb ish" ::: "memory");
+    dev->vq.avail_idx = INPUT_EVENTS_PER_BUF;
+    dev->vq.mem->avail.idx = INPUT_EVENTS_PER_BUF;
+    __asm__ volatile("dmb ish" ::: "memory");
+    *(volatile uint32_t *)(uintptr_t)(mmio_base + VIO_QUEUE_NOTIFY) = 0;
 
     serial_printf("[VIRTIO-INPUT] Device %d attached (%s, abs %dx%d)\n",
         idx, dev->has_pointer ? "pointer" : "keyboard",
@@ -356,24 +380,30 @@ void virtio_input_poll(void)
     for (int i = 0; i < input_dev_count; i++) {
         InputDevState *dev = &input_devs[i];
         VirtQueue *vq = &dev->vq;
+        bool recycled = false;
 
-        /* Only one buffer is ever in flight per device */
-        uint32_t len = 0;
-        if (virtio_poll_used(vq, &len)) {
-            int n_events = (int)(len / sizeof(VirtioInputEvent));
-            if (n_events > INPUT_EVENTS_PER_BUF) {
-                n_events = INPUT_EVENTS_PER_BUF;
-            }
-            for (int e = 0; e < n_events; e++) {
-                handle_event(dev, &dev->events[e]);
-            }
+        while (vq->used_idx != vq->mem->used.idx) {
+            __asm__ volatile("dmb ish" ::: "memory");
+            uint16_t u_slot = vq->used_idx & (VQ_SIZE - 1);
+            uint16_t desc_id = (uint16_t)vq->mem->used.elems[u_slot].id;
+            vq->used_idx = (uint16_t)(vq->used_idx + 1);
 
-            /* Recycle the buffer for the next batch */
-            uint16_t d = virtio_desc_add(vq,
-                (uint64_t)(uintptr_t)dev->events,
-                sizeof(dev->events),
-                VRING_DESC_F_WRITE);
-            virtio_submit(vq, d);
+            if (desc_id < INPUT_EVENTS_PER_BUF) {
+                handle_event(dev, &dev->events[desc_id]);
+
+                /* Re-publish this descriptor in the available ring */
+                uint16_t a_slot = vq->avail_idx & (VQ_SIZE - 1);
+                vq->mem->avail.ring[a_slot] = desc_id;
+                __asm__ volatile("dmb ish" ::: "memory");
+                vq->avail_idx = (uint16_t)(vq->avail_idx + 1);
+                vq->mem->avail.idx = vq->avail_idx;
+                recycled = true;
+            }
+        }
+
+        if (recycled) {
+            __asm__ volatile("dmb ish" ::: "memory");
+            *(volatile uint32_t *)(uintptr_t)(vq->mmio + VIO_QUEUE_NOTIFY) = 0;
         }
     }
 }

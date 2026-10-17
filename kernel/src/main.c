@@ -865,6 +865,10 @@ void kernel_main(BootInfo *boot_info)
     console_printf("Type 'help' for available commands, 'tree' for the filesystem.\n\n");
     console_printf("> ");
 
+    /* Automatically launch the macOS Tahoe desktop UI on boot
+     * (Shift+Esc returns to the text console at any time) */
+    cmd_ui(NULL);
+
     /* Cursor position */
     int32_t last_mx = -100, last_my = -100;
 

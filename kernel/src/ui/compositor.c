@@ -53,6 +53,18 @@ static uint32_t wallpaper_w = 0;
 static uint32_t wallpaper_h = 0;
 static uint8_t wallpaper_data[WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4];
 
+/* Screen-sized wallpaper caches, rebuilt only when the wallpaper or theme
+ * changes. Per-frame sampling becomes a single array read instead of a
+ * divide per pixel (wallpaper) or ~100 reads per pixel (glass blur). */
+#define WP_CACHE_MAX_PIXELS     (1920 * 1200)
+#define WP_CACHE_MAX_DIM        2048
+#define WP_BLUR_RADIUS          10
+static Color wp_cache[WP_CACHE_MAX_PIXELS];
+static Color wp_blur[WP_CACHE_MAX_PIXELS];
+static Color wp_line_tmp[WP_CACHE_MAX_DIM];
+static bool wp_cache_valid = false;
+static void wallpaper_rebuild_cache(void);
+
 static bool dragging = false;
 static int drag_index = -1;
 static int drag_dx = 0;
@@ -426,7 +438,7 @@ static Color wallpaper_sample_procedural(int x, int y)
     return base;
 }
 
-static Color wallpaper_sample(int x, int y)
+static Color wallpaper_sample_uncached(int x, int y)
 {
     if (!wallpaper_loaded || wallpaper_w == 0 || wallpaper_h == 0) {
         return wallpaper_sample_procedural(x, y);
@@ -448,26 +460,100 @@ static Color wallpaper_sample(int x, int y)
     return RGB(r, g, b);
 }
 
+static inline int clamp_coord(int v, int max)
+{
+    if (v < 0) return 0;
+    if (v >= max) return max - 1;
+    return v;
+}
+
+static Color wallpaper_sample(int x, int y)
+{
+    if (wp_cache_valid) {
+        x = clamp_coord(x, (int)comp_width);
+        y = clamp_coord(y, (int)comp_height);
+        return wp_cache[y * comp_width + x];
+    }
+    return wallpaper_sample_uncached(x, y);
+}
+
+/* Blurred wallpaper behind glass. `radius` is kept for API compatibility;
+ * the cache uses one fixed radius (WP_BLUR_RADIUS). */
 static Color blur_sample(int x, int y, int radius)
 {
-    int step = (radius >= 14) ? 3 : 2;
-    int r = 0, g = 0, b = 0, count = 0;
+    (void)radius;
+    if (wp_cache_valid) {
+        x = clamp_coord(x, (int)comp_width);
+        y = clamp_coord(y, (int)comp_height);
+        return wp_blur[y * comp_width + x];
+    }
+    return wallpaper_sample(x, y);
+}
 
-    for (int dy = -radius; dy <= radius; dy += step) {
-        for (int dx = -radius; dx <= radius; dx += step) {
-            Color c = wallpaper_sample(x + dx, y + dy);
-            r += (c >> 16) & 0xFF;
-            g += (c >> 8) & 0xFF;
-            b += (c >> 0) & 0xFF;
-            count++;
+/*
+ * One pass of a box blur over `count` pixels spaced `stride` apart,
+ * reading from src and writing to dst (src and dst may be the same array
+ * because the line is first copied into wp_line_tmp).
+ */
+static void box_blur_line(Color *buf, int count, int stride, int radius)
+{
+    for (int i = 0; i < count; i++) {
+        wp_line_tmp[i] = buf[i * stride];
+    }
+
+    int window = radius * 2 + 1;
+    int sr = 0, sg = 0, sb = 0;
+    /* Prime the running sum with edge-clamped samples */
+    for (int k = -radius; k <= radius; k++) {
+        Color c = wp_line_tmp[clamp_coord(k, count)];
+        sr += (c >> 16) & 0xFF;
+        sg += (c >> 8) & 0xFF;
+        sb += c & 0xFF;
+    }
+
+    for (int i = 0; i < count; i++) {
+        buf[i * stride] = RGB(sr / window, sg / window, sb / window);
+
+        Color out = wp_line_tmp[clamp_coord(i - radius, count)];
+        Color in = wp_line_tmp[clamp_coord(i + radius + 1, count)];
+        sr += (int)((in >> 16) & 0xFF) - (int)((out >> 16) & 0xFF);
+        sg += (int)((in >> 8) & 0xFF) - (int)((out >> 8) & 0xFF);
+        sb += (int)(in & 0xFF) - (int)(out & 0xFF);
+    }
+}
+
+/*
+ * Rebuild the screen-sized wallpaper + blur caches. Called whenever the
+ * wallpaper image or the theme (procedural fallback colors) changes.
+ */
+static void wallpaper_rebuild_cache(void)
+{
+    wp_cache_valid = false;
+    uint32_t w = comp_width, h = comp_height;
+    if (w == 0 || h == 0 || (uint64_t)w * h > WP_CACHE_MAX_PIXELS ||
+        w > WP_CACHE_MAX_DIM || h > WP_CACHE_MAX_DIM) {
+        return;   /* Fall back to the slow uncached path */
+    }
+
+    for (uint32_t y = 0; y < h; y++) {
+        for (uint32_t x = 0; x < w; x++) {
+            Color c = wallpaper_sample_uncached((int)x, (int)y);
+            wp_cache[y * w + x] = c;
+            wp_blur[y * w + x] = c;
         }
     }
 
-    if (count == 0) return COLOR_BLACK;
-    r /= count;
-    g /= count;
-    b /= count;
-    return RGB(r, g, b);
+    /* Separable box blur, two passes each way (approximates a Gaussian) */
+    for (int pass = 0; pass < 2; pass++) {
+        for (uint32_t y = 0; y < h; y++) {
+            box_blur_line(&wp_blur[y * w], (int)w, 1, WP_BLUR_RADIUS);
+        }
+        for (uint32_t x = 0; x < w; x++) {
+            box_blur_line(&wp_blur[x], (int)h, (int)w, WP_BLUR_RADIUS);
+        }
+    }
+
+    wp_cache_valid = true;
 }
 
 static bool point_in_rounded_rect(int px, int py, int x, int y, int w, int h, int r)
@@ -1847,6 +1933,10 @@ static void draw_window(int idx)
 
 static void draw_wallpaper(void)
 {
+    if (wp_cache_valid) {
+        fb_blit_full(wp_cache);
+        return;
+    }
     for (uint32_t y = 0; y < comp_height; y++) {
         for (uint32_t x = 0; x < comp_width; x++) {
             fb_put_pixel((int)x, (int)y, wallpaper_sample((int)x, (int)y));
@@ -4903,9 +4993,20 @@ void compositor_set_dark_mode(bool enabled)
     dark_mode = enabled;
     theme = dark_mode ? theme_dark() : theme_light();
     settings_get()->dark_mode = enabled;
+    if (!wallpaper_loaded) {
+        wallpaper_rebuild_cache();   /* Procedural wallpaper follows the theme */
+    }
 }
 
+static void wallpaper_load_file(const char *path);
+
 void compositor_set_wallpaper(const char *path)
+{
+    wallpaper_load_file(path);
+    wallpaper_rebuild_cache();
+}
+
+static void wallpaper_load_file(const char *path)
 {
     if (!path) {
         wallpaper_loaded = false;
@@ -6967,6 +7068,7 @@ void compositor_tick(uint64_t now_ms)
     if (login_screen_visible()) {
         draw_login_screen();
         draw_cursor(cursor_x, cursor_y);
+        fb_present();
         return;
     }
 
@@ -7009,4 +7111,5 @@ void compositor_tick(uint64_t now_ms)
     draw_context_menu();
 
     draw_cursor(cursor_x, cursor_y);
+    fb_present();
 }

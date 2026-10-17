@@ -65,4 +65,12 @@ Color fb_blend(Color bg, Color fg, uint8_t alpha);
 /* Copy region (for scrolling) */
 void fb_copy_rect(int dst_x, int dst_y, int src_x, int src_y, int w, int h);
 
+/* Off-screen back buffer (desktop UI): draw a whole frame off-screen,
+ * then fb_present() shows it in one pass. */
+bool fb_use_backbuffer(bool enable);
+void fb_present(void);
+
+/* Copy a tightly packed width*height image into the current target */
+void fb_blit_full(const uint32_t *src);
+
 #endif /* _OJJY_FRAMEBUFFER_H */

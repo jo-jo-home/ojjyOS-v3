@@ -18,29 +18,29 @@
 #define VIRTIO_MMIO_STRIDE      0x200
 #define VIRTIO_MMIO_SLOTS       32
 
-/* Device register offsets (virtio-mmio v2 / "modern") */
+/* Device register offsets (virtio-mmio v2 / "modern" per VirtIO spec 4.2.2) */
 #define VIO_MAGIC               0x000   /* 0x74726976 "virt" */
 #define VIO_VERSION             0x004   /* 2 = modern */
 #define VIO_DEVICE_ID           0x008
 #define VIO_VENDOR_ID           0x00C
-#define VIO_DEVFEAT_SEL         0x010
-#define VIO_DEVFEAT             0x014
-#define VIO_DRVFEAT_SEL         0x020
-#define VIO_DRVFEAT             0x024
-#define VIO_QUEUE_SEL           0x028
-#define VIO_QUEUE_NUM_MAX       0x030
-#define VIO_QUEUE_NUM           0x034
-#define VIO_QUEUE_READY         0x038
-#define VIO_QUEUE_DESC_LOW      0x040
-#define VIO_QUEUE_DESC_HIGH     0x044
-#define VIO_QUEUE_AVAIL_LOW     0x048
-#define VIO_QUEUE_AVAIL_HIGH    0x04C
-#define VIO_QUEUE_USED_LOW      0x050
-#define VIO_QUEUE_USED_HIGH     0x054
-#define VIO_QUEUE_NOTIFY        0x060
-#define VIO_INT_STATUS          0x064
-#define VIO_INT_ACK             0x068
-#define VIO_STATUS              0x080
+#define VIO_DEVFEAT             0x010
+#define VIO_DEVFEAT_SEL         0x014
+#define VIO_DRVFEAT             0x020
+#define VIO_DRVFEAT_SEL         0x024
+#define VIO_QUEUE_SEL           0x030
+#define VIO_QUEUE_NUM_MAX       0x034
+#define VIO_QUEUE_NUM           0x038
+#define VIO_QUEUE_READY         0x044
+#define VIO_QUEUE_NOTIFY        0x050
+#define VIO_INT_STATUS          0x060
+#define VIO_INT_ACK             0x064
+#define VIO_STATUS              0x070
+#define VIO_QUEUE_DESC_LOW      0x080
+#define VIO_QUEUE_DESC_HIGH     0x084
+#define VIO_QUEUE_AVAIL_LOW     0x090
+#define VIO_QUEUE_AVAIL_HIGH    0x094
+#define VIO_QUEUE_USED_LOW      0x0A0
+#define VIO_QUEUE_USED_HIGH     0x0A4
 #define VIO_CFG                 0x100
 
 /* Device status bits */

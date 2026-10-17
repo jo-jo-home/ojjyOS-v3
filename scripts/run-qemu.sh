@@ -76,16 +76,13 @@ if [ "$ARCH" = "aarch64" ]; then
         exit 1
     fi
 
-    # Use HVF near-native acceleration on Apple Silicon macOS; fallback to TCG elsewhere
-    if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ]; then
-        ACCEL_ARGS=("-accel" "hvf" "-cpu" "host")
-        ACCEL_DESC="HVF (Apple Silicon native hypervisor)"
-    else
-        ACCEL_ARGS=("-accel" "tcg" "-cpu" "cortex-a72")
-        ACCEL_DESC="TCG (software emulation)"
-    fi
+    # QEMU on macOS: Apple Hypervisor.framework (HVF) does not emulate GICv2
+    # or ramfb unaligned MMIO, so use multi-threaded TCG (4 cores) with
+    # modern virtio-mmio v2 (force-legacy=false) for reliable boot + input + disk.
+    ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "4")
+    ACCEL_DESC="MTTCG (4-core ARM64 multi-threaded JIT)"
 
-    echo -e "  Architecture: ${GREEN}aarch64 (virt, GICv2)${NC}"
+    echo -e "  Architecture: ${GREEN}aarch64 (virt, GICv2 + virtio-mmio v2)${NC}"
     echo -e "  Accelerator:  ${GREEN}$ACCEL_DESC${NC}"
     echo -e "  UEFI BIOS:    ${BLUE}$FIRMWARE${NC}"
     echo -e "  Disk Image:   ${BLUE}$IMAGE${NC}"
@@ -100,6 +97,7 @@ if [ "$ARCH" = "aarch64" ]; then
         -m 2048 \
         "${ACCEL_ARGS[@]}" \
         -bios "$FIRMWARE" \
+        -global virtio-mmio.force-legacy=false \
         -device ramfb \
         -device virtio-keyboard-device \
         -device virtio-tablet-device \

@@ -45,6 +45,18 @@ _start:
 .Ldrop_from_el2:
     /* EL2: stop trapping anything, run EL1 naked */
     msr hcr_el2, xzr
+    /* Allow EL1 access to physical counter/timer */
+    mov x9, #0x3
+    msr cnthctl_el2, x9
+    msr cntvoff_el2, xzr
+    /* If CPU implements GICv3 system registers, enable EL1 access (ICC_SRE_EL2) */
+    mrs x9, id_aa64pfr0_el1
+    ubfx x9, x9, #24, #4
+    cbz x9, 1f
+    mov x9, #0x9                /* Enable (bit 3) | SRE (bit 0) */
+    msr S3_4_C12_C9_5, x9
+    isb
+1:
     /* Invalidate stale TLB state we may have from HCR bits */
     tlbi alle2
     tlbi alle1
@@ -103,18 +115,12 @@ _start:
 
 .macro VEC_IRQ
     .align 7
-    stp x29, x30, [sp, #-16]!
-    bl a64_irq_handler
-    ldp x29, x30, [sp], #16
-    eret
+    b .Lirq_common
 .endm
 
 .macro VEC_FIQ
     .align 7
-    stp x29, x30, [sp, #-16]!
-    bl a64_irq_handler            /* FIQ handled like IRQ */
-    ldp x29, x30, [sp], #16
-    eret
+    b .Lirq_common
 .endm
 
 .macro VEC_SERROR
@@ -155,6 +161,35 @@ vectors:
     VEC_IRQ
     VEC_FIQ
     VEC_SERROR
+
+.align 4
+.Lirq_common:
+    sub sp, sp, #176
+    stp x0,  x1,  [sp, #0]
+    stp x2,  x3,  [sp, #16]
+    stp x4,  x5,  [sp, #32]
+    stp x6,  x7,  [sp, #48]
+    stp x8,  x9,  [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x29, [sp, #144]
+    str x30,      [sp, #160]
+    bl a64_irq_handler
+    ldr x30,      [sp, #160]
+    ldp x18, x29, [sp, #144]
+    ldp x16, x17, [sp, #128]
+    ldp x14, x15, [sp, #112]
+    ldp x12, x13, [sp, #96]
+    ldp x10, x11, [sp, #80]
+    ldp x8,  x9,  [sp, #64]
+    ldp x6,  x7,  [sp, #48]
+    ldp x4,  x5,  [sp, #32]
+    ldp x2,  x3,  [sp, #16]
+    ldp x0,  x1,  [sp, #0]
+    add sp, sp, #176
+    eret
 
 /*
  * Kernel stack in .bss (128 KB - the compositor has deep frames)

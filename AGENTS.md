@@ -2,7 +2,7 @@
 
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: what this project is, everything that has happened across
-Sessions 1–5, the exact current state, how to build & run every check,
+Sessions 1–6, the exact current state, how to build & run every check,
 and the ordered roadmap of what comes next.
 
 - **Session 1:** Rescued the broken codebase (fixed 28+ build/boot/IRQ/VFS/UI
@@ -11,7 +11,7 @@ and the ordered roadmap of what comes next.
 - **Session 2 & 3:** Completed the native Apple Silicon (`aarch64`) port
   (`entry.S`, `gicv2`, `timer_a64`, `pl011`, `pl031`, `virtio-mmio` v2
   `virtio_blk` + `virtio_input`, `psci`, dual-arch Makefiles & scripts,
-  `run-qemu.sh` with `-accel hvf`), window resize + green zoom, Mission
+  `run-qemu.sh`), window resize + green zoom, Mission
   Control cards, Reduced Transparency/Motion toggles, Control Center
   Restart/Shut Down buttons, and full documentation sweep.
 - **Session 4:** Implemented the multi-user Account & Salted FIPS 180-4
@@ -27,79 +27,70 @@ and the ordered roadmap of what comes next.
   live CPU tick accounting, protected system daemons PID 1–4,
   `syscall_dispatch` for 13 syscalls, and `ps`/`top`/`kill`/`heap`
   commands in `Terminal.app`, console, and `Activity Monitor.app`).
+- **Session 6:** Fixed the constant screen **flashing** (compositor
+  rendered straight into the live scanout — now double-buffered +
+  dirty-tracked, verified 0.000% idle framebuffer diff), shipped the
+  anti-aliased **JetBrains Mono** font, 2x cursor, `show-cursor=on`,
+  `-smp 1` + MPIDR core parking, Tahoe ASCII art everywhere
+  (commits `d4f0fa7`, `6eea513`, `1f860de`).
+- **Session 7 (THIS HANDOFF — IN FLIGHT, fix designed, NOT yet coded):**
+  Jonas reported: pressing a letter "sometimes types a bunch of that
+  letter", pressing Delete "spawns more o's", then the desktop froze.
+  **Diagnosis (done, high confidence): QEMU host-side key auto-repeat**
+  — QEMU's cocoa frontend re-sends key-down events ~30x/sec while a key
+  is held (and can leave a key *stuck* repeating if its window loses
+  focus mid-press). Every repeat arrives as a fresh virtio EV_KEY and
+  our drivers post each one as a real `KEY_PRESS` → letter floods +
+  one full-desktop redraw per event under slow TCG → redraw backlog →
+  queue saturates → mouse dead → looks frozen.
+  **THE FIX (implement first, then verify — details in §4.6.):**
+  kernel-side auto-repeat suppression in BOTH keyboard drivers: when a
+  key-down arrives for a key that is *already down* (`input_is_key_down`),
+  post `INPUT_EVENT_KEY_REPEAT` instead of `KEY_PRESS` (nothing consumes
+  KEY_REPEAT today, so repeats become no-ops). Insertion points are
+  marked below. Then run the QMP flood-test in §4.6 to prove it.
 
 ---
 
-## 0. START-HERE CHECKLIST (current status: v3.1.0 + Sessions 4 & 5 COMPLETE ✅)
+## 0. START-HERE CHECKLIST (do these in order)
 
-All checklist items through Session 5 are **DONE and verified**:
+1. **Read this file fully.** Never push to a remote; commit locally as
+   "Jonas Lee" (`git -c user.name="Jonas Lee" -c user.email="jonas@ojjyos.local" commit`).
+2. **Verify the current build** (commands in §6): `bash scripts/mkfs.sh`,
+   `ARCH=aarch64 bash scripts/build.sh`, then the two host unit tests
+   (118 assertions) — everything must pass before you start editing.
+3. **Implement the Session-7 key-repeat fix** (§4.6, both drivers, exact
+   code locations given), rebuild, and run the QMP flood-test to verify.
+4. **Fix the display "letterbox" complaint** (§4.7): Zoom To Fit shows
+   black side bars because the guest is 1024x768 (4:3) on a 16:10 Mac
+   display — that is *correct* aspect-preserving behavior. Add the
+   planned `--vnc` mode to `run-qemu.sh` (macOS Screen Sharing stretches
+   to fill the whole screen), as specified in §4.7.
+5. Re-run the full verification sweep (§6), update this file's session
+   log, commit.
 
-- **Session 6 (usability fixes + font, commit `6eea513`):** fixed the
-  constant screen flashing (compositor never enabled the back buffer —
-  every frame redrew straight into the live ramfb scanout; now renders
-  off-screen + presents once, with dirty-tracking so idle frames draw
-  **nothing** — verified 0.000% framebuffer diff when idle), 2x guest
-  cursor, `show-cursor=on` host cursor, `-smp 1` + MPIDR secondary-core
-  parking in entry.S, and a **new anti-aliased font** generated from
-  JetBrains Mono (SIL OFL 1.1, `fonts/`) via `tools/mkfont.py` —
-  `font_get_glyph_aa()` + per-pixel `fb_blend` in `fb_draw_char`.
-  Display tips: QEMU View → Zoom To Fit + Ctrl-⌘-F fullscreen (the
-  guest is 1024x768 — ramfb's only mode in this QEMU; virtio-gpu has no
-  GOP driver in the edk2 build, tested and rejected).
-
-All checklist items through Session 5 are **DONE and verified**:
-
-1. [x] Verified current state builds & host unit tests pass (§6):
-   - `aarch64`: **28/28 kernel objects compile with 0 warnings, 0 errors**.
-   - `x86_64`: **30/30 kernel objects compile with 0 warnings, 0 errors**.
-   - Host unit tests: **`test_fs` (37/37) + `test_ramfs` (81/81) = 118/118 passed**.
-2. [x] Finished the `aarch64` port (§4.1): `main.c` ifdefs, `diagnostics.c`
-   guards, `kernel/Makefile` `ARCH` switch (`x86_64` | `aarch64` + `objs`
-   target), `kernel/linker-aarch64.ld` (`0x41000000` + `_kernel_start`),
-   `boot/ojjy-boot.c` machine check (`62` vs `183`), `boot/Makefile`
-   dual-arch (`BOOTX64.EFI` / `BOOTAA64.EFI`), `scripts/build.sh` &
-   `scripts/mkimg.sh` dual-arch, and `scripts/run-qemu.sh` (Apple Silicon
-   HVF + `ramfb` + `virtio-*`). Fixed two `virtio` chain bugs (`d->next`
-   index in `virtio.c` and write `VRING_DESC_F_NEXT` in `virtio_blk.c`).
-3. [x] Completed desktop & input polish: window resize (bottom-right
-   corner drag) + green traffic-light maximize/zoom, real Mission Control
-   cards (`Cmd+M`), Settings Appearance toggles (`Reduced Transparency`
-   `rt=` and `Reduced Motion` `rm=`), Control Center honesty (`(no radio)`
-   labels + real **Restart** and **Shut Down** buttons), Menu bar cleanup,
-   centered Launchpad labels, and x86 PS/2 modifier key press/release
-   events so releasing `Cmd` dismisses the App Switcher on both arches.
-4. [x] Completed Session 4 (User Accounts & macOS Tahoe Desktop Expansion):
-   - Multi-user account & credential engine (`kernel/src/users.h`,
-     `kernel/src/users.c`) with salted FIPS 180-4 SHA-256 password hashing,
-     constant-time hash comparison, `/Library/Accounts/users.db` persistence,
-     and per-user `/Users/<username>` home provisioning (`Desktop`,
-     `Documents`, `Welcome.txt`, `Notes.txt`, `Calendar.txt`).
-   - First-Boot Account Setup Assistant (`users_count() == 0` or `+ New Account`)
-     and macOS Tahoe Lock/Login Screen (`!users_is_authenticated()`,
-     `Ctrl+Cmd+Q` lock shortcut).
-   - `Settings → Users & Accounts` (`SETTINGS_PAGE_USERS`) with active user
-     card, SHA-256 password change form, registered accounts list,
-     `+ Add Account`, `Lock Screen`, and `Switch User` buttons.
-   - Interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`)
-     + clickable active user pill in the top-right menu bar.
-   - Desktop right-click context menu (`compositor_handle_right_click`).
-   - Built-in `Calculator.app` (`APP_CALCULATOR`) and `Activity Monitor.app`
-     (`APP_MONITOR`), bringing total built-in apps to 11.
-   - Shell & Terminal commands (`whoami`, `users`, `adduser`, `passwd`,
-     `su`/`login`, `lock`, `logout`).
-5. [x] Completed Session 5 (Kernel Heap Allocator & Process/Syscall Subsystem):
-   - 16-byte-aligned coalescing free-list Kernel Heap Allocator
-     (`kheap_init`, `kmalloc`, `kcalloc`, `krealloc`, `kfree`,
-     `kheap_validate` in `kernel/src/memory.h` & `kernel/src/memory.c`).
-   - Kernel Process Table & Syscall Subsystem (`kernel/src/proc.h`,
-     `kernel/src/proc.c`) spawning system daemons (`PID 1 kernel_task`,
-     `PID 2 vfs_persistd`, `PID 3 inputd`, `PID 4 WindowServer`) and
-     tracking per-user application processes, CPU ticks, memory, and
-     13 kernel syscalls (`syscall_dispatch`).
-   - Wired live process table, heap telemetry, and `ps`/`top`/`kill`/`heap`
-     into `Activity Monitor.app`, `Terminal.app`, and the kernel console.
-6. [x] Committed locally (author `"Jonas Lee"`). **Never push to a remote**
-   — Jonas pushes himself when he says so.
+**Completed work this codebase already has (all verified):**
+- `aarch64`: 28/28 objects compile clean; `x86_64`: 30/30 clean;
+  host unit tests 118/118 (`test_fs` 37 + `test_ramfs` 81).
+- Full aarch64 port: `main.c` ifdefs, dual-arch Makefiles/bootloader,
+  `linker-aarch64.ld` @ `0x41000000`, virtio transport (fixed register
+  offsets + `VIRTIO_F_VERSION_1`), GICv2/GICv3 auto-detect, full IRQ
+  register save in the vector table, polled input via 1 kHz timer.
+- Desktop polish: window resize + green zoom, Mission Control cards,
+  Reduced Transparency/Motion, Control Center Restart/Shut Down,
+  menu-bar dropdowns, right-click context menu, desktop icons, Web app.
+- Accounts (salted SHA-256, first-boot setup, lock screen), Calculator,
+  Activity Monitor (11 apps), kernel heap + process table + syscalls.
+- Session 6: double-buffered compositor + dirty-tracking (idle
+  framebuffer diff **0.000%** — this is the number to re-verify after
+  any rendering change), 2x cursor, `-smp 1` + MPIDR core parking,
+  anti-aliased JetBrains Mono font (`tools/mkfont.py` regenerates
+  `kernel/src/font.c` from `fonts/JetBrainsMono-Regular.ttf`), Tahoe
+  ASCII art across splash/serial/console/login/About/Terminal/power-off.
+- Persistence: RAMFS snapshots autosaved to the data partition every
+  30 s when dirty + on shutdown/reboot/`sync`; restored on boot.
+- Commits: `0dbaea6` → `7ceff6a` → `db6dba2` → `d4f0fa7` → `6eea513`
+  → `1f860de` (all local, nothing pushed — Jonas pushes himself).
 
 ---
 
@@ -322,6 +313,149 @@ Fixed 28+ defects across build, boot, input, filesystem, and desktop:
 
 ---
 
+## 4.6. SESSION 7 — key-repeat fix spec (implement EXACTLY this)
+
+**Symptom (from Jonas, live on his M2 Pro):** "if I press a letter
+sometimes it just types a bunch of that letter"; after pressing `o`,
+"a bunch of os showed", pressing Delete "just spawns more os", and
+then the desktop froze completely. It also froze once before, right
+around typing in the first-boot account-setup screen.
+
+**Root cause (high confidence, diagnosis complete):**
+QEMU's host-side keyboard auto-repeat re-sends key-down events
+(~30/sec) while a key is physically held — and the cocoa frontend can
+leave a key **stuck repeating** if its window loses/regains focus
+mid-press. Our drivers currently post EVERY key-down as a fresh
+`INPUT_EVENT_KEY_PRESS`, so:
+- each repeat types another character (the "bunch of os"), and
+- each key event triggers `mark_dirty()` → a full desktop redraw
+  (expensive under TCG emulation) → the redraw backlog saturates the
+  256-entry input queue → mouse events starve → the desktop appears
+  frozen.
+
+Already-ruled-out causes (do NOT chase these again):
+- Login/setup field buffers ARE bounds-checked (`len + 1 < cap`,
+  `kernel/src/ui/compositor.c` ~line 5307). Not an overflow.
+- `virtio_input_poll` is CORRECT (Gemini's version in tree): it drains
+  *all* used-ring entries and reads `events[desc_id]` (the right slot),
+  recycles per-descriptor. An earlier "stale slot 0" theory was wrong.
+- Serial log shows a single clean boot — not a reboot loop.
+
+**The fix — kernel-side auto-repeat suppression (both arches):**
+
+A key-down for a key that is *already down* = auto-repeat → post
+`INPUT_EVENT_KEY_REPEAT` (nothing consumes it yet — it becomes a
+no-op) instead of `INPUT_EVENT_KEY_PRESS`. The key-state bitmap that
+`input_is_key_down()` reads is updated by `input_post_key_event()` on
+PRESS/RELEASE only, so checking *before* posting is correct.
+
+**Fix location 1 — `kernel/src/arch/aarch64/virtio_input.c`,
+`handle_key_event()` (~line 241, right after the modifier `switch`
+and the `key_to_keycode` lookup, BEFORE the ascii/post block at
+~lines 246-258):**
+
+```c
+    KeyCode keycode = key_to_keycode[code];
+    if (keycode == KEY_NONE) {
+        return;
+    }
+
+    /* Auto-repeat: the host keyboard stack re-sends key-down events
+     * while a key is held (QEMU can even leave a key stuck repeating
+     * if its window loses focus mid-press). Only the first press
+     * becomes a KEY_PRESS; repeats become KEY_REPEAT, which nothing
+     * consumes yet - this stops the letter-flood and the redraw
+     * backlog that froze the desktop. */
+    if (down && input_is_key_down(keycode)) {
+        input_post_key_event(INPUT_EVENT_KEY_REPEAT,
+                             (uint8_t)code, keycode, 0);
+        return;
+    }
+```
+
+Notes: the modifier `switch` above it is idempotent for repeats;
+CapsLock is already guarded by the local `caps_down` flag. Release
+events must still post normally (`down` false passes through).
+
+**Fix location 2 — `kernel/src/drivers/ps2_keyboard.c` (x86), in
+`ps2_kbd_handle_irq()` after the modifier `switch` and keycode lookup,
+and in `handle_extended_key()` after the extended keycode lookup.**
+Same pattern:
+
+```c
+    if (!released && keycode != KEY_NONE && input_is_key_down(keycode)) {
+        input_post_key_event(INPUT_EVENT_KEY_REPEAT, scancode, keycode, 0);
+        return true;
+    }
+```
+
+**Verification — the QMP flood-test (this is the proof):**
+
+1. Build + boot headless with a QMP socket (command pattern in the
+   note under section 6), wait ~75 s for the desktop
+   ("Entering main loop" in the serial log).
+2. Drop to the text console so typing is visible in the serial log:
+   `main.c` exits the UI on **Shift+Esc** — send via QMP
+   `input-send-event`: `shift` down, `esc` down+up, `shift` up.
+3. Flood the letter `o`: send
+   `{"execute":"input-send-event","arguments":{"events":[{"type":"key","data":{"down":true,"key":{"type":"qcode","data":"o"}}}]}}`
+   **40 times with no key-ups**.
+4. **Expected after the fix:** the serial log shows exactly ONE `o`
+   echoed at the `> ` prompt (console_putc mirrors to serial). Before
+   the fix this prints ~40 `o`s. Then send `o` up, then a normal
+   press cycle (`o` down/up twice) → both `o`s appear (real presses
+   still work). Flood `backspace` downs x40 → exactly one backspace.
+5. Also confirm the serial log has NO `[INPUT] WARNING: Queue
+   overflow` lines during the flood, and idle framebuffer dumps stay
+   0.000% different afterwards.
+
+QMP qcodes used: letters `"a"`-`"z"`, `"shift"`, `"esc"`,
+`"delete"` (forward-del) and `"backspace"` (the key macOS labels
+"delete").
+
+**Optional follow-up (nice, not required):** implement macOS-style
+delayed repeat later — Terminal/TextEdit could consume
+`INPUT_EVENT_KEY_REPEAT` with a ~500 ms delay + ~30 ms interval using
+`timer_get_ticks()`. Do NOT do this in the same change; the
+suppression alone is the fix.
+
+---
+
+## 4.7. SESSION 7 — display "letterbox" + tiny-window resolution
+
+Jonas: "Zoom to Fit + fullscreen — screen is bigger but not filling
+the whole screen."
+
+**This is correct behavior, not a bug:** the guest is 1024x768 (4:3)
+and his display is ~16:10, so aspect-preserving Zoom To Fit leaves
+black bars left/right. Established facts (all tested on this machine —
+do not re-test blindly):
+- `ramfb` is the ONLY GOP provider in the edk2-aarch64 firmware build
+  here; it exposes 640x480 / 800x600 / 1024x768 only.
+- `-device ramfb,xres=...,yres=...` → `Property not found` in this
+  QEMU. No CLI resolution override exists.
+- `-device virtio-gpu-device` → the firmware has no GOP driver for it
+  → bootloader prints `[FAIL] Could not initialize framebuffer:
+  Unsupported` and boot stops. Tested and rejected.
+- Available QEMU display backends on this Mac: `none`, `curses`,
+  `cocoa`, `dbus` (no SDL in this build).
+
+**Planned fix (implement): add a `--vnc` mode to `scripts/run-qemu.sh`:**
+- When invoked as `bash scripts/run-qemu.sh aarch64 --vnc`, replace the
+  `-display cocoa,show-cursor=on` args with `-display none -vnc 127.0.0.1:0`.
+- Print instructions: open **`vnc://127.0.0.1:5900`** in Safari/Finder
+  → Screen Sharing opens → **View → Turn Scaling On → Enter Full
+  Screen** — Screen Sharing *stretches* to fill the entire screen
+  (no aspect bars), which is exactly what Jonas asked for.
+- Keep the cocoa default (aspect-correct) and mention in the printed
+  tips that `--vnc` exists for fill-the-whole-screen mode.
+
+There is NO way to raise the guest resolution beyond 1024x768 without
+rebuilding edk2 with more ramfb modes or a virtio-gpu GOP driver —
+explicitly out of scope for now; document it as a future option.
+
+---
+
 ## 5. `aarch64` / QEMU `virt` Cheat Sheet
 
 | Thing | Address / value |
@@ -362,6 +496,53 @@ rm -f /tmp/test_fs /tmp/test_ramfs
 # 4. Local commit (author Jonas; NEVER push)
 git add -A && git -c user.name="Jonas Lee" -c user.email="jonas@ojjyos.local" commit -m "..."
 ```
+
+### 6.1 QEMU forensics toolkit (how the flashing bug was cracked)
+
+Run QEMU headless with a QMP socket + serial log:
+```bash
+qemu-system-aarch64 -M virt,gic-version=2 -m 2048 \
+  -accel tcg,thread=multi -cpu cortex-a72 -smp 1 \
+  -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+  -global virtio-mmio.force-legacy=false -device ramfb \
+  -device virtio-keyboard-device -device virtio-tablet-device \
+  -drive file=build/ojjyos3.img,format=raw,if=none,id=hd \
+  -device virtio-blk-device,drive=hd \
+  -serial file:/tmp/ojjyos-serial.log -display none \
+  -qmp unix:/tmp/qmp.sock,server,nowait -no-reboot &
+```
+(Framebuffer address is in the serial log: "Framebuffer: 1024x768 @ 0x...",
+1024x768x4 = 3145728 bytes.)
+
+Dump/compare the live framebuffer via QMP (python):
+```python
+import socket, json
+def qmp(cmd, args=None):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.connect("/tmp/qmp.sock")
+    f = s.makefile("rw"); json.loads(f.readline())
+    f.write(json.dumps({"execute":"qmp_capabilities"})+"\n"); f.flush(); json.loads(f.readline())
+    m = {"execute":cmd}
+    if args: m["arguments"]=args
+    f.write(json.dumps(m)+"\n"); f.flush(); return json.loads(f.readline())
+qmp("pmemsave", {"val":0xbc7a0000,"size":3145728,"filename":"/tmp/fb1.raw"})
+# ...then unpack '<%dI' % (1024*768) and diff two dumps:
+#   0.000% when idle = healthy (flashing bug showed 35-100%)
+```
+
+Send synthetic input via QMP (for the repeat-fix flood test):
+```python
+qmp("input-send-event", {"events":[{"type":"key","data":{
+     "down":True,"key":{"type":"qcode","data":"o"}}}]})
+# qcodes: "a".."z", "shift", "esc", "backspace", "delete", "spc"
+# Mouse (tablet is absolute): {"type":"rel","data":{"axis":"x","value":-40}}
+```
+
+Boot health checks in the serial log: exactly ONE "ojjyOS v3.1.0"
+banner (a reboot loop shows several), "[GIC] GICv2 ready" (or v3),
+"[VIRTIO-BLK] Attached", both "[VIRTIO-INPUT] Device N attached" lines
+(pointer + keyboard), "Entering main loop", and after ~30 s
+"[PERSIST] Autosave active". Zero `[INPUT] WARNING: Queue overflow`
+lines unless you are deliberately flooding.
 
 ---
 

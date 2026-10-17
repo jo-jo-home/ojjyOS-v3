@@ -121,9 +121,11 @@ void rtc_read_time(RtcTime *time)
     bool is_24hr = (status_b & RTC_STATUS_B_24HR) != 0;
     bool is_binary = (status_b & RTC_STATUS_B_BCD) != 0;
 
-    /* Wait for update to complete */
-    while (rtc_update_in_progress()) {
-        /* Busy wait */
+    /* Wait for update to complete (bounded: a stuck UIP bit must not
+     * hang the boot forever) */
+    int uip_timeout = 2000000;
+    while (rtc_update_in_progress() && uip_timeout > 0) {
+        uip_timeout--;
     }
 
     /* Read all values */
@@ -161,13 +163,21 @@ void rtc_read_time(RtcTime *time)
         }
     }
 
-    /* Calculate full year */
-    if (century != 0) {
-        time->year = century * 100 + year;
+    /* Calculate full year. The century register (0x32) does not exist
+     * on all hardware - garbage there must not produce impossible
+     * years like 16526. */
+    if (century >= 19 && century <= 30) {
+        time->year = (uint16_t)(century * 100 + year);
     } else {
         /* Assume 2000s */
-        time->year = 2000 + year;
+        time->year = (uint16_t)(2000 + year);
     }
+
+    /* Basic sanity: month 1-12, day 1-31 */
+    if (month < 1) month = 1;
+    if (month > 12) month = 12;
+    if (day < 1) day = 1;
+    if (day > 31) day = 31;
 
     time->month = month;
     time->day = day;

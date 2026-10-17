@@ -7,6 +7,7 @@
 #include "memory.h"
 #include "serial.h"
 #include "string.h"
+#include "boot_info.h"
 
 /* Bitmap for tracking physical pages */
 #define MAX_MEMORY_GB       4ULL
@@ -16,6 +17,9 @@
 
 /* Static bitmap (4GB max = 128KB bitmap) */
 static uint8_t page_bitmap[BITMAP_SIZE];
+
+/* End of kernel image (including .bss), provided by linker.ld */
+extern char _kernel_end[];
 
 /* Memory statistics */
 static uint64_t total_memory = 0;
@@ -112,14 +116,28 @@ void pmm_init(BootInfo *info)
     uint64_t mmap_size = info->mmap_size;
     uint64_t desc_size = info->mmap_desc_size;
 
+    if (desc_size == 0) {
+        serial_printf("[PMM] ERROR: Invalid memory map descriptor size!\n");
+        return;
+    }
+
     uint64_t entries = mmap_size / desc_size;
 
-    /* First pass: calculate total memory and find usable regions */
+    /* First pass: calculate usable memory and mark free regions */
     for (uint64_t i = 0; i < entries; i++) {
         EfiMemoryDescriptor *desc = (EfiMemoryDescriptor *)(mmap_addr + i * desc_size);
 
         uint64_t size = desc->num_pages * PAGE_SIZE;
-        total_memory += size;
+
+        /* Count only memory the OS can actually use */
+        if (desc->type == EFI_CONVENTIONAL_MEMORY ||
+            desc->type == EFI_LOADER_CODE ||
+            desc->type == EFI_LOADER_DATA ||
+            desc->type == EFI_BOOT_SERVICES_CODE ||
+            desc->type == EFI_BOOT_SERVICES_DATA ||
+            desc->type == EFI_ACPI_RECLAIM_MEMORY) {
+            total_memory += size;
+        }
 
         /* Mark conventional memory (and boot services memory) as free */
         if (desc->type == EFI_CONVENTIONAL_MEMORY ||
@@ -139,7 +157,7 @@ void pmm_init(BootInfo *info)
         }
     }
 
-    /* Reserve first 1MB (legacy area, BIOS, etc.) */
+    /* Reserve first 1MB (legacy area, BIOS, VGA memory, boot info at 0x500) */
     for (uint64_t page = 0; page < 256; page++) {
         if (!pmm_is_page_used(page)) {
             pmm_set_page_used(page);
@@ -147,8 +165,14 @@ void pmm_init(BootInfo *info)
         }
     }
 
-    /* Reserve kernel area (1MB - 4MB to be safe) */
-    for (uint64_t page = 256; page < 1024; page++) {
+    /* Reserve the actual kernel image (1MB .. _kernel_end, .bss included).
+     * The kernel BSS is several MB (wallpaper buffers, ramfs pools), so the
+     * old fixed 1-4MB reservation was far too small. */
+    uint64_t kernel_end_page = ((uint64_t)(uintptr_t)_kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
+    if (kernel_end_page < 256) {
+        kernel_end_page = 256;
+    }
+    for (uint64_t page = 256; page < kernel_end_page; page++) {
         if (!pmm_is_page_used(page)) {
             pmm_set_page_used(page);
             free_memory -= PAGE_SIZE;
@@ -157,9 +181,13 @@ void pmm_init(BootInfo *info)
 
     bitmap_pages = sizeof(page_bitmap) * 8;
 
-    serial_printf("[PMM] Total memory: %d MB\n", total_memory / (1024 * 1024));
-    serial_printf("[PMM] Free memory:  %d MB\n", free_memory / (1024 * 1024));
-    serial_printf("[PMM] Page bitmap covers %d pages\n", bitmap_pages);
+    serial_printf("[PMM] Total usable memory: %d MB\n",
+        (int)(total_memory / (1024 * 1024)));
+    serial_printf("[PMM] Free memory:  %d MB\n",
+        (int)(free_memory / (1024 * 1024)));
+    serial_printf("[PMM] Kernel reserved: 1MB - 0x%x\n",
+        (unsigned int)(uintptr_t)_kernel_end);
+    serial_printf("[PMM] Page bitmap covers %d pages\n", (int)bitmap_pages);
 }
 
 /*

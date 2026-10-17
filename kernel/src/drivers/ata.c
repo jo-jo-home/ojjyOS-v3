@@ -343,10 +343,13 @@ int ata_read_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, void *buffer)
         return -1;
     }
 
+    /* Bounds check against device capacity */
+    if (lba + count > dev->sectors) {
+        return -1;
+    }
+
     AtaChannel *ch = &channels[dev->channel];
     uint8_t *buf = (uint8_t *)buffer;
-
-    serial_printf("[ATA] Reading %d sectors from LBA %d\n", count, (int)lba);
 
     /* Select drive with LBA mode */
     uint8_t drive_sel = (dev->drive == 0) ? ATA_DRIVE_MASTER : ATA_DRIVE_SLAVE;
@@ -361,7 +364,7 @@ int ata_read_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, void *buffer)
             return -1;
         }
 
-        if (dev->supports_lba48 && (lba >= 0x10000000 || chunk > 256)) {
+        if (dev->supports_lba48 && lba >= 0x10000000) {
             /* LBA48 mode */
             outb(ch->io_base + ATA_REG_DRIVE, drive_sel);
 
@@ -427,10 +430,13 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
         return -1;
     }
 
+    /* Bounds check against device capacity */
+    if (lba + count > dev->sectors) {
+        return -1;
+    }
+
     AtaChannel *ch = &channels[dev->channel];
     const uint8_t *buf = (const uint8_t *)buffer;
-
-    serial_printf("[ATA] Writing %d sectors to LBA %d\n", count, (int)lba);
 
     uint8_t drive_sel = (dev->drive == 0) ? ATA_DRIVE_MASTER : ATA_DRIVE_SLAVE;
     drive_sel |= ATA_DRIVE_LBA;
@@ -443,14 +449,33 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
             return -1;
         }
 
-        /* LBA28 mode for simplicity */
-        outb(ch->io_base + ATA_REG_DRIVE, drive_sel | ((lba >> 24) & 0x0F));
-        outb(ch->io_base + ATA_REG_SECCOUNT, chunk & 0xFF);
-        outb(ch->io_base + ATA_REG_LBA_LO, lba & 0xFF);
-        outb(ch->io_base + ATA_REG_LBA_MID, (lba >> 8) & 0xFF);
-        outb(ch->io_base + ATA_REG_LBA_HI, (lba >> 16) & 0xFF);
+        if (dev->supports_lba48 && lba >= 0x10000000) {
+            /* LBA48 mode (disks over 128 GB must not wrap through LBA28) */
+            outb(ch->io_base + ATA_REG_DRIVE, drive_sel);
 
-        outb(ch->io_base + ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
+            /* High bytes first */
+            outb(ch->io_base + ATA_REG_SECCOUNT, (chunk >> 8) & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_LO, (lba >> 24) & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_MID, (lba >> 32) & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_HI, (lba >> 40) & 0xFF);
+
+            /* Low bytes */
+            outb(ch->io_base + ATA_REG_SECCOUNT, chunk & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_LO, lba & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_MID, (lba >> 8) & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_HI, (lba >> 16) & 0xFF);
+
+            outb(ch->io_base + ATA_REG_COMMAND, ATA_CMD_WRITE_PIO_EXT);
+        } else {
+            /* LBA28 mode */
+            outb(ch->io_base + ATA_REG_DRIVE, drive_sel | ((lba >> 24) & 0x0F));
+            outb(ch->io_base + ATA_REG_SECCOUNT, chunk & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_LO, lba & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_MID, (lba >> 8) & 0xFF);
+            outb(ch->io_base + ATA_REG_LBA_HI, (lba >> 16) & 0xFF);
+
+            outb(ch->io_base + ATA_REG_COMMAND, ATA_CMD_WRITE_PIO);
+        }
 
         /* Write each sector */
         for (uint32_t i = 0; i < chunk; i++) {
@@ -470,7 +495,10 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
 
         /* Flush cache */
         outb(ch->io_base + ATA_REG_COMMAND, ATA_CMD_FLUSH);
-        ata_wait_busy(ch, 500);
+        if (!ata_wait_busy(ch, 500)) {
+            driver_report_error(&ata_driver, "Flush timeout during write");
+            return -1;
+        }
 
         lba += chunk;
         count -= chunk;
@@ -480,25 +508,36 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
 }
 
 /*
+ * Find the first present, non-ATAPI disk (the "boot disk" for caching).
+ */
+AtaDevice *ata_get_primary_disk(void)
+{
+    for (int i = 0; i < ATA_MAX_DEVICES; i++) {
+        if (devices[i].present && !devices[i].is_atapi) {
+            return &devices[i];
+        }
+    }
+    return NULL;
+}
+
+/*
  * Driver read wrapper
  */
 static ssize_t ata_read(Driver *drv, void *buf, size_t count, uint64_t offset)
 {
     (void)drv;
 
-    /* Use first available device */
-    AtaDevice *dev = NULL;
-    for (int i = 0; i < ATA_MAX_DEVICES; i++) {
-        if (devices[i].present && !devices[i].is_atapi) {
-            dev = &devices[i];
-            break;
-        }
-    }
-
+    AtaDevice *dev = ata_get_primary_disk();
     if (!dev) return -1;
 
+    /* The buffer must be sector-aligned and sized: this wrapper has no
+     * scratch buffer, so rounding up would overflow the caller's buffer. */
+    if (offset % ATA_SECTOR_SIZE != 0 || count % ATA_SECTOR_SIZE != 0) {
+        return -1;
+    }
+
     uint64_t lba = offset / ATA_SECTOR_SIZE;
-    uint32_t sectors = (count + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
+    uint32_t sectors = (uint32_t)(count / ATA_SECTOR_SIZE);
 
     if (ata_read_sectors(dev, lba, sectors, buf) != 0) {
         return -1;
@@ -514,18 +553,15 @@ static ssize_t ata_write(Driver *drv, const void *buf, size_t count, uint64_t of
 {
     (void)drv;
 
-    AtaDevice *dev = NULL;
-    for (int i = 0; i < ATA_MAX_DEVICES; i++) {
-        if (devices[i].present && !devices[i].is_atapi) {
-            dev = &devices[i];
-            break;
-        }
-    }
-
+    AtaDevice *dev = ata_get_primary_disk();
     if (!dev) return -1;
 
+    if (offset % ATA_SECTOR_SIZE != 0 || count % ATA_SECTOR_SIZE != 0) {
+        return -1;
+    }
+
     uint64_t lba = offset / ATA_SECTOR_SIZE;
-    uint32_t sectors = (count + ATA_SECTOR_SIZE - 1) / ATA_SECTOR_SIZE;
+    uint32_t sectors = (uint32_t)(count / ATA_SECTOR_SIZE);
 
     if (ata_write_sectors(dev, lba, sectors, buf) != 0) {
         return -1;

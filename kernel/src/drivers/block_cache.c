@@ -80,7 +80,7 @@ static int cache_writeback(CacheEntry *entry)
         return 0;
     }
 
-    AtaDevice *dev = ata_get_device(0);
+    AtaDevice *dev = ata_get_primary_disk();
     if (!dev) {
         return -1;
     }
@@ -130,7 +130,7 @@ int block_cache_read(uint64_t block_num, void *buffer)
     /* Cache miss - read from disk */
     cache_misses++;
 
-    AtaDevice *dev = ata_get_device(0);
+    AtaDevice *dev = ata_get_primary_disk();
     if (!dev) {
         serial_printf("[CACHE] No disk device available\n");
         return -1;
@@ -176,7 +176,7 @@ int block_cache_write(uint64_t block_num, const void *buffer)
 
     cache_writes++;
 
-    AtaDevice *dev = ata_get_device(0);
+    AtaDevice *dev = ata_get_primary_disk();
     if (!dev) {
         serial_printf("[CACHE] No disk device available\n");
         return -1;

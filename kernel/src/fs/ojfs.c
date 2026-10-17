@@ -2,6 +2,7 @@
  * ojjyOS v3 Kernel - OJFS Implementation
  *
  * Read-only packed filesystem for MVP.
+ * Each mount carries its own OjfsInstance via the VFS fs_data pointer.
  */
 
 #include "ojfs.h"
@@ -16,9 +17,6 @@
 
 static OjfsInstance instances[MAX_OJFS_INSTANCES];
 static int instance_count = 0;
-
-/* Current instance for VFS operations (set during open) */
-static OjfsInstance *current_instance = NULL;
 
 /*
  * File handle pool
@@ -43,28 +41,43 @@ static const char *get_entry_name(OjfsInstance *fs, const OjfsEntry *entry)
 }
 
 /*
+ * Find the root directory entry (the one whose parent is 0xFFFFFFFF).
+ * Returns entry index or -1 if the image has no root.
+ */
+static int find_root_entry(OjfsInstance *fs)
+{
+    for (uint32_t i = 0; i < fs->header->entry_count; i++) {
+        if (fs->entries[i].parent == 0xFFFFFFFF &&
+            fs->entries[i].type == OJFS_TYPE_DIR) {
+            return (int)i;
+        }
+    }
+    return -1;
+}
+
+/*
  * Find entry by path
  * Returns entry index or -1 if not found
  */
 static int find_entry(OjfsInstance *fs, const char *path)
 {
     /* Handle root directory */
-    if (strcmp(path, "/") == 0 || path[0] == '\0') {
-        /* Find root directory entry (parent = 0xFFFFFFFF) */
-        for (uint32_t i = 0; i < fs->header->entry_count; i++) {
-            if (fs->entries[i].parent == 0xFFFFFFFF &&
-                fs->entries[i].type == OJFS_TYPE_DIR) {
-                return i;
-            }
-        }
-        return -1;
+    if (path[0] == '\0' || strcmp(path, "/") == 0) {
+        return find_root_entry(fs);
     }
 
     /* Skip leading slash */
     if (path[0] == '/') path++;
 
-    /* Parse path components */
-    uint32_t parent = 0xFFFFFFFF;  /* Start at root */
+    /* Parse path components, starting at the root entry's index.
+     * (mkojfs nests all top-level entries under the root entry, so
+     * starting from 0xFFFFFFFF - as this used to - never matched.) */
+    int root_idx = find_root_entry(fs);
+    if (root_idx < 0) {
+        return -1;
+    }
+
+    uint32_t parent = (uint32_t)root_idx;
     char component[VFS_NAME_MAX + 1];
 
     while (*path) {
@@ -76,7 +89,16 @@ static int find_entry(OjfsInstance *fs, const char *path)
             }
             len++;
         }
-        component[len] = '\0';
+        /* Clamp the terminator to the buffer (a component longer than
+         * VFS_NAME_MAX is truncated, never an out-of-bounds write) */
+        component[len < VFS_NAME_MAX ? len : VFS_NAME_MAX] = '\0';
+
+        /* Skip empty components (double slashes) */
+        if (component[0] == '\0') {
+            path += len;
+            if (*path == '/') path++;
+            continue;
+        }
 
         /* Find entry with this name and parent */
         bool found = false;
@@ -162,28 +184,25 @@ static void free_ojfs_dir(OjfsDirHandle *dir)
 /*
  * VFS open implementation
  */
-static VfsFile *ojfs_open(const char *path, uint32_t mode)
+static VfsFile *ojfs_open(void *fs_data, const char *path, uint32_t mode)
 {
-    if (!current_instance) {
-        serial_printf("[OJFS] ERROR: No instance set\n");
+    OjfsInstance *fs = (OjfsInstance *)fs_data;
+    if (!fs) {
         return NULL;
     }
 
     /* OJFS is read-only */
     if (mode & (VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC)) {
-        serial_printf("[OJFS] ERROR: Read-only filesystem\n");
         return NULL;
     }
 
-    int idx = find_entry(current_instance, path);
+    int idx = find_entry(fs, path);
     if (idx < 0) {
-        serial_printf("[OJFS] ERROR: File not found: %s\n", path);
         return NULL;
     }
 
-    const OjfsEntry *entry = &current_instance->entries[idx];
+    const OjfsEntry *entry = &fs->entries[idx];
     if (entry->type != OJFS_TYPE_FILE) {
-        serial_printf("[OJFS] ERROR: Not a file: %s\n", path);
         return NULL;
     }
 
@@ -194,7 +213,7 @@ static VfsFile *ojfs_open(const char *path, uint32_t mode)
     }
 
     file->entry = entry;
-    file->data = current_instance->data + (entry->data_offset - current_instance->header->data_offset);
+    file->data = fs->data + (entry->data_offset - fs->header->data_offset);
     file->position = 0;
 
     return (VfsFile *)file;
@@ -291,19 +310,20 @@ static int64_t ojfs_tell(VfsFile *vfile)
 /*
  * VFS stat implementation
  */
-static int ojfs_stat(const char *path, VfsStat *stat)
+static int ojfs_stat(void *fs_data, const char *path, VfsStat *stat)
 {
-    if (!current_instance || !stat) return -1;
+    OjfsInstance *fs = (OjfsInstance *)fs_data;
+    if (!fs || !stat) return -1;
 
-    int idx = find_entry(current_instance, path);
+    int idx = find_entry(fs, path);
     if (idx < 0) return -1;
 
-    const OjfsEntry *entry = &current_instance->entries[idx];
+    const OjfsEntry *entry = &fs->entries[idx];
 
     stat->type = (entry->type == OJFS_TYPE_DIR) ? VFS_TYPE_DIR : VFS_TYPE_FILE;
 
     /* Check if it's a bundle */
-    const char *name = get_entry_name(current_instance, entry);
+    const char *name = get_entry_name(fs, entry);
     if (entry->type == OJFS_TYPE_DIR && vfs_is_bundle(name)) {
         stat->type = VFS_TYPE_BUNDLE;
     }
@@ -321,26 +341,17 @@ static int ojfs_stat(const char *path, VfsStat *stat)
 /*
  * VFS opendir implementation
  */
-static VfsDir *ojfs_opendir(const char *path)
+static VfsDir *ojfs_opendir(void *fs_data, const char *path)
 {
-    if (!current_instance) return NULL;
+    OjfsInstance *fs = (OjfsInstance *)fs_data;
+    if (!fs) return NULL;
 
-    int idx = find_entry(current_instance, path);
+    int idx = find_entry(fs, path);
     if (idx < 0) {
-        /* Special case: root with no explicit entry */
-        if (strcmp(path, "/") == 0 || path[0] == '\0') {
-            OjfsDirHandle *dir = alloc_ojfs_dir();
-            if (!dir) return NULL;
-
-            dir->parent_index = 0xFFFFFFFF;
-            dir->current = 0;
-            dir->entry_count = current_instance->header->entry_count;
-            return (VfsDir *)dir;
-        }
         return NULL;
     }
 
-    const OjfsEntry *entry = &current_instance->entries[idx];
+    const OjfsEntry *entry = &fs->entries[idx];
     if (entry->type != OJFS_TYPE_DIR) {
         return NULL;
     }
@@ -348,9 +359,10 @@ static VfsDir *ojfs_opendir(const char *path)
     OjfsDirHandle *dir = alloc_ojfs_dir();
     if (!dir) return NULL;
 
-    dir->parent_index = idx;
+    dir->fs = fs;
+    dir->parent_index = (uint32_t)idx;
     dir->current = 0;
-    dir->entry_count = current_instance->header->entry_count;
+    dir->entry_count = fs->header->entry_count;
 
     return (VfsDir *)dir;
 }
@@ -369,15 +381,18 @@ static void ojfs_closedir(VfsDir *vdir)
 static int ojfs_readdir(VfsDir *vdir, VfsDirEntry *entry)
 {
     OjfsDirHandle *dir = (OjfsDirHandle *)vdir;
-    if (!dir || !entry || !current_instance) return -1;
+    if (!dir || !entry) return -1;
+
+    OjfsInstance *fs = dir->fs;
+    if (!fs) return -1;
 
     /* Find next entry with matching parent */
     while (dir->current < dir->entry_count) {
-        const OjfsEntry *e = &current_instance->entries[dir->current];
+        const OjfsEntry *e = &fs->entries[dir->current];
         dir->current++;
 
         if (e->parent == dir->parent_index) {
-            const char *name = get_entry_name(current_instance, e);
+            const char *name = get_entry_name(fs, e);
             strncpy(entry->name, name, VFS_NAME_MAX);
             entry->name[VFS_NAME_MAX] = '\0';
 
@@ -410,36 +425,39 @@ static int ojfs_rewinddir(VfsDir *vdir)
 /*
  * VFS exists implementation
  */
-static int ojfs_exists(const char *path)
+static int ojfs_exists(void *fs_data, const char *path)
 {
-    if (!current_instance) return 0;
-    return find_entry(current_instance, path) >= 0;
+    OjfsInstance *fs = (OjfsInstance *)fs_data;
+    if (!fs) return 0;
+    return find_entry(fs, path) >= 0;
 }
 
 /*
  * VFS isdir implementation
  */
-static int ojfs_isdir(const char *path)
+static int ojfs_isdir(void *fs_data, const char *path)
 {
-    if (!current_instance) return 0;
+    OjfsInstance *fs = (OjfsInstance *)fs_data;
+    if (!fs) return 0;
 
-    int idx = find_entry(current_instance, path);
+    int idx = find_entry(fs, path);
     if (idx < 0) return 0;
 
-    return current_instance->entries[idx].type == OJFS_TYPE_DIR;
+    return fs->entries[idx].type == OJFS_TYPE_DIR;
 }
 
 /*
  * VFS isfile implementation
  */
-static int ojfs_isfile(const char *path)
+static int ojfs_isfile(void *fs_data, const char *path)
 {
-    if (!current_instance) return 0;
+    OjfsInstance *fs = (OjfsInstance *)fs_data;
+    if (!fs) return 0;
 
-    int idx = find_entry(current_instance, path);
+    int idx = find_entry(fs, path);
     if (idx < 0) return 0;
 
-    return current_instance->entries[idx].type == OJFS_TYPE_FILE;
+    return fs->entries[idx].type == OJFS_TYPE_FILE;
 }
 
 /*
@@ -467,7 +485,7 @@ static VfsOps ojfs_ops = {
 };
 
 /*
- * Validate OJFS image
+ * Validate OJFS image (magic, version, and structural bounds)
  */
 bool ojfs_validate(const void *image, size_t size)
 {
@@ -479,18 +497,61 @@ bool ojfs_validate(const void *image, size_t size)
 
     if (header->magic != OJFS_MAGIC) {
         serial_printf("[OJFS] Invalid magic: 0x%x (expected 0x%x)\n",
-            header->magic, OJFS_MAGIC);
+            (unsigned int)header->magic, (unsigned int)OJFS_MAGIC);
         return false;
     }
 
     if (header->version != OJFS_VERSION) {
-        serial_printf("[OJFS] Unsupported version: %d\n", header->version);
+        serial_printf("[OJFS] Unsupported version: %d\n", (int)header->version);
         return false;
     }
 
     if (header->total_size > size) {
         serial_printf("[OJFS] Image truncated\n");
         return false;
+    }
+
+    /* Entry table must fit inside the image */
+    uint64_t need = (uint64_t)sizeof(OjfsHeader) +
+                    (uint64_t)header->entry_count * sizeof(OjfsEntry);
+    if (header->entry_count == 0 || need > header->total_size) {
+        serial_printf("[OJFS] Entry table out of bounds\n");
+        return false;
+    }
+
+    /* String table must fit inside the image */
+    if (header->string_offset + (uint64_t)header->string_size > header->total_size) {
+        serial_printf("[OJFS] String table out of bounds\n");
+        return false;
+    }
+
+    /* Data section must fit inside the image */
+    if (header->data_offset > header->total_size) {
+        serial_printf("[OJFS] Data section out of bounds\n");
+        return false;
+    }
+
+    /* Per-entry sanity: name offsets inside the string table,
+     * file data inside the data section */
+    const OjfsEntry *entries = (const OjfsEntry *)((const uint8_t *)image + sizeof(OjfsHeader));
+    for (uint32_t i = 0; i < header->entry_count; i++) {
+        const OjfsEntry *e = &entries[i];
+        if ((uint64_t)e->name_offset >= (uint64_t)header->string_size) {
+            serial_printf("[OJFS] Entry %d name offset out of bounds\n", (int)i);
+            return false;
+        }
+        if (e->type == OJFS_TYPE_FILE) {
+            if (e->data_offset < (uint64_t)header->data_offset ||
+                e->data_offset - header->data_offset + e->size >
+                    header->total_size - header->data_offset) {
+                serial_printf("[OJFS] Entry %d data out of bounds\n", (int)i);
+                return false;
+            }
+        }
+        if (e->parent != 0xFFFFFFFF && e->parent >= header->entry_count) {
+            serial_printf("[OJFS] Entry %d parent out of bounds\n", (int)i);
+            return false;
+        }
     }
 
     return true;
@@ -517,11 +578,8 @@ VfsOps *ojfs_init(const void *image, size_t size, OjfsInstance **out_instance)
     fs->strings = (const char *)(fs->base + fs->header->string_offset);
     fs->data = fs->base + fs->header->data_offset;
 
-    /* Set as current instance */
-    current_instance = fs;
-
     serial_printf("[OJFS] Initialized: %d entries, %d bytes\n",
-        fs->header->entry_count, (int)fs->header->total_size);
+        (int)fs->header->entry_count, (int)fs->header->total_size);
 
     if (out_instance) {
         *out_instance = fs;
@@ -546,7 +604,7 @@ void ojfs_print_tree(OjfsInstance *fs)
     if (!fs) return;
 
     console_printf("\n=== OJFS Contents ===\n");
-    console_printf("Entries: %d\n\n", fs->header->entry_count);
+    console_printf("Entries: %d\n\n", (int)fs->header->entry_count);
 
     for (uint32_t i = 0; i < fs->header->entry_count; i++) {
         const OjfsEntry *e = &fs->entries[i];

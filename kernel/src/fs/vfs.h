@@ -62,6 +62,7 @@ typedef struct {
  * Directory entry
  */
 #define VFS_NAME_MAX    255
+#define VFS_PATH_MAX    512     /* Normalized absolute path limit */
 
 typedef struct {
     char        name[VFS_NAME_MAX + 1];
@@ -82,12 +83,14 @@ typedef struct VfsDir VfsDir;
 
 /*
  * Filesystem operations (implemented by each filesystem)
+ * Every op receives the mount's `fs_data` pointer so a filesystem
+ * implementation can serve multiple independent mount points.
  */
 typedef struct VfsOps {
     const char *name;   /* Filesystem name (e.g., "ojfs") */
 
     /* File operations */
-    VfsFile *(*open)(const char *path, uint32_t mode);
+    VfsFile *(*open)(void *fs, const char *path, uint32_t mode);
     void (*close)(VfsFile *file);
     ssize_t (*read)(VfsFile *file, void *buf, size_t count);
     ssize_t (*write)(VfsFile *file, const void *buf, size_t count);
@@ -95,23 +98,23 @@ typedef struct VfsOps {
     int64_t (*tell)(VfsFile *file);
 
     /* Metadata operations */
-    int (*stat)(const char *path, VfsStat *stat);
+    int (*stat)(void *fs, const char *path, VfsStat *stat);
 
     /* Directory operations */
-    VfsDir *(*opendir)(const char *path);
+    VfsDir *(*opendir)(void *fs, const char *path);
     void (*closedir)(VfsDir *dir);
     int (*readdir)(VfsDir *dir, VfsDirEntry *entry);
     int (*rewinddir)(VfsDir *dir);
 
     /* Mutating operations (optional) */
-    int (*mkdir)(const char *path);
-    int (*unlink)(const char *path);
-    int (*rename)(const char *from, const char *to);
+    int (*mkdir)(void *fs, const char *path);
+    int (*unlink)(void *fs, const char *path);
+    int (*rename)(void *fs, const char *from, const char *to);
 
     /* Path operations */
-    int (*exists)(const char *path);
-    int (*isdir)(const char *path);
-    int (*isfile)(const char *path);
+    int (*exists)(void *fs, const char *path);
+    int (*isdir)(void *fs, const char *path);
+    int (*isfile)(void *fs, const char *path);
 
 } VfsOps;
 

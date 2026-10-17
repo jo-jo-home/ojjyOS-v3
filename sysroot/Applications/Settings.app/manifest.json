@@ -1,0 +1,9 @@
+{
+    "name": "Settings",
+    "bundle_id": "com.ojjyos.settings",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "system",
+    "description": "System preferences"
+}

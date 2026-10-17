@@ -171,10 +171,18 @@ Color fb_blend(Color bg, Color fg, uint8_t alpha)
 }
 
 /*
- * Copy a rectangular region (for scrolling)
+ * Copy a rectangular region (for scrolling), clipped to the framebuffer
  */
 void fb_copy_rect(int dst_x, int dst_y, int src_x, int src_y, int w, int h)
 {
+    /* Clip to screen bounds first */
+    if (w <= 0 || h <= 0) return;
+    if (dst_x < 0) { w += dst_x; src_x -= dst_x; dst_x = 0; }
+    if (dst_y < 0) { h += dst_y; src_y -= dst_y; dst_y = 0; }
+    if (dst_x + w > (int)fb_width) w = (int)fb_width - dst_x;
+    if (dst_y + h > (int)fb_height) h = (int)fb_height - dst_y;
+    if (w <= 0 || h <= 0) return;
+
     /* Handle overlapping regions by choosing copy direction */
     if (dst_y < src_y || (dst_y == src_y && dst_x < src_x)) {
         /* Copy top-to-bottom, left-to-right */

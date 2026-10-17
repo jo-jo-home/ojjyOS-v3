@@ -92,17 +92,27 @@ char *strcpy(char *dest, const char *src)
 }
 
 /*
- * Copy string with limit
+ * Copy string with limit.
+ * Writes EXACTLY n bytes: src characters up to and including the NUL,
+ * then zero padding to the n-byte boundary.
  */
 char *strncpy(char *dest, const char *src, size_t n)
 {
     char *d = dest;
-    while (n && (*d++ = *src++)) {
-        n--;
+    size_t i = 0;
+
+    /* Copy up to n bytes, stopping at (and including) the NUL */
+    while (i < n && src[i] != '\0') {
+        d[i] = src[i];
+        i++;
     }
-    while (n--) {
-        *d++ = '\0';
+
+    /* Zero-pad the remainder of the n-byte window */
+    while (i < n) {
+        d[i] = '\0';
+        i++;
     }
+
     return dest;
 }
 

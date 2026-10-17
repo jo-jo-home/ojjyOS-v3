@@ -87,18 +87,20 @@ extern void pic_disable_irq(uint8_t irq);
  */
 static void ps2_wait_input(void)
 {
-    int timeout = 100000;
+    int timeout = 1000000;
     while ((inb(PS2_STATUS_PORT) & PS2_STATUS_INPUT_FULL) && timeout > 0) {
         timeout--;
     }
 }
 
 /*
- * Wait for PS/2 controller to have output data
+ * Wait for PS/2 controller to have output data.
+ * Real mice can take a while (e.g. ~750ms after a reset), so the
+ * timeout is generous compared to the VM-optimized loop this replaces.
  */
 static bool ps2_wait_output(void)
 {
-    int timeout = 100000;
+    int timeout = 10000000;
     while (!(inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT_FULL) && timeout > 0) {
         timeout--;
     }
@@ -134,6 +136,16 @@ static uint8_t mouse_read_response(void)
         return inb(PS2_DATA_PORT);
     }
     return 0xFF;
+}
+
+/*
+ * Read the next response byte, validating it is a mouse ACK (0xFA).
+ * Returns true if the expected ACK arrived.
+ */
+static bool mouse_expect_ack(void)
+{
+    uint8_t b = mouse_read_response();
+    return b == 0xFA;
 }
 
 /*
@@ -183,18 +195,28 @@ static bool ps2_mouse_probe(Driver *drv)
 
     /* Test auxiliary port */
     ps2_send_cmd(PS2_CMD_TEST_PORT2);
-    if (ps2_wait_output()) {
-        uint8_t result = inb(PS2_DATA_PORT);
-        if (result != 0x00) {
-            serial_printf("[PS2_MOUSE] Port 2 test failed: 0x%x\n", result);
-            return false;
-        }
+    if (!ps2_wait_output()) {
+        serial_printf("[PS2_MOUSE] No response to port 2 test\n");
+        return false;
+    }
+    uint8_t result = inb(PS2_DATA_PORT);
+    if (result != 0x00) {
+        serial_printf("[PS2_MOUSE] Port 2 test failed: 0x%x\n", result);
+        return false;
     }
 
-    /* Reset mouse */
+    /* Reset mouse and expect ACK + self-test passed + mouse ID */
     mouse_send_cmd(MOUSE_CMD_RESET);
-    mouse_read_response();  /* ACK */
-    mouse_read_response();  /* Self-test pass (0xAA) */
+    uint8_t ack = mouse_read_response();
+    if (ack != 0xFA) {
+        serial_printf("[PS2_MOUSE] No ACK to reset (0x%x) - no mouse\n", ack);
+        return false;
+    }
+    uint8_t self_test = mouse_read_response();
+    if (self_test != 0xAA) {
+        serial_printf("[PS2_MOUSE] Mouse self-test failed (0x%x)\n", self_test);
+        return false;
+    }
     mouse_read_response();  /* Mouse ID */
 
     serial_printf("[PS2_MOUSE] Mouse found\n");
@@ -214,7 +236,12 @@ static int ps2_mouse_init_driver(Driver *drv)
     mouse_state.mouse_id = 0;
     mouse_state.prev_buttons = 0;
 
-    /* Try to enable scroll wheel */
+    /* Flush any stray bytes from the output buffer before configuring */
+    while (inb(PS2_STATUS_PORT) & PS2_STATUS_OUTPUT_FULL) {
+        inb(PS2_DATA_PORT);
+    }
+
+    /* Enable the wheel (magic sample-rate knock) before streaming starts */
     mouse_state.has_scroll = mouse_try_enable_scroll();
     if (mouse_state.has_scroll) {
         serial_printf("[PS2_MOUSE] Scroll wheel enabled\n");
@@ -222,27 +249,30 @@ static int ps2_mouse_init_driver(Driver *drv)
 
     /* Set defaults */
     mouse_send_cmd(MOUSE_CMD_SET_DEFAULTS);
-    mouse_read_response();
+    mouse_expect_ack();
 
-    /* Enable mouse data reporting */
-    mouse_send_cmd(MOUSE_CMD_ENABLE);
-    mouse_read_response();
-
-    /* Enable IRQ 12 in controller config */
+    /* Enable controller config FIRST (IRQ12 gate + aux clock):
+     * do this before enabling data reporting so packet bytes cannot
+     * be misread as controller config data. */
     ps2_send_cmd(PS2_CMD_READ_CONFIG);
     if (ps2_wait_output()) {
         uint8_t config = inb(PS2_DATA_PORT);
-        config |= 0x02;  /* Enable IRQ12 */
-        config &= ~0x20; /* Enable clock for port 2 */
+        config |= 0x02;   /* Enable IRQ12 */
+        config |= 0x01;   /* Keep IRQ1 (keyboard) enabled */
+        config &= ~0x20;  /* Enable clock for port 2 */
         ps2_send_cmd(PS2_CMD_WRITE_CONFIG);
         ps2_wait_input();
         outb(PS2_DATA_PORT, config);
     }
 
+    /* Now enable mouse data reporting (F4) */
+    mouse_send_cmd(MOUSE_CMD_ENABLE);
+    mouse_expect_ack();
+
     /* Register IRQ handler */
     driver_register_irq(drv, 12);  /* Mouse is IRQ 12 */
 
-    /* Enable IRQ 12 in PIC */
+    /* Enable IRQ 12 in PIC (also unmasks the IRQ2 cascade) */
     pic_enable_irq(12);
 
     serial_printf("[PS2_MOUSE] Initialized (scroll=%d)\n", mouse_state.has_scroll);
@@ -272,22 +302,25 @@ static int ps2_mouse_shutdown(Driver *drv)
 static void mouse_process_packet(void)
 {
     uint8_t status = mouse_state.packet[0];
-    int8_t dx = mouse_state.packet[1];
-    int8_t dy = mouse_state.packet[2];
-    int8_t dz = 0;
-
-    if (mouse_state.has_scroll) {
-        dz = (int8_t)mouse_state.packet[3];
-    }
 
     /* Check for overflow (discard packet) */
     if (status & 0xC0) {
         return;
     }
 
-    /* Apply sign extension based on status bits */
-    if (status & 0x10) dx |= 0xFFFFFF00;
-    if (status & 0x20) dy |= 0xFFFFFF00;
+    /* PS/2 deltas are 9-bit two's-complement: the sign lives in status
+     * bits 4/5 and the data byte is the low 8 bits (which must NOT be
+     * sign-extended on its own). */
+    int dx = (int)mouse_state.packet[1];
+    int dy = (int)mouse_state.packet[2];
+    int dz = 0;
+
+    if (mouse_state.has_scroll) {
+        dz = (int8_t)mouse_state.packet[3];  /* Z is a plain signed byte */
+    }
+
+    if (status & 0x10) dx -= 256;
+    if (status & 0x20) dy -= 256;
 
     /* PS/2 mouse Y is inverted */
     dy = -dy;
@@ -313,11 +346,9 @@ static void mouse_process_packet(void)
         if (is_pressed && !was_pressed) {
             /* Button pressed */
             input_post_mouse_button(INPUT_EVENT_MOUSE_BUTTON_DOWN, (MouseButton)i);
-            serial_printf("[PS2_MOUSE] Button %d down\n", i);
         } else if (!is_pressed && was_pressed) {
             /* Button released */
             input_post_mouse_button(INPUT_EVENT_MOUSE_BUTTON_UP, (MouseButton)i);
-            serial_printf("[PS2_MOUSE] Button %d up\n", i);
         }
     }
 

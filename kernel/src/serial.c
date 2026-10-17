@@ -135,7 +135,7 @@ void serial_puthex(uint64_t value)
 
 /*
  * Simple formatted print
- * Supports: %s, %d, %u, %x, %p, %c, %%
+ * Supports: %s, %d, %u, %x, %p, %c, %% (with optional 'l'/'ll' modifiers)
  */
 void serial_printf(const char *fmt, ...)
 {
@@ -150,6 +150,16 @@ void serial_printf(const char *fmt, ...)
 
         fmt++;  /* Skip '%' */
 
+        /* Handle 'l' length modifier */
+        int is_long = 0;
+        if (*fmt == 'l') {
+            is_long = 1;
+            fmt++;
+            if (*fmt == 'l') {
+                fmt++;  /* Consume second 'l' in 'll' */
+            }
+        }
+
         switch (*fmt) {
         case 's': {
             const char *s = __builtin_va_arg(args, const char *);
@@ -157,21 +167,36 @@ void serial_printf(const char *fmt, ...)
             break;
         }
         case 'd': {
-            int64_t val = __builtin_va_arg(args, int64_t);
+            int64_t val;
+            if (is_long) {
+                val = __builtin_va_arg(args, int64_t);
+            } else {
+                val = __builtin_va_arg(args, int);
+            }
             char buf[32];
             itoa(val, buf, 10);
             serial_puts(buf);
             break;
         }
         case 'u': {
-            uint64_t val = __builtin_va_arg(args, uint64_t);
+            uint64_t val;
+            if (is_long) {
+                val = __builtin_va_arg(args, uint64_t);
+            } else {
+                val = __builtin_va_arg(args, unsigned int);
+            }
             char buf[32];
             utoa(val, buf, 10);
             serial_puts(buf);
             break;
         }
         case 'x': {
-            uint64_t val = __builtin_va_arg(args, uint64_t);
+            uint64_t val;
+            if (is_long) {
+                val = __builtin_va_arg(args, uint64_t);
+            } else {
+                val = __builtin_va_arg(args, unsigned int);
+            }
             char buf[32];
             utoa(val, buf, 16);
             serial_puts(buf);
@@ -192,10 +217,15 @@ void serial_printf(const char *fmt, ...)
             break;
         default:
             serial_putc('%');
-            serial_putc(*fmt);
+            if (*fmt) serial_putc(*fmt);
             break;
         }
 
+        /* Format string must not end with a bare '%': stop instead of
+         * walking past the terminator */
+        if (*fmt == '\0') {
+            break;
+        }
         fmt++;
     }
 

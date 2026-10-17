@@ -39,6 +39,9 @@ void ata_init(void);
 /* Get device info */
 AtaDevice *ata_get_device(int index);
 
+/* First present, non-ATAPI disk (used by the block cache) */
+AtaDevice *ata_get_primary_disk(void);
+
 /* Get number of detected devices */
 int ata_get_device_count(void);
 

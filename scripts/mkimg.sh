@@ -19,25 +19,39 @@ KERNEL="$BUILD_DIR/kernel.bin"
 IMAGE="$BUILD_DIR/ojjyos3.img"
 ESP_IMG="$BUILD_DIR/esp.img"
 
-# Image size (64MB is plenty for MVP)
-IMG_SIZE_MB=64
+# Image size: 128MB total
+#   - Partition 1: EFI System Partition (32 MB)
+#   - Partition 2: ojjyOS data partition (persistence, rest of disk)
+IMG_SIZE_MB=128
+SECTORS=$((IMG_SIZE_MB * 2048))
+# GPT reserves the last 33 sectors for the backup header + table
+PART_LAST=$((SECTORS - 34))
+ESP_SECTORS=$((32 * 2048))
+DATA_START=$((2048 + ESP_SECTORS))
 
 echo "Creating disk image..."
 
 # Check required files
 if [ ! -f "$BOOTLOADER" ]; then
     echo "Error: Bootloader not found: $BOOTLOADER"
+    echo "Run scripts/build.sh first."
     exit 1
 fi
 
 if [ ! -f "$KERNEL" ]; then
     echo "Error: Kernel not found: $KERNEL"
+    echo "Run scripts/build.sh first."
     exit 1
 fi
 
-# Create FAT32 ESP image
+if ! command -v sgdisk &> /dev/null; then
+    echo "Error: sgdisk not found. Install with: sudo apt install -y gdisk"
+    exit 1
+fi
+
+# Create FAT32 ESP image sized to fit the ESP partition
 echo "  Creating ESP filesystem..."
-dd if=/dev/zero of="$ESP_IMG" bs=1M count=$((IMG_SIZE_MB - 1)) 2>/dev/null
+dd if=/dev/zero of="$ESP_IMG" bs=512 count=$ESP_SECTORS 2>/dev/null
 mkfs.fat -F 32 "$ESP_IMG" >/dev/null
 
 # Create directory structure and copy files
@@ -50,27 +64,21 @@ mcopy -i "$ESP_IMG" "$KERNEL" ::/EFI/ojjyos/kernel.bin
 
 # Create the final GPT disk image
 echo "  Creating GPT disk image..."
-
-# Create a raw disk image with GPT header space
 dd if=/dev/zero of="$IMAGE" bs=1M count=$IMG_SIZE_MB 2>/dev/null
 
-# Create GPT partition table
-# Using sgdisk or fallback to parted
-if command -v sgdisk &> /dev/null; then
-    sgdisk -Z "$IMAGE" >/dev/null 2>&1 || true
-    sgdisk -n 1:2048:+$((IMG_SIZE_MB - 1))M -t 1:ef00 -c 1:"EFI System" "$IMAGE" >/dev/null
-else
-    # Fallback: create a simple GPT-like structure manually
-    # For simplicity, we'll just use the FAT image directly
-    # VirtualBox can boot from a raw FAT image if configured as USB/removable
-    cp "$ESP_IMG" "$IMAGE"
-    echo "  Warning: sgdisk not found, using simple image format"
-fi
+# Partition 1: ESP.
+# Partition 2: ojjyOS data partition, used by the kernel's persistence
+# layer. The start sector must match OJJY_DATA_START_SECTOR in
+# kernel/src/fs/persist.h.
+sgdisk -Z "$IMAGE" >/dev/null 2>&1 || true
+sgdisk -n 1:2048:$((DATA_START - 1)) -t 1:ef00 -c 1:"EFI System" "$IMAGE" >/dev/null
+sgdisk -n 2:$DATA_START:$PART_LAST -t 2:8300 -c 2:"ojjyOS Data" "$IMAGE" >/dev/null
 
-# Copy ESP content into partition (at sector 2048 = byte 1048576)
-if command -v sgdisk &> /dev/null; then
-    dd if="$ESP_IMG" of="$IMAGE" bs=512 seek=2048 conv=notrunc 2>/dev/null
-fi
+# Copy ESP content into partition 1 (at sector 2048 = byte 1048576)
+dd if="$ESP_IMG" of="$IMAGE" bs=512 seek=2048 conv=notrunc 2>/dev/null
+
+# Verify the layout
+sgdisk -p "$IMAGE" | sed 's/^/  /'
 
 # Clean up
 rm -f "$ESP_IMG"

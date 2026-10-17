@@ -229,7 +229,10 @@ int vfs_unmount(const char *path)
  */
 VfsFile *vfs_open(const char *path, uint32_t mode)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return NULL;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount) {
         serial_printf("[VFS] ERROR: No mount for path: %s\n", path);
         return NULL;
@@ -246,8 +249,8 @@ VfsFile *vfs_open(const char *path, uint32_t mode)
         return NULL;
     }
 
-    const char *rel_path = get_relative_path(mount, path);
-    VfsFile *file = mount->ops->open(rel_path, mode);
+    const char *rel_path = get_relative_path(mount, norm);
+    VfsFile *file = mount->ops->open(mount->fs_data, rel_path, mode);
     if (!file) {
         return NULL;
     }
@@ -352,13 +355,16 @@ ssize_t vfs_read_file(const char *path, void **buffer)
  */
 int vfs_stat(const char *path, VfsStat *stat)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return -1;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->stat) {
         return -1;
     }
 
-    const char *rel_path = get_relative_path(mount, path);
-    return mount->ops->stat(rel_path, stat);
+    const char *rel_path = get_relative_path(mount, norm);
+    return mount->ops->stat(mount->fs_data, rel_path, stat);
 }
 
 /*
@@ -366,12 +372,15 @@ int vfs_stat(const char *path, VfsStat *stat)
  */
 int vfs_exists(const char *path)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return 0;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount) return 0;
 
     if (mount->ops->exists) {
-        const char *rel_path = get_relative_path(mount, path);
-        return mount->ops->exists(rel_path);
+        const char *rel_path = get_relative_path(mount, norm);
+        return mount->ops->exists(mount->fs_data, rel_path);
     }
 
     /* Fallback: try stat */
@@ -384,12 +393,15 @@ int vfs_exists(const char *path)
  */
 int vfs_isdir(const char *path)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return 0;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount) return 0;
 
     if (mount->ops->isdir) {
-        const char *rel_path = get_relative_path(mount, path);
-        return mount->ops->isdir(rel_path);
+        const char *rel_path = get_relative_path(mount, norm);
+        return mount->ops->isdir(mount->fs_data, rel_path);
     }
 
     VfsStat st;
@@ -402,12 +414,15 @@ int vfs_isdir(const char *path)
  */
 int vfs_isfile(const char *path)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return 0;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount) return 0;
 
     if (mount->ops->isfile) {
-        const char *rel_path = get_relative_path(mount, path);
-        return mount->ops->isfile(rel_path);
+        const char *rel_path = get_relative_path(mount, norm);
+        return mount->ops->isfile(mount->fs_data, rel_path);
     }
 
     VfsStat st;
@@ -420,13 +435,16 @@ int vfs_isfile(const char *path)
  */
 VfsDir *vfs_opendir(const char *path)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return NULL;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->opendir) {
         return NULL;
     }
 
-    const char *rel_path = get_relative_path(mount, path);
-    void *fs_dir = mount->ops->opendir(rel_path);
+    const char *rel_path = get_relative_path(mount, norm);
+    void *fs_dir = mount->ops->opendir(mount->fs_data, rel_path);
     if (!fs_dir) {
         return NULL;
     }
@@ -487,7 +505,10 @@ int vfs_rewinddir(VfsDir *dir)
  */
 int vfs_mkdir(const char *path)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return -1;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->mkdir) {
         return -1;
     }
@@ -496,13 +517,16 @@ int vfs_mkdir(const char *path)
         return -1;
     }
 
-    const char *rel_path = get_relative_path(mount, path);
-    return mount->ops->mkdir(rel_path);
+    const char *rel_path = get_relative_path(mount, norm);
+    return mount->ops->mkdir(mount->fs_data, rel_path);
 }
 
 int vfs_unlink(const char *path)
 {
-    VfsMount *mount = find_mount(path);
+    char norm[VFS_PATH_MAX];
+    if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return -1;
+
+    VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->unlink) {
         return -1;
     }
@@ -511,13 +535,18 @@ int vfs_unlink(const char *path)
         return -1;
     }
 
-    const char *rel_path = get_relative_path(mount, path);
-    return mount->ops->unlink(rel_path);
+    const char *rel_path = get_relative_path(mount, norm);
+    return mount->ops->unlink(mount->fs_data, rel_path);
 }
 
 int vfs_rename(const char *from, const char *to)
 {
-    VfsMount *mount = find_mount(from);
+    char norm_from[VFS_PATH_MAX];
+    char norm_to[VFS_PATH_MAX];
+    if (vfs_normalize_path(from, norm_from, sizeof(norm_from)) != 0) return -1;
+    if (vfs_normalize_path(to, norm_to, sizeof(norm_to)) != 0) return -1;
+
+    VfsMount *mount = find_mount(norm_from);
     if (!mount || !mount->ops->rename) {
         return -1;
     }
@@ -526,14 +555,14 @@ int vfs_rename(const char *from, const char *to)
         return -1;
     }
 
-    VfsMount *mount_to = find_mount(to);
+    VfsMount *mount_to = find_mount(norm_to);
     if (mount_to != mount) {
         return -1;
     }
 
-    const char *rel_from = get_relative_path(mount, from);
-    const char *rel_to = get_relative_path(mount, to);
-    return mount->ops->rename(rel_from, rel_to);
+    const char *rel_from = get_relative_path(mount, norm_from);
+    const char *rel_to = get_relative_path(mount, norm_to);
+    return mount->ops->rename(mount->fs_data, rel_from, rel_to);
 }
 
 /*
@@ -611,7 +640,9 @@ int vfs_join_path(char *dest, size_t size, const char *base, const char *name)
 }
 
 /*
- * Normalize a path (remove . and .., handle multiple slashes)
+ * Normalize a path: resolve "." and "..", collapse duplicate slashes.
+ * The result is an absolute path (relative inputs are treated as
+ * relative to "/"). ".." above the root clamps to the root.
  */
 int vfs_normalize_path(const char *path, char *normalized, size_t size)
 {
@@ -619,14 +650,49 @@ int vfs_normalize_path(const char *path, char *normalized, size_t size)
         return -1;
     }
 
-    /* Simple implementation - just copy for now */
-    /* TODO: Handle . and .. properly */
     size_t len = strlen(path);
-    if (len >= size) {
+    if (len + 1 > size) {
         return -1;
     }
 
-    strcpy(normalized, path);
+    /* Build the normalized path component by component */
+    size_t out_len = 0;
+    normalized[out_len++] = '/';
+
+    size_t i = 0;
+    while (i < len) {
+        /* Skip duplicate slashes */
+        while (i < len && path[i] == '/') i++;
+        if (i >= len) break;
+
+        /* Extract one component */
+        size_t start = i;
+        while (i < len && path[i] != '/') i++;
+        size_t comp_len = i - start;
+
+        if (comp_len == 1 && path[start] == '.') {
+            continue;  /* Current directory - skip */
+        }
+        if (comp_len == 2 && path[start] == '.' && path[start + 1] == '.') {
+            /* Parent directory - strip the last component */
+            while (out_len > 1 && normalized[out_len - 1] != '/') {
+                out_len--;
+            }
+            if (out_len > 1) out_len--;  /* Remove the trailing slash too */
+            continue;
+        }
+
+        /* Append the component (with a separator if needed) */
+        if (out_len > 1 && out_len + 1 < size) {
+            normalized[out_len++] = '/';
+        }
+        for (size_t j = 0; j < comp_len; j++) {
+            if (out_len + 1 >= size) return -1;  /* No room for NUL */
+            normalized[out_len++] = path[start + j];
+        }
+    }
+
+    normalized[out_len] = '\0';
     return 0;
 }
 

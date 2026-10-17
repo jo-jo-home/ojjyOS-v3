@@ -1,0 +1,8 @@
+# Welcome to ojjyOS Web
+
+This is the offline browser for ojjyOS. Pages are stored on the
+system disk under /System/Web - no network connection needed.
+
+>about About ojjyOS and its creator
+>shortcuts Keyboard shortcuts
+>release What is new in this release

@@ -39,12 +39,13 @@ _start:
     ; Clear direction flag
     cld
 
-    ; Set up a temporary stack (16KB at high address)
-    ; We'll set up a proper stack later
+    ; Set up the kernel stack (lives in .bss)
     mov rsp, stack_top
 
-    ; Save boot info pointer
-    push rdi
+    ; Save the BootInfo pointer (RDI, passed by the bootloader) in RBX.
+    ; RBX is callee-saved and NOT touched by the BSS clear below.
+    ; (Do not push it: the stack lives inside .bss and would be zeroed.)
+    mov rbx, rdi
 
     ; Clear BSS section
     mov rdi, __bss_start
@@ -54,7 +55,7 @@ _start:
     rep stosb
 
     ; Restore boot info pointer
-    pop rdi
+    mov rdi, rbx
 
     ; Call kernel main
     call kernel_main
@@ -194,12 +195,12 @@ isr_common:
 ; ============================================================================
 section .bss
 
-; Kernel stack (16KB)
+; Kernel stack (64KB — the compositor and apps use deep call chains)
 align 16
 stack_bottom:
-    resb 16384
+    resb 65536
 stack_top:
 
-; BSS markers (set by linker)
-global __bss_start
-global __bss_end
+; BSS markers (defined by linker.ld)
+extern __bss_start
+extern __bss_end

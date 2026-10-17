@@ -197,7 +197,10 @@ int bundle_load(const char *path, Bundle *bundle)
 
     /* Build manifest path */
     char manifest_path[BUNDLE_PATH_MAX + 32];
-    vfs_join_path(manifest_path, sizeof(manifest_path), path, "manifest.json");
+    if (vfs_join_path(manifest_path, sizeof(manifest_path), path, "manifest.json") != 0) {
+        serial_printf("[BUNDLE] Path too long: %s\n", path);
+        return -1;
+    }
 
     /* Open and read manifest */
     VfsFile *mf = vfs_open(manifest_path, VFS_O_READ);
@@ -243,10 +246,16 @@ int bundle_load_icon(Bundle *bundle, BundleIcon *icon)
 
     /* Build icon path */
     char icon_path[BUNDLE_PATH_MAX + 64];
+    bool have_icon_path;
     if (bundle->manifest.icon[0]) {
-        vfs_join_path(icon_path, sizeof(icon_path), bundle->path, bundle->manifest.icon);
+        have_icon_path = vfs_join_path(icon_path, sizeof(icon_path),
+                                       bundle->path, bundle->manifest.icon) == 0;
     } else {
-        vfs_join_path(icon_path, sizeof(icon_path), bundle->path, "icon.raw");
+        have_icon_path = vfs_join_path(icon_path, sizeof(icon_path),
+                                       bundle->path, "icon.raw") == 0;
+    }
+    if (!have_icon_path) {
+        return -1;
     }
 
     /* Open icon file */
@@ -365,8 +374,10 @@ int bundle_list_directory(const char *dir_path, Bundle *bundles, int max_bundles
     while (vfs_readdir(dir, &entry) == 0 && count < max_bundles) {
         /* Check if it's a bundle */
         if (entry.type == VFS_TYPE_BUNDLE || vfs_is_bundle(entry.name)) {
-            char full_path[BUNDLE_PATH_MAX];
-            vfs_join_path(full_path, sizeof(full_path), dir_path, entry.name);
+            char full_path[BUNDLE_PATH_MAX + 32];
+            if (vfs_join_path(full_path, sizeof(full_path), dir_path, entry.name) != 0) {
+                continue;  /* Name too long to fit */
+            }
 
             if (bundle_load(full_path, &bundles[count]) == 0) {
                 count++;

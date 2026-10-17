@@ -3,7 +3,7 @@
 CC = cc
 CFLAGS = -Wall -Wextra -O2
 
-TOOLS = mkojfs mkicon mkwallpaper
+TOOLS = mkojfs mkicon mkwallpaper mkarray
 
 .PHONY: all clean
 
@@ -17,6 +17,9 @@ mkicon: mkicon.c
 
 mkwallpaper: mkwallpaper.c
 	$(CC) $(CFLAGS) -o $@ $< -lm
+
+mkarray: mkarray.c
+	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
 	rm -f $(TOOLS)

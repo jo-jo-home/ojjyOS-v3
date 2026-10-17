@@ -14,22 +14,11 @@ echo "=== Building ojjyOS Filesystem ==="
 # Create build directory
 mkdir -p "$BUILD_DIR"
 
-# Build tools
+# Build tools (includes mkarray, which embeds the image into a C header)
 echo "Building tools..."
 cd "$TOOLS_DIR"
 make clean
 make
-
-XXD_BIN="$(command -v xxd)"
-if [ -z "$XXD_BIN" ]; then
-    if [ -x "/usr/bin/xxd" ]; then
-        XXD_BIN="/usr/bin/xxd"
-    fi
-fi
-if [ -z "$XXD_BIN" ]; then
-    echo "Error: xxd not found. Install vim-common."
-    exit 1
-fi
 
 # Create sysroot directories
 echo "Creating directory structure..."
@@ -37,6 +26,7 @@ mkdir -p "$SYSROOT/System/Wallpapers"
 mkdir -p "$SYSROOT/System/Fonts"
 mkdir -p "$SYSROOT/System/Library"
 mkdir -p "$SYSROOT/System/Library/Icons"
+mkdir -p "$SYSROOT/System/Web"
 mkdir -p "$SYSROOT/Applications/About.app/resources"
 mkdir -p "$SYSROOT/Applications/Settings.app"
 mkdir -p "$SYSROOT/Applications/Finder.app"
@@ -45,6 +35,7 @@ mkdir -p "$SYSROOT/Applications/TextEdit.app"
 mkdir -p "$SYSROOT/Applications/Notes.app"
 mkdir -p "$SYSROOT/Applications/Preview.app"
 mkdir -p "$SYSROOT/Applications/Calendar.app"
+mkdir -p "$SYSROOT/Applications/Web.app"
 mkdir -p "$SYSROOT/Users/guest/Desktop"
 mkdir -p "$SYSROOT/Users/guest/Documents"
 mkdir -p "$SYSROOT/Library/Preferences"
@@ -60,6 +51,7 @@ echo "Generating icons..."
 ./mkicon notes "$SYSROOT/Applications/Notes.app/icon.raw"
 ./mkicon preview "$SYSROOT/Applications/Preview.app/icon.raw"
 ./mkicon calendar "$SYSROOT/Applications/Calendar.app/icon.raw"
+./mkicon web "$SYSROOT/Applications/Web.app/icon.raw"
 ./mkicon folder "$SYSROOT/System/Library/Icons/Folder.raw"
 ./mkicon file "$SYSROOT/System/Library/Icons/File.raw"
 
@@ -180,11 +172,97 @@ cat > "$SYSROOT/Applications/Calendar.app/manifest.json" << 'EOF'
 }
 EOF
 
+# Create manifest for Web.app
+cat > "$SYSROOT/Applications/Web.app/manifest.json" << 'EOF'
+{
+    "name": "Web",
+    "bundle_id": "com.ojjyos.web",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Offline page browser"
+}
+EOF
+
+# Create the Web app's offline pages (tiny markup:
+#   "# text" = heading, ">id text" = link to <id>.page, else plain text)
+mkdir -p "$SYSROOT/System/Web"
+cat > "$SYSROOT/System/Web/home.page" << 'EOF'
+# Welcome to ojjyOS Web
+
+This is the offline browser for ojjyOS. Pages are stored on the
+system disk under /System/Web - no network connection needed.
+
+>about About ojjyOS and its creator
+>shortcuts Keyboard shortcuts
+>release What is new in this release
+EOF
+
+cat > "$SYSROOT/System/Web/about.page" << 'EOF'
+# About ojjyOS
+
+ojjyOS is a custom operating system with a macOS Tahoe-inspired
+user interface. It is built from scratch on a custom kernel -
+not based on Linux, BSD, Windows or macOS.
+
+Created by Jonas Lee.
+
+The system includes a Finder, a Terminal, TextEdit, Notes,
+Preview, Calendar, Settings, and this offline Web browser.
+
+>home Back to the start page
+EOF
+
+cat > "$SYSROOT/System/Web/shortcuts.page" << 'EOF'
+# Keyboard shortcuts
+
+Command (Super) key shortcuts:
+
+Super + Space  -  Spotlight search
+Super + L     -  Launchpad
+Super + C     -  Control Center
+Super + M     -  Mission Control
+Super + Tab   -  Switch between running apps
+Super + Q     -  Quit the active app
+
+App shortcuts:
+
+Super + S     -  Save (TextEdit, Notes)
+Super + O     -  Open the last file
+Super + C/X/V -  Copy / Cut / Paste
+
+>home Back to the start page
+EOF
+
+cat > "$SYSROOT/System/Web/release.page" << 'EOF'
+# ojjyOS 3.1.0
+
+The "Make It Work" release.
+
+The kernel now boots reliably: the bootloader loads a real ELF
+kernel, the keyboard and mouse work through the driver model,
+and the whole filesystem is reachable.
+
+New in this release:
+
+- Working Dock, Spotlight, Launchpad and Control Center
+- Scroll wheel support across the system
+- Desktop icons with double-click to open
+- Working window close and minimize buttons
+- The Web app: this offline browser
+- Finder, Terminal, TextEdit and Calendar fixes throughout
+
+Created by Jonas Lee.
+
+>home Back to the start page
+EOF
+
 # Create system version file
 cat > "$SYSROOT/System/version.txt" << 'EOF'
-ojjyOS v3.0.0-M2
-Filesystem Milestone
-Made by Jonas Lee
+ojjyOS v3.1.0
+Make It Work Release
+Created by Jonas Lee
 EOF
 
 # Create sample user files
@@ -196,11 +274,10 @@ echo "Building OJFS image..."
 ./mkojfs "$BUILD_DIR/system.ojfs" "$SYSROOT"
 
 # Create C header with embedded filesystem
+# (mkarray emits deterministic names - unlike the old xxd|sed pipeline,
+#  which broke whenever the repo path differed from the expected one)
 echo "Creating embedded filesystem header..."
-"$XXD_BIN" -i "$BUILD_DIR/system.ojfs" > "$ROOT_DIR/kernel/src/fs/system_fs.h"
-sed -i.bak 's/build_system_ojfs/embedded_fs/g' "$ROOT_DIR/kernel/src/fs/system_fs.h"
-sed -i.bak 's/unsigned char/const uint8_t/g' "$ROOT_DIR/kernel/src/fs/system_fs.h"
-rm -f "$ROOT_DIR/kernel/src/fs/system_fs.h.bak"
+./mkarray "$BUILD_DIR/system.ojfs" "$ROOT_DIR/kernel/src/fs/system_fs.h" embedded_fs
 
 echo ""
 echo "=== Filesystem build complete ==="

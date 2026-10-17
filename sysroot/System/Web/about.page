@@ -1,0 +1,12 @@
+# About ojjyOS
+
+ojjyOS is a custom operating system with a macOS Tahoe-inspired
+user interface. It is built from scratch on a custom kernel -
+not based on Linux, BSD, Windows or macOS.
+
+Created by Jonas Lee.
+
+The system includes a Finder, a Terminal, TextEdit, Notes,
+Preview, Calendar, Settings, and this offline Web browser.
+
+>home Back to the start page

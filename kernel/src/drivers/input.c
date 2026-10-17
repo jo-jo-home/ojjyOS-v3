@@ -248,14 +248,17 @@ void input_set_mouse_position(int32_t x, int32_t y)
  */
 void input_set_mouse_bounds(int32_t width, int32_t height)
 {
-    mouse_max_x = width;
-    mouse_max_y = height;
+    /* Validate: non-positive bounds would produce a -1 cursor position */
+    if (width > 0) mouse_max_x = width;
+    if (height > 0) mouse_max_y = height;
 
     /* Clamp current position to new bounds */
     if (mouse_x >= mouse_max_x) mouse_x = mouse_max_x - 1;
     if (mouse_y >= mouse_max_y) mouse_y = mouse_max_y - 1;
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
 
-    serial_printf("[INPUT] Mouse bounds set to %dx%d\n", width, height);
+    serial_printf("[INPUT] Mouse bounds set to %dx%d\n", mouse_max_x, mouse_max_y);
 }
 
 /*

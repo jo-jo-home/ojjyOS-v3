@@ -119,7 +119,8 @@ void console_puts(const char *s)
 }
 
 /*
- * Formatted print (supports %s, %d, %u, %x, %p, %c, %%)
+ * Formatted print (supports %s, %d, %u, %x, %p, %c, %%, with optional
+ * width, '-' left-align flag and '0' zero-pad flag)
  */
 void console_printf(const char *fmt, ...)
 {
@@ -134,15 +135,17 @@ void console_printf(const char *fmt, ...)
 
         fmt++;  /* Skip '%' */
 
-        /* Handle width/padding (simple version) */
-        int width = 0;
+        /* Parse flags */
         int pad_zero = 0;
-
-        if (*fmt == '0') {
-            pad_zero = 1;
+        int left_align = 0;
+        while (*fmt == '-' || *fmt == '0') {
+            if (*fmt == '-') left_align = 1;
+            else pad_zero = 1;
             fmt++;
         }
 
+        /* Parse width */
+        int width = 0;
         while (*fmt >= '0' && *fmt <= '9') {
             width = width * 10 + (*fmt - '0');
             fmt++;
@@ -158,16 +161,26 @@ void console_printf(const char *fmt, ...)
             }
         }
 
+        /* Emit a number with padding per flags */
+        char num_buf[32];
         switch (*fmt) {
         case 's': {
             const char *s = __builtin_va_arg(args, const char *);
             if (!s) s = "(null)";
-            int len = strlen(s);
-            while (len < width) {
-                console_putc(' ');
-                width--;
+            int len = (int)strlen(s);
+            if (!left_align) {
+                while (len < width) {
+                    console_putc(' ');
+                    width--;
+                }
             }
             console_puts(s);
+            if (left_align) {
+                while (len < width) {
+                    console_putc(' ');
+                    width--;
+                }
+            }
             break;
         }
         case 'd': {
@@ -177,14 +190,21 @@ void console_printf(const char *fmt, ...)
             } else {
                 val = __builtin_va_arg(args, int);
             }
-            char buf[32];
-            itoa(val, buf, 10);
-            int len = strlen(buf);
-            while (len < width) {
-                console_putc(pad_zero ? '0' : ' ');
-                width--;
+            itoa(val, num_buf, 10);
+            int len = (int)strlen(num_buf);
+            if (!left_align) {
+                while (len < width) {
+                    console_putc(pad_zero ? '0' : ' ');
+                    width--;
+                }
             }
-            console_puts(buf);
+            console_puts(num_buf);
+            if (left_align) {
+                while (len < width) {
+                    console_putc(' ');
+                    width--;
+                }
+            }
             break;
         }
         case 'u': {
@@ -194,14 +214,21 @@ void console_printf(const char *fmt, ...)
             } else {
                 val = __builtin_va_arg(args, unsigned int);
             }
-            char buf[32];
-            utoa(val, buf, 10);
-            int len = strlen(buf);
-            while (len < width) {
-                console_putc(pad_zero ? '0' : ' ');
-                width--;
+            utoa(val, num_buf, 10);
+            int len = (int)strlen(num_buf);
+            if (!left_align) {
+                while (len < width) {
+                    console_putc(pad_zero ? '0' : ' ');
+                    width--;
+                }
             }
-            console_puts(buf);
+            console_puts(num_buf);
+            if (left_align) {
+                while (len < width) {
+                    console_putc(' ');
+                    width--;
+                }
+            }
             break;
         }
         case 'x': {
@@ -211,14 +238,21 @@ void console_printf(const char *fmt, ...)
             } else {
                 val = __builtin_va_arg(args, unsigned int);
             }
-            char buf[32];
-            utoa(val, buf, 16);
-            int len = strlen(buf);
-            while (len < width) {
-                console_putc(pad_zero ? '0' : ' ');
-                width--;
+            utoa(val, num_buf, 16);
+            int len = (int)strlen(num_buf);
+            if (!left_align) {
+                while (len < width) {
+                    console_putc(pad_zero ? '0' : ' ');
+                    width--;
+                }
             }
-            console_puts(buf);
+            console_puts(num_buf);
+            if (left_align) {
+                while (len < width) {
+                    console_putc(' ');
+                    width--;
+                }
+            }
             break;
         }
         case 'p': {
@@ -226,7 +260,7 @@ void console_printf(const char *fmt, ...)
             console_puts("0x");
             char buf[32];
             utoa(val, buf, 16);
-            int len = strlen(buf);
+            int len = (int)strlen(buf);
             while (len < 16) {
                 console_putc('0');
                 len++;
@@ -244,10 +278,15 @@ void console_printf(const char *fmt, ...)
             break;
         default:
             console_putc('%');
-            console_putc(*fmt);
+            if (*fmt) console_putc(*fmt);
             break;
         }
 
+        /* Format string must not end with a bare '%': stop instead of
+         * walking past the terminator */
+        if (*fmt == '\0') {
+            break;
+        }
         fmt++;
     }
 

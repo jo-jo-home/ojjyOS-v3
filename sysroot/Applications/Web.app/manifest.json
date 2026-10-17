@@ -1,0 +1,9 @@
+{
+    "name": "Web",
+    "bundle_id": "com.ojjyos.web",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Offline page browser"
+}

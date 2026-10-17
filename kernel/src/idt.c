@@ -8,6 +8,7 @@
 #include "gdt.h"
 #include "serial.h"
 #include "panic.h"
+#include "drivers/driver.h"
 
 /* IDT entry structure */
 typedef struct {
@@ -206,6 +207,13 @@ void pic_enable_irq(uint8_t irq)
     uint16_t port;
     uint8_t value;
 
+    /* Any slave-PIC IRQ (8-15) also requires the IRQ2 cascade on the
+     * master PIC to be unmasked, or it will never be delivered. */
+    if (irq >= 8) {
+        value = inb(PIC1_DATA) & ~(1 << 2);
+        outb(PIC1_DATA, value);
+    }
+
     if (irq < 8) {
         port = PIC1_DATA;
     } else {
@@ -243,24 +251,35 @@ void isr_handler(InterruptFrame *frame)
 {
     uint64_t int_num = frame->int_num;
 
-    /* Call registered handler if any */
-    if (handlers[int_num]) {
-        handlers[int_num](frame);
-    } else if (int_num < 32) {
-        /* Unhandled CPU exception - panic */
-        const char *name = (int_num < 21) ? exception_names[int_num] : "Unknown";
-        serial_printf("[PANIC] Exception %d: %s\n", int_num, name);
-        serial_printf("  Error code: 0x%x\n", frame->error_code);
-        serial_printf("  RIP: 0x%p\n", frame->rip);
-        serial_printf("  CS:  0x%x\n", frame->cs);
-        serial_printf("  RFLAGS: 0x%x\n", frame->rflags);
-        serial_printf("  RSP: 0x%p\n", frame->rsp);
-        serial_printf("  SS:  0x%x\n", frame->ss);
+    /* Hardware IRQs: dispatch through the driver model first
+     * (this is how the PS/2 keyboard/mouse drivers receive their IRQs),
+     * then fall back to legacy IDT handlers (used by the timer). */
+    if (int_num >= IRQ_BASE && int_num < IRQ_BASE + 16) {
+        uint8_t irq = (uint8_t)(int_num - IRQ_BASE);
+        bool handled = driver_dispatch_irq(irq);
 
-        panic_with_frame(name, frame);
+        if (!handled && handlers[int_num]) {
+            handlers[int_num](frame);
+        } else if (!handled) {
+            serial_printf("[WARN] Unhandled IRQ %d\n", irq);
+        }
     } else {
-        /* Unhandled IRQ */
-        serial_printf("[WARN] Unhandled IRQ %d\n", int_num - IRQ_BASE);
+        /* CPU exceptions and software interrupts */
+        if (handlers[int_num]) {
+            handlers[int_num](frame);
+        } else if (int_num < 32) {
+            /* Unhandled CPU exception - panic */
+            const char *name = (int_num < 21) ? exception_names[int_num] : "Unknown";
+            serial_printf("[PANIC] Exception %d: %s\n", (int)int_num, name);
+            serial_printf("  Error code: 0x%x\n", (unsigned int)frame->error_code);
+            serial_printf("  RIP: 0x%p\n", frame->rip);
+            serial_printf("  CS:  0x%x\n", (unsigned int)frame->cs);
+            serial_printf("  RFLAGS: 0x%p\n", frame->rflags);
+            serial_printf("  RSP: 0x%p\n", frame->rsp);
+            serial_printf("  SS:  0x%x\n", (unsigned int)frame->ss);
+
+            panic_with_frame(name, frame);
+        }
     }
 
     /* Send EOI for hardware interrupts */

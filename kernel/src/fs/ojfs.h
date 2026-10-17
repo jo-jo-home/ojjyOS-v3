@@ -71,15 +71,6 @@ typedef struct {
 } OjfsFile;
 
 /*
- * Runtime directory handle
- */
-typedef struct {
-    uint32_t    parent_index;   /* Index of directory entry */
-    uint32_t    current;        /* Current entry index for iteration */
-    uint32_t    entry_count;    /* Total entries in filesystem */
-} OjfsDirHandle;
-
-/*
  * Mounted OJFS instance
  */
 typedef struct {
@@ -89,6 +80,16 @@ typedef struct {
     const char       *strings;      /* String table pointer */
     const uint8_t    *data;         /* Data section pointer */
 } OjfsInstance;
+
+/*
+ * Runtime directory handle
+ */
+typedef struct {
+    OjfsInstance *fs;       /* Instance this directory belongs to */
+    uint32_t    parent_index;   /* Index of directory entry */
+    uint32_t    current;        /* Current entry index for iteration */
+    uint32_t    entry_count;    /* Total entries in filesystem */
+} OjfsDirHandle;
 
 /*
  * Initialize OJFS from a memory buffer

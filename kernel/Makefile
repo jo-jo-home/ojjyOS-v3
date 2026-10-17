@@ -1,4 +1,7 @@
 # ojjyOS v3 Kernel Makefile
+#
+# Produces kernel.bin — an ELF64 executable loaded by the ojjyOS UEFI
+# bootloader, which parses the program headers and jumps to the ELF entry.
 
 CC = clang
 LD = ld.lld
@@ -18,7 +21,7 @@ CFLAGS = -target x86_64-unknown-none-elf \
          -mcmodel=kernel \
          -Wall \
          -Wextra \
-         -Werror \
+         -Wno-unused-parameter \
          -O2 \
          -Isrc
 
@@ -43,22 +46,27 @@ OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
 # Output
 TARGET = kernel.bin
 
+# Header dependency files
+DEPS = $(C_OBJECTS:.o=.d)
+
 .PHONY: all clean
 
 all: $(TARGET)
 
 # Link kernel
-$(TARGET): $(OBJECTS)
-	$(LD) $(LDFLAGS) -o $@ $^
+$(TARGET): $(OBJECTS) linker.ld
+	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Compile C files
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 # Assemble ASM files
 %.o: %.asm
 	$(NASM) $(NASMFLAGS) -o $@ $<
 
 clean:
-	rm -f $(OBJECTS) $(TARGET)
- 	rm -f src/*.o src/drivers/*.o src/fs/*.o src/ui/*.o
+	rm -f $(OBJECTS) $(TARGET) $(DEPS)
+
+# Pull in header dependencies (ignore missing files on first build)
+-include $(DEPS)

@@ -187,6 +187,28 @@ static void create_calendar_icon(void)
     fill_rect(12, 20, 8, 4, 30, 60, 90, 255);
 }
 
+/* Web icon - blue globe with meridians */
+static void create_web_icon(void)
+{
+    /* Ocean-blue globe */
+    fill_circle(16, 16, 14, 40, 130, 210, 255);
+    fill_circle(16, 16, 12, 64, 160, 226, 255);
+
+    /* Latitude lines (light) */
+    for (int x = 4; x < 28; x++) {
+        if ((16 - x) * (16 - x) + 5 * 5 <= 12 * 12) set_pixel(x, 11, 210, 235, 255, 255);
+        if ((16 - x) * (16 - x) + 0 <= 12 * 12) set_pixel(x, 16, 210, 235, 255, 255);
+        if ((16 - x) * (16 - x) + 5 * 5 <= 12 * 12) set_pixel(x, 21, 210, 235, 255, 255);
+    }
+
+    /* Meridians (light) */
+    for (int y = 4; y < 28; y++) {
+        if (11 * 11 + (16 - y) * (16 - y) <= 12 * 12) set_pixel(11, y, 210, 235, 255, 255);
+        if ((16 - y) * (16 - y) <= 12 * 12) set_pixel(16, y, 210, 235, 255, 255);
+        if (11 * 11 + (16 - y) * (16 - y) <= 12 * 12) set_pixel(21, y, 210, 235, 255, 255);
+    }
+}
+
 /* Wallpaper gradient */
 static void create_wallpaper(void)
 {
@@ -235,6 +257,8 @@ int main(int argc, char *argv[])
         create_file_icon();
     } else if (strcmp(type, "calendar") == 0) {
         create_calendar_icon();
+    } else if (strcmp(type, "web") == 0) {
+        create_web_icon();
     } else if (strcmp(type, "wallpaper") == 0) {
         create_wallpaper();
     } else {

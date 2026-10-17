@@ -307,7 +307,8 @@ int driver_stop(Driver *drv)
     if (!drv) return -1;
 
     if (drv->state != DRIVER_STATE_READY &&
-        drv->state != DRIVER_STATE_ERROR) {
+        drv->state != DRIVER_STATE_ERROR &&
+        drv->state != DRIVER_STATE_DISABLED) {
         return 0;  /* Not running */
     }
 

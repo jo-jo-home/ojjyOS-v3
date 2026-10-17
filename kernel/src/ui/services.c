@@ -119,7 +119,9 @@ void app_registry_init(void)
     app_count = 0;
     memset(app_registry, 0, sizeof(app_registry));
 
-    Bundle bundles[APP_REGISTRY_MAX];
+    /* static: a Bundle is ~1KB; 24 of them must not live on the
+     * kernel stack */
+    static Bundle bundles[APP_REGISTRY_MAX];
     int count = bundle_list_directory("/Applications", bundles, APP_REGISTRY_MAX);
     for (int i = 0; i < count; i++) {
         AppInfo *app = &app_registry[app_count++];
@@ -208,8 +210,10 @@ void search_index_init(void)
     while (vfs_readdir(dir, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
         if (entry.type == VFS_TYPE_FILE) {
             char full[256];
-            vfs_join_path(full, sizeof(full), "/System/Wallpapers", entry.name);
-            strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+            if (vfs_join_path(full, sizeof(full), "/System/Wallpapers", entry.name) == 0) {
+                strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+                file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
+            }
         }
     }
     vfs_closedir(dir);
@@ -219,8 +223,10 @@ void search_index_init(void)
     while (vfs_readdir(docs, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
         if (entry.type == VFS_TYPE_FILE) {
             char full[256];
-            vfs_join_path(full, sizeof(full), "/Users/guest/Documents", entry.name);
-            strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+            if (vfs_join_path(full, sizeof(full), "/Users/guest/Documents", entry.name) == 0) {
+                strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+                file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
+            }
         }
     }
     vfs_closedir(docs);

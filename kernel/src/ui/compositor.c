@@ -12,6 +12,8 @@
 #include "../fs/vfs.h"
 #include "../drivers/rtc.h"
 #include "../serial.h"
+#include "../memory.h"
+#include "../system.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -67,6 +69,7 @@ typedef enum {
     APP_PREVIEW,
     APP_CALENDAR,
     APP_ABOUT,
+    APP_WEB,
     APP_COUNT
 } AppType;
 
@@ -88,6 +91,7 @@ typedef struct {
     FinderViewMode view_mode;
     int entry_count;
     int selected;
+    int scroll;                 /* First visible row (list view) */
     FinderEntry entries[FINDER_MAX_ENTRIES];
     char search[32];
     char history[8][128];
@@ -129,6 +133,7 @@ typedef struct {
 typedef struct {
     char lines[TERMINAL_MAX_LINES][TERMINAL_LINE_MAX];
     int line_count;
+    int scroll;                  /* First visible history line */
     char input[TERMINAL_LINE_MAX];
     int input_len;
     char cwd[128];
@@ -143,6 +148,7 @@ typedef struct {
 typedef struct {
     char lines[TEXTEDIT_MAX_LINES][TEXTEDIT_LINE_MAX];
     int line_count;
+    int scroll;                  /* First visible line */
     int cursor_line;
     int cursor_col;
     char file_path[128];
@@ -202,6 +208,30 @@ typedef struct {
     bool loaded;
 } CalendarState;
 
+/*
+ * Web app: an offline page browser.
+ * Pages live in /System/Web/<id>.page with a tiny markup:
+ *   "# Heading"      - heading line
+ *   ">id Label"      - hyperlink to page <id>
+ *   anything else    - plain text
+ */
+#define WEB_MAX_LINES   48
+#define WEB_LINE_MAX    88
+#define WEB_HISTORY_MAX  8
+
+typedef struct {
+    char page_id[64];                    /* Current page id */
+    char address[64];                    /* Address bar contents */
+    char lines[WEB_MAX_LINES][WEB_LINE_MAX];
+    char links[WEB_MAX_LINES][64];       /* Link target per line ("" = none) */
+    bool heading[WEB_MAX_LINES];         /* Line is a heading */
+    int line_count;
+    int scroll;
+    char history[WEB_HISTORY_MAX][64];
+    int history_count;
+    int history_pos;
+} WebState;
+
 typedef struct {
     AppType type;
     FinderState finder;
@@ -211,11 +241,19 @@ typedef struct {
     TextEditState notes;
     PreviewState preview;
     CalendarState calendar;
+    WebState web;
 } AppWindowState;
 
 static AppWindowState app_states[COMPOSITOR_MAX_WINDOWS];
 static int active_window_index = -1;
 static int app_window_index[APP_COUNT];
+
+/*
+ * Scratch buffer for reordering windows. AppWindowState is ~110KB, so
+ * it must NEVER live on the kernel stack (the old raise path copied it
+ * to a local and blew past the stack).
+ */
+static AppWindowState state_scratch;
 static char last_opened_path[128] = "";
 static uint8_t icon_folder[BUNDLE_ICON_BYTES];
 static uint8_t icon_file[BUNDLE_ICON_BYTES];
@@ -273,6 +311,13 @@ static void calendar_save(CalendarState *cal);
 static int days_in_month(int year, int month);
 static int weekday_of_date(int year, int month, int day);
 static void textedit_normalize_selection(TextEditState *edit);
+static void raise_window_to_top(int idx);
+static int destroy_window_internal(int id);
+static void launch_app_index(int index, uint64_t now_ms);
+static void finder_set_path(FinderState *state, const char *path);
+static bool desktop_handle_click(int x, int y, uint64_t now_ms);
+static void web_load_page(WebState *web, const char *page_id);
+static void web_go_history(WebState *web, int delta);
 
 static inline Color blend(Color bg, Color fg, uint8_t alpha)
 {
@@ -480,8 +525,15 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
         fb_draw_string(main_x + 220, content_y + 28, "Type", theme->text_muted, theme->dock_tint);
         fb_draw_string(main_x + 300, content_y + 28, "Size", theme->text_muted, theme->dock_tint);
 
+        int visible = (content_h - 48) / 18;
+        if (visible < 1) visible = 1;
+        int max_scroll = state->entry_count - visible;
+        if (max_scroll < 0) max_scroll = 0;
+        if (state->scroll > max_scroll) state->scroll = max_scroll;
+        if (state->scroll < 0) state->scroll = 0;
+
         int row_y = content_y + 44;
-        for (int i = 0; i < state->entry_count && i < 16; i++) {
+        for (int i = state->scroll; i < state->entry_count && i < state->scroll + visible; i++) {
             FinderEntry *entry = &state->entries[i];
             if (i == state->selected) {
                 draw_rounded_rect_blend(main_x + 6, row_y - 2, main_w - 12, 18, 8, theme->accent, 50);
@@ -509,11 +561,19 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
         int cols = 4;
         int icon = 40;
         int gap = 18;
+        int rows = (content_h - 48) / (icon + 28);
+        if (rows < 1) rows = 1;
+        int visible = cols * rows;
+        int max_scroll = state->entry_count - visible;
+        if (max_scroll < 0) max_scroll = 0;
+        if (state->scroll > max_scroll) state->scroll = max_scroll;
+        if (state->scroll < 0) state->scroll = 0;
+
         int start_x = main_x + 16;
         int start_y = content_y + 40;
-        for (int i = 0; i < state->entry_count && i < 12; i++) {
-            int col = i % cols;
-            int row = i / cols;
+        for (int i = state->scroll; i < state->entry_count && i < state->scroll + visible; i++) {
+            int col = (i - state->scroll) % cols;
+            int row = (i - state->scroll) / cols;
             int ix = start_x + col * (icon + gap);
             int iy = start_y + row * (icon + 28);
             FinderEntry *entry = &state->entries[i];
@@ -522,15 +582,18 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
                 draw_rounded_rect_blend(ix - 2, iy - 2, icon + 4, icon + 4, 8, theme->accent_soft, 40);
             }
             if (entry->type == VFS_TYPE_BUNDLE) {
+                /* Use the registry's already-loaded icon: never re-parse
+                 * the manifest on every frame (old code did a full
+                 * bundle_load per icon per frame) */
                 char path[256];
-                vfs_join_path(path, sizeof(path), state->path, entry->name);
-                Bundle bundle;
-                if (bundle_load(path, &bundle) == 0) {
-                    int app_idx = app_registry_find_by_bundle_id(bundle.manifest.bundle_id);
-                    AppInfo *app = app_registry_get(app_idx);
-                    if (app && app->icon.valid) {
-                        draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, ix, iy, icon);
-                        drew_icon = true;
+                if (vfs_join_path(path, sizeof(path), state->path, entry->name) == 0) {
+                    for (int a = 0; a < app_registry_count(); a++) {
+                        AppInfo *app = app_registry_get(a);
+                        if (app && strcmp(app->path, path) == 0 && app->icon.valid) {
+                            draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, ix, iy, icon);
+                            drew_icon = true;
+                            break;
+                        }
                     }
                 }
             } else if (entry->type == VFS_TYPE_DIR) {
@@ -644,8 +707,17 @@ static void draw_terminal_window(TerminalState *term, int content_x, int content
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->midnight, 200);
 
+    int visible = (content_h - 40) / 16;
+    if (visible < 1) visible = 1;
+    int max_scroll = term->line_count - visible;
+    if (max_scroll < 0) max_scroll = 0;
+    if (term->scroll > max_scroll) term->scroll = max_scroll;
+    if (term->scroll < 0) term->scroll = 0;
+    /* Follow new output unless the user scrolled up */
+    if (term->scroll == max_scroll - 1) term->scroll = max_scroll;
+
     int line_y = content_y + 10;
-    for (int i = 0; i < term->line_count && i < TERMINAL_MAX_LINES; i++) {
+    for (int i = term->scroll; i < term->line_count && i < term->scroll + visible; i++) {
         fb_draw_string(content_x + 10, line_y, term->lines[i], COLOR_TEXT_LIGHT, theme->midnight);
         line_y += 16;
     }
@@ -667,8 +739,20 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
     fb_draw_string(content_x + 10, content_y + 8,
                    edit->file_path[0] ? edit->file_path : "Untitled", theme->text, theme->dock_tint);
 
+    int visible = (content_h - 60) / 16;
+    if (visible < 1) visible = 1;
+    int max_scroll = edit->line_count - visible;
+    if (max_scroll < 0) max_scroll = 0;
+    if (edit->scroll > max_scroll) edit->scroll = max_scroll;
+    if (edit->scroll < 0) edit->scroll = 0;
+    /* Keep the cursor line in view while typing */
+    if (edit->cursor_line < edit->scroll) edit->scroll = edit->cursor_line;
+    if (edit->cursor_line >= edit->scroll + visible) {
+        edit->scroll = edit->cursor_line - visible + 1;
+    }
+
     int line_y = content_y + 30;
-    for (int i = 0; i < edit->line_count && i < TEXTEDIT_MAX_LINES; i++) {
+    for (int i = edit->scroll; i < edit->line_count && i < edit->scroll + visible; i++) {
         if (edit->sel_active && edit->sel_line == i) {
             textedit_normalize_selection(edit);
             int start = edit->sel_start;
@@ -885,9 +969,12 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
     } else if (cal->view == CAL_VIEW_DAY) {
         int indices[10];
         int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 10);
+        /* calendar_events_for_day returns the TOTAL match count; only the
+         * first 10 indices are filled. Never iterate past the array. */
+        int shown = MIN(count, 10);
         fb_draw_string(grid_x + 10, grid_y + 6, "Day", theme->text_muted, theme->dock_tint);
         int ey = grid_y + 24;
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < shown; i++) {
             CalendarEvent *ev = &cal->events[indices[i]];
             char timebuf[16];
             calendar_format_time(ev, timebuf, sizeof(timebuf));
@@ -968,6 +1055,257 @@ static void draw_preview_window(PreviewState *preview, int content_x, int conten
                    preview->current, theme->text_muted, theme->dock_tint);
 }
 
+/* ================================================================== */
+/* Web app (offline browser)                                           */
+/* ================================================================== */
+
+/*
+ * Load a page from /System/Web/<id>.page into the render model.
+ * Missing pages render as a "not found" page with a link home.
+ */
+static void web_load_page(WebState *web, const char *page_id)
+{
+    if (!web || !page_id || !page_id[0]) return;
+
+    /* Validate the id: [A-Za-z0-9-_] only (no path traversal) */
+    for (const char *p = page_id; *p; p++) {
+        bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                  (*p >= '0' && *p <= '9') || *p == '-' || *p == '_';
+        if (!ok) return;
+    }
+
+    web->line_count = 0;
+    web->scroll = 0;
+    for (int i = 0; i < WEB_MAX_LINES; i++) {
+        web->lines[i][0] = '\0';
+        web->links[i][0] = '\0';
+        web->heading[i] = false;
+    }
+
+    char path[128];
+    if (vfs_join_path(path, sizeof(path), "/System/Web", page_id) != 0) return;
+    str_append(path, sizeof(path), ".page");
+
+    VfsFile *file = vfs_open(path, VFS_O_READ);
+    if (!file) {
+        /* Not-found page */
+        strncpy(web->page_id, page_id, sizeof(web->page_id) - 1);
+        web->page_id[sizeof(web->page_id) - 1] = '\0';
+        int n = web->line_count++;
+        strncpy(web->lines[n], "Page not found", WEB_LINE_MAX - 1);
+        web->heading[n] = true;
+        n = web->line_count++;
+        strncpy(web->lines[n], "The page you requested is not on this disk.", WEB_LINE_MAX - 1);
+        n = web->line_count++;
+        strncpy(web->lines[n], "", 1);
+        n = web->line_count++;
+        strncpy(web->lines[n], "Go back to the start page", WEB_LINE_MAX - 1);
+        strncpy(web->links[n], "home", sizeof(web->links[n]) - 1);
+        return;
+    }
+
+    char line[128];
+    ssize_t bytes;
+    char pending[WEB_LINE_MAX];
+    int pending_len = 0;
+
+    while ((bytes = vfs_read(file, line, sizeof(line))) > 0) {
+        for (ssize_t i = 0; i < bytes; i++) {
+            char c = line[i];
+            if (c == '\n' || pending_len >= (int)sizeof(pending) - 1) {
+                pending[pending_len] = '\0';
+                pending_len = 0;
+                if (web->line_count >= WEB_MAX_LINES) goto done;
+
+                if (pending[0] == '\0') {
+                    int n = web->line_count++;
+                    web->lines[n][0] = '\0';  /* Blank spacer line */
+                } else if (pending[0] == '#' && pending[1] == ' ') {
+                    int n = web->line_count++;
+                    strncpy(web->lines[n], pending + 2, WEB_LINE_MAX - 1);
+                    web->lines[n][WEB_LINE_MAX - 1] = '\0';
+                    web->heading[n] = true;
+                } else if (pending[0] == '>') {
+                    /* Link line: ">target Label" */
+                    const char *target = pending + 1;
+                    const char *space = str_find(target, " ");
+                    int n = web->line_count++;
+                    if (space && space > target) {
+                        size_t tlen = (size_t)(space - target);
+                        if (tlen >= sizeof(web->links[n])) tlen = sizeof(web->links[n]) - 1;
+                        memcpy(web->links[n], target, tlen);
+                        web->links[n][tlen] = '\0';
+                        while (*space == ' ') space++;
+                        strncpy(web->lines[n], space, WEB_LINE_MAX - 1);
+                        web->lines[n][WEB_LINE_MAX - 1] = '\0';
+                    } else {
+                        strncpy(web->links[n], target, sizeof(web->links[n]) - 1);
+                        strncpy(web->lines[n], target, WEB_LINE_MAX - 1);
+                    }
+                } else {
+                    int n = web->line_count++;
+                    strncpy(web->lines[n], pending, WEB_LINE_MAX - 1);
+                    web->lines[n][WEB_LINE_MAX - 1] = '\0';
+                }
+            } else if (c != '\r') {
+                pending[pending_len++] = c;
+            }
+        }
+    }
+done:
+    /* Final line without trailing newline */
+    if (pending_len > 0 && web->line_count < WEB_MAX_LINES) {
+        pending[pending_len] = '\0';
+        int n = web->line_count++;
+        strncpy(web->lines[n], pending, WEB_LINE_MAX - 1);
+        web->lines[n][WEB_LINE_MAX - 1] = '\0';
+    }
+    vfs_close(file);
+
+    strncpy(web->page_id, page_id, sizeof(web->page_id) - 1);
+    web->page_id[sizeof(web->page_id) - 1] = '\0';
+
+    /* Push history (forward history is discarded, like a browser) */
+    if (web->history_count < WEB_HISTORY_MAX) {
+        strncpy(web->history[web->history_count++], page_id, sizeof(web->history[0]) - 1);
+        web->history_pos = web->history_count - 1;
+    } else {
+        for (int i = 1; i < WEB_HISTORY_MAX; i++) {
+            memcpy(web->history[i - 1], web->history[i], sizeof(web->history[0]));
+        }
+        strncpy(web->history[WEB_HISTORY_MAX - 1], page_id, sizeof(web->history[0]) - 1);
+        web->history_pos = WEB_HISTORY_MAX - 1;
+    }
+}
+
+/* Move back/forward in history */
+static void web_go_history(WebState *web, int delta)
+{
+    if (!web) return;
+    int pos = web->history_pos + delta;
+    if (pos < 0 || pos >= web->history_count) return;
+    web->history_pos = pos;
+
+    /* Re-render without re-pushing history */
+    char page[64];
+    strncpy(page, web->history[pos], sizeof(page) - 1);
+    page[sizeof(page) - 1] = '\0';
+
+    int saved_pos = web->history_pos;
+    int saved_count = web->history_count;
+    web_load_page(web, page);
+    web->history_pos = saved_pos;
+    web->history_count = saved_count;
+}
+
+static void draw_web_window(WebState *web, int content_x, int content_y, int content_w, int content_h)
+{
+    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 110);
+
+    /* Toolbar: back / forward / address bar */
+    int bar_y = content_y + 8;
+    int bar_h = 22;
+    draw_rounded_rect_blend(content_x + 8, bar_y, 22, bar_h, 6, theme->accent_soft, 120);
+    fb_draw_string(content_x + 14, bar_y + 4, "<", theme->text, theme->dock_tint);
+    draw_rounded_rect_blend(content_x + 34, bar_y, 22, bar_h, 6, theme->accent_soft, 120);
+    fb_draw_string(content_x + 40, bar_y + 4, ">", theme->text, theme->dock_tint);
+
+    int addr_x = content_x + 62;
+    int addr_w = content_w - 70;
+    draw_rounded_rect_blend(addr_x, bar_y, addr_w, bar_h, 6, theme->glass_aqua, 160);
+    char addr[96];
+    addr[0] = '\0';
+    str_append(addr, sizeof(addr), "ojjy://");
+    str_append(addr, sizeof(addr), web->address[0] ? web->address : web->page_id);
+    fb_draw_string(addr_x + 8, bar_y + 4, addr, theme->text, theme->dock_tint);
+
+    /* Page content */
+    int page_y = content_y + 40;
+    int page_h = content_h - 58;
+    draw_rounded_rect_blend(content_x + 8, page_y, content_w - 16, page_h, 10,
+                            theme->glass_aqua, 120);
+
+    int visible = (page_h - 12) / 18;
+    if (visible < 1) visible = 1;
+    int max_scroll = web->line_count - visible;
+    if (max_scroll < 0) max_scroll = 0;
+    if (web->scroll > max_scroll) web->scroll = max_scroll;
+    if (web->scroll < 0) web->scroll = 0;
+
+    int line_y = page_y + 8;
+    for (int i = web->scroll; i < web->line_count && i < web->scroll + visible; i++) {
+        if (!web->lines[i][0]) {
+            line_y += 18;
+            continue;
+        }
+        if (web->links[i][0]) {
+            /* Hyperlinks: accent blue with an underline */
+            fb_draw_string(content_x + 20, line_y, web->lines[i],
+                           theme->accent, theme->glass_aqua);
+            int underline_w = (int)strlen(web->lines[i]) * FONT_WIDTH;
+            fb_fill_rect(content_x + 20, line_y + FONT_HEIGHT - 1, underline_w, 1, theme->accent);
+        } else if (web->heading[i]) {
+            fb_draw_string(content_x + 16, line_y, web->lines[i],
+                           theme->text, theme->glass_aqua);
+            int heading_w = (int)strlen(web->lines[i]) * FONT_WIDTH;
+            fb_fill_rect(content_x + 16, line_y + FONT_HEIGHT + 1, heading_w, 2, theme->accent_soft);
+        } else {
+            fb_draw_string(content_x + 16, line_y, web->lines[i],
+                           theme->text, theme->glass_aqua);
+        }
+        line_y += 18;
+    }
+
+    /* Status bar */
+    char status[96];
+    status[0] = '\0';
+    str_append(status, sizeof(status), "Offline page  -  ojjyOS Web");
+    fb_draw_string(content_x + 12, content_y + content_h - 16, status,
+                   theme->text_muted, theme->dock_tint);
+}
+
+/* ================================================================== */
+/* About window                                                        */
+/* ================================================================== */
+
+static void draw_about_window(int content_x, int content_y, int content_w, int content_h)
+{
+    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 110);
+
+    int cx = content_x + 24;
+    fb_draw_string(cx, content_y + 16, "ojjyOS", theme->text, theme->dock_tint);
+    fb_draw_string(cx, content_y + 36, "Version 3.1.0", theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx, content_y + 56, "Created by Jonas Lee", theme->accent, theme->dock_tint);
+
+    int rule_y = content_y + 76;
+    fb_fill_rect(cx, rule_y, content_w - 48, 1, theme->accent_soft);
+
+    char buf[96];
+
+    fb_draw_string(cx, content_y + 92, "A custom operating system with a",
+                   theme->text, theme->dock_tint);
+    fb_draw_string(cx, content_y + 110, "macOS Tahoe-inspired user interface.",
+                   theme->text, theme->dock_tint);
+    fb_draw_string(cx, content_y + 130, "Built from scratch - not based on",
+                   theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx, content_y + 148, "Linux, BSD, Windows or macOS.",
+                   theme->text_muted, theme->dock_tint);
+
+    utoa(fb_get_width(), buf, 10);
+    str_append(buf, sizeof(buf), " x ");
+    char num[16];
+    utoa(fb_get_height(), num, 10);
+    str_append(buf, sizeof(buf), num);
+    str_append(buf, sizeof(buf), " display");
+    fb_draw_string(cx, content_y + 176, buf, theme->text_muted, theme->dock_tint);
+
+    buf[0] = '\0';
+    utoa(pmm_get_total_memory() / (1024 * 1024), num, 10);
+    str_append(buf, sizeof(buf), num);
+    str_append(buf, sizeof(buf), " MB memory");
+    fb_draw_string(cx, content_y + 194, buf, theme->text_muted, theme->dock_tint);
+}
+
 static void draw_window(int idx)
 {
     CompositorWindow *win = &windows[idx];
@@ -1034,6 +1372,12 @@ static void draw_window(int idx)
             break;
         case APP_CALENDAR:
             draw_calendar_window(&state->calendar, content_x, content_y, content_w, content_h);
+            break;
+        case APP_ABOUT:
+            draw_about_window(content_x, content_y, content_w, content_h);
+            break;
+        case APP_WEB:
+            draw_web_window(&state->web, content_x, content_y, content_w, content_h);
             break;
         default:
             break;
@@ -1198,9 +1542,221 @@ static void draw_dock(uint64_t now_ms)
             fb_fill_rect(icon_x, icon_y, size, size, theme->accent);
         }
 
-        if (app->running) {
+    if (app->running) {
             fb_fill_rect(icon_center_x - 4, dock_y + dock_h - 8, 8, 3, theme->accent);
         }
+    }
+}
+
+/*
+ * Desktop icons: files from /Users/guest/Desktop plus the "ojjyHD"
+ * disk icon, macOS-style (anchored top-right, double-click to open).
+ */
+#define DESKTOP_MAX_ICONS   16
+#define DESKTOP_ICON_SIZE  48
+#define DESKTOP_CELL_W     84
+#define DESKTOP_CELL_H     92
+#define DESKTOP_DBLCLICK_MS 400
+
+typedef struct {
+    char name[64];
+    char path[192];
+    VfsFileType type;
+    bool is_disk;
+} DesktopIcon;
+
+static DesktopIcon desktop_icons[DESKTOP_MAX_ICONS];
+static int desktop_icon_count = 0;
+static uint64_t desktop_last_reload = 0;
+static int desktop_selected = -1;
+static uint64_t desktop_last_click_ms = 0;
+static int desktop_last_click_idx = -1;
+
+/* Icon cell geometry for row-major layout from the top-right corner */
+static void desktop_icon_rect(int idx, int *x, int *y)
+{
+    int per_col = ((int)comp_height - 90) / DESKTOP_CELL_H;
+    if (per_col < 1) per_col = 1;
+    int row = idx % per_col;
+    int col = idx / per_col;
+    *x = (int)comp_width - DESKTOP_CELL_W - 16 - col * DESKTOP_CELL_W;
+    *y = 40 + 8 + row * DESKTOP_CELL_H;
+}
+
+/* Reload the desktop listing (throttled by the caller) */
+static void desktop_reload(void)
+{
+    desktop_icon_count = 0;
+    memset(desktop_icons, 0, sizeof(desktop_icons));
+
+    /* The disk icon always comes first */
+    DesktopIcon *disk = &desktop_icons[desktop_icon_count++];
+    disk->is_disk = true;
+    strcpy(disk->name, "ojjyHD");
+    strcpy(disk->path, "/");
+    disk->type = VFS_TYPE_DIR;
+
+    VfsDir *dir = vfs_opendir("/Users/guest/Desktop");
+    if (!dir) return;
+
+    VfsDirEntry entry;
+    while (vfs_readdir(dir, &entry) == 0 &&
+           desktop_icon_count < DESKTOP_MAX_ICONS) {
+        DesktopIcon *icon = &desktop_icons[desktop_icon_count];
+        char name_copy[256];
+        strncpy(name_copy, entry.name, sizeof(name_copy) - 1);
+        name_copy[sizeof(name_copy) - 1] = '\0';
+
+        if (vfs_join_path(icon->path, sizeof(icon->path),
+                          "/Users/guest/Desktop", name_copy) != 0) {
+            continue;
+        }
+        strncpy(icon->name, name_copy, sizeof(icon->name) - 1);
+        icon->name[sizeof(icon->name) - 1] = '\0';
+        icon->type = entry.type;
+        icon->is_disk = false;
+        desktop_icon_count++;
+    }
+    vfs_closedir(dir);
+
+    if (desktop_selected >= desktop_icon_count) {
+        desktop_selected = -1;
+    }
+}
+
+/* Find which desktop icon (if any) is at this position */
+static int desktop_icon_at(int x, int y)
+{
+    for (int i = 0; i < desktop_icon_count; i++) {
+        int ix, iy;
+        desktop_icon_rect(i, &ix, &iy);
+        if (x >= ix && x <= ix + DESKTOP_ICON_SIZE + 20 &&
+            y >= iy && y <= iy + DESKTOP_ICON_SIZE + 26) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Handle a click on the desktop. Returns true if the click was consumed. */
+static bool desktop_handle_click(int x, int y, uint64_t now_ms)
+{
+    int idx = desktop_icon_at(x, y);
+    if (idx < 0) {
+        desktop_selected = -1;
+        return false;
+    }
+
+    desktop_selected = idx;
+
+    /* Double-click detection */
+    if (idx == desktop_last_click_idx &&
+        now_ms - desktop_last_click_ms < DESKTOP_DBLCLICK_MS) {
+        DesktopIcon *icon = &desktop_icons[idx];
+        desktop_last_click_ms = 0;
+        desktop_last_click_idx = -1;
+
+        if (icon->is_disk) {
+            /* Open Finder at the filesystem root */
+            int fidx = app_registry_find_by_bundle_id("com.ojjyos.finder");
+            if (fidx >= 0) {
+                launch_app_index(fidx, now_ms);
+            } else {
+                app_open_window(APP_FINDER, "Finder");
+            }
+            int widx = app_window_index[APP_FINDER];
+            if (widx >= 0) {
+                finder_set_path(&app_states[widx].finder, "/");
+            }
+        } else if (icon->type == VFS_TYPE_DIR || icon->type == VFS_TYPE_BUNDLE) {
+            int fidx = app_registry_find_by_bundle_id("com.ojjyos.finder");
+            if (fidx >= 0) {
+                launch_app_index(fidx, now_ms);
+            } else {
+                app_open_window(APP_FINDER, "Finder");
+            }
+            int widx = app_window_index[APP_FINDER];
+            if (widx >= 0) {
+                finder_set_path(&app_states[widx].finder, icon->path);
+            }
+        } else {
+            /* Regular file: open in TextEdit */
+            strncpy(last_opened_path, icon->path, sizeof(last_opened_path) - 1);
+            last_opened_path[sizeof(last_opened_path) - 1] = '\0';
+            int tidx = app_registry_find_by_bundle_id("com.ojjyos.textedit");
+            if (tidx >= 0) {
+                launch_app_index(tidx, now_ms);
+            } else {
+                app_open_window(APP_TEXTEDIT, "TextEdit");
+            }
+            int widx = app_window_index[APP_TEXTEDIT];
+            if (widx >= 0) {
+                textedit_load_file(&app_states[widx].textedit, icon->path);
+            }
+        }
+    } else {
+        desktop_last_click_ms = now_ms;
+        desktop_last_click_idx = idx;
+    }
+
+    return true;
+}
+
+static void draw_desktop_icons(void)
+{
+    /* Reload at most once a second */
+    uint64_t now = timer_get_ticks();
+    if (desktop_last_reload == 0 || now - desktop_last_reload >= 1000) {
+        desktop_reload();
+        desktop_last_reload = now;
+    }
+
+    for (int i = 0; i < desktop_icon_count; i++) {
+        DesktopIcon *icon = &desktop_icons[i];
+        int x, y;
+        desktop_icon_rect(i, &x, &y);
+
+        if (i == desktop_selected) {
+            draw_rounded_rect_blend(x - 6, y - 6, DESKTOP_ICON_SIZE + 32,
+                                    DESKTOP_ICON_SIZE + 34, 8, theme->accent, 60);
+        }
+
+        if (icon->is_disk) {
+            /* Hand-drawn disk icon: blue rounded square with a lighter band */
+            draw_rounded_rect_blend(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, 10,
+                                    theme->accent, 230);
+            draw_rounded_rect_blend(x + 4, y + 4, DESKTOP_ICON_SIZE - 8, 18, 6,
+                                    theme->accent_soft, 160);
+            fb_draw_string(x + 4, y + 30, "ojjyHD", COLOR_WHITE, theme->accent);
+        } else if (icon->type == VFS_TYPE_DIR) {
+            if (icon_folder_loaded) {
+                draw_icon_scaled(icon_folder, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
+            } else {
+                fb_fill_rect(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, theme->accent_soft);
+            }
+        } else if (icon->type == VFS_TYPE_BUNDLE) {
+            bool drew = false;
+            for (int a = 0; a < app_registry_count(); a++) {
+                AppInfo *app = app_registry_get(a);
+                if (app && strcmp(app->path, icon->path) == 0 && app->icon.valid) {
+                    draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
+                    drew = true;
+                    break;
+                }
+            }
+            if (!drew) {
+                fb_fill_rect(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, theme->accent_soft);
+            }
+        } else {
+            if (icon_file_loaded) {
+                draw_icon_scaled(icon_file, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
+            } else {
+                fb_fill_rect(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, theme->accent_soft);
+            }
+        }
+
+        fb_draw_string(x, y + DESKTOP_ICON_SIZE + 6, icon->name,
+                       theme->text, blend(theme->midnight, theme->accent, 30));
     }
 }
 
@@ -1211,14 +1767,14 @@ static void draw_spotlight(int anim)
     int r = 16;
 
     uint8_t panel_alpha = overlay_alpha(80, anim);
-    uint8_t text_alpha = overlay_alpha(220, anim);
     draw_shadow(x, y, SPOTLIGHT_WIDTH, SPOTLIGHT_HEIGHT, r);
     draw_rounded_rect_blend(x, y, SPOTLIGHT_WIDTH, SPOTLIGHT_HEIGHT, r, theme->glass_aqua, panel_alpha);
     fb_draw_string(x + 18, y + 20, spotlight_query[0] ? spotlight_query : "Search", theme->text,
                    blend(theme->glass_aqua, theme->dock_tint, 60));
 
     int list_y = y + SPOTLIGHT_HEIGHT + 8;
-    int list_h = spotlight_count * 28 + 12;
+    /* No stray empty panel when there are no results */
+    int list_h = spotlight_count > 0 ? spotlight_count * 28 + 12 : 0;
     if (list_h > 0) {
         draw_rounded_rect_blend(x, list_y, SPOTLIGHT_WIDTH, list_h, 14, theme->dock_tint, panel_alpha + 20);
         for (int i = 0; i < spotlight_count; i++) {
@@ -1330,7 +1886,10 @@ static void draw_app_switcher(int anim)
     }
     if (running_count == 0) return;
 
-    int width = 360;
+    /* Show up to 8 running apps (the old 5-icon cap hid the selection
+     * whenever more than 5 apps were running) */
+    int shown = MIN(running_count, 8);
+    int width = 40 + shown * 64;
     int height = 120;
     int x = ((int)comp_width - width) / 2;
     int y = 160 - overlay_offset(anim, 18);
@@ -1340,12 +1899,11 @@ static void draw_app_switcher(int anim)
 
     int base_x = x + 20;
     int icon_y = y + 34;
-    int shown = MIN(running_count, 5);
     for (int i = 0; i < shown; i++) {
         AppInfo *app = app_registry_get(running[i]);
         int icon_x = base_x + i * 64;
         int size = 40;
-        if (i == app_switcher_index) {
+        if (i == app_switcher_index % shown) {
             draw_rounded_rect_blend(icon_x - 6, icon_y - 6, size + 12, size + 12, 12, theme->accent, 70);
         }
         if (app->icon.valid) {
@@ -1401,16 +1959,22 @@ static void overlay_set(OverlayMode mode)
 
 static void launch_app_index(int index, uint64_t now_ms)
 {
-    if (app_registry_launch(index) == 0) {
-        AppInfo *app = app_registry_get(index);
-        if (app) {
-            strncpy(active_app_name, app->name, sizeof(active_app_name) - 1);
-            app->bounce_until = now_ms + 600;
-            AppType type = app_type_from_bundle(app->bundle.manifest.bundle_id);
-            if (type != APP_DEMO) {
-                app_open_window(type, app->name);
-            }
-        }
+    AppInfo *app = app_registry_get(index);
+    if (!app) return;
+
+    /* Built-in apps open their window directly. bundle_launch() is only
+     * used for console-mode launches (e.g. the About app from the shell):
+     * gating window creation on it made every app silently unlaunchable. */
+    app->running = true;
+    strncpy(active_app_name, app->name, sizeof(active_app_name) - 1);
+    active_app_name[sizeof(active_app_name) - 1] = '\0';
+    app->bounce_until = now_ms + 600;
+
+    AppType type = app_type_from_bundle(app->bundle.manifest.bundle_id);
+    if (type != APP_DEMO) {
+        app_open_window(type, app->name);
+    } else {
+        bundle_launch(&app->bundle);
     }
 }
 
@@ -1683,9 +2247,55 @@ static bool calendar_load(CalendarState *cal)
             }
         }
     }
+
+    /* A final line without a trailing newline must not be lost */
+    if (line_len > 0) {
+        line[line_len] = '\0';
+        if (line[0] != '\0') {
+            CalendarEvent ev = {0};
+            const char *p = line;
+            int n;
+            ev.year = parse_int(p, &n); p += n;
+            if (*p == '-') p++;
+            ev.month = parse_int(p, &n); p += n;
+            if (*p == '-') p++;
+            ev.day = parse_int(p, &n); p += n;
+            if (*p == '|') p++;
+            if (strncmp(p, "all-day", 7) == 0) {
+                ev.all_day = true;
+                ev.hour = 0;
+                ev.minute = 0;
+                p += 7;
+            } else {
+                ev.hour = parse_int(p, &n); p += n;
+                if (*p == ':') p++;
+                ev.minute = parse_int(p, &n); p += n;
+            }
+            if (*p == '|') p++;
+            parse_field(&p, ev.title, sizeof(ev.title));
+            parse_field(&p, ev.location, sizeof(ev.location));
+            parse_field(&p, ev.notes, sizeof(ev.notes));
+            calendar_add_event(cal, &ev);
+        }
+    }
     vfs_close(file);
     cal->loaded = true;
     return true;
+}
+
+/*
+ * Append a calendar text field, replacing '|' (the record separator)
+ * so a user-typed pipe cannot corrupt the file on reload.
+ */
+static void calendar_append_field(char *line, size_t size, const char *text)
+{
+    char clean[64];
+    size_t j = 0;
+    for (const char *p = text; *p && j < sizeof(clean) - 1; p++) {
+        clean[j++] = (*p == '|') ? '/' : *p;
+    }
+    clean[j] = '\0';
+    str_append(line, size, clean);
 }
 
 static void calendar_save(CalendarState *cal)
@@ -1697,7 +2307,8 @@ static void calendar_save(CalendarState *cal)
 
     for (int i = 0; i < cal->event_count; i++) {
         CalendarEvent *ev = &cal->events[i];
-        char line[160];
+        /* Worst case: 10 (date) + 8 (time) + 48 + 48 + 64 + 5 ('|'x4,'\n') ~ 185 */
+        char line[256];
         line[0] = '\0';
         char num[16];
 
@@ -1726,11 +2337,11 @@ static void calendar_save(CalendarState *cal)
         }
 
         str_append(line, sizeof(line), "|");
-        str_append(line, sizeof(line), ev->title);
+        calendar_append_field(line, sizeof(line), ev->title);
         str_append(line, sizeof(line), "|");
-        str_append(line, sizeof(line), ev->location);
+        calendar_append_field(line, sizeof(line), ev->location);
         str_append(line, sizeof(line), "|");
-        str_append(line, sizeof(line), ev->notes);
+        calendar_append_field(line, sizeof(line), ev->notes);
         str_append(line, sizeof(line), "\n");
         vfs_write(file, line, strlen(line));
     }
@@ -1881,6 +2492,100 @@ static void rebuild_app_window_index(void)
         if (type >= 0 && type < APP_COUNT) {
             app_window_index[type] = i;
         }
+    }
+}
+
+/*
+ * Move the window at `idx` to the top of the z-order.
+ * Fixes up drag state, the active-window index, the per-app index and
+ * fires the focus hook. (AppWindowState is ~110KB: use the static
+ * scratch buffer, never the stack.)
+ */
+static void raise_window_to_top(int idx)
+{
+    if (idx < 0 || idx >= window_count) return;
+    if (idx == window_count - 1) {
+        active_window_index = idx;
+        return;
+    }
+
+    /* Park the moving window's state in the static scratch buffer */
+    CompositorWindow temp_win = windows[idx];
+    memcpy(&state_scratch, &app_states[idx], sizeof(AppWindowState));
+
+    for (int j = idx; j < window_count - 1; j++) {
+        windows[j] = windows[j + 1];
+        memcpy(&app_states[j], &app_states[j + 1], sizeof(AppWindowState));
+    }
+
+    windows[window_count - 1] = temp_win;
+    memcpy(&app_states[window_count - 1], &state_scratch, sizeof(AppWindowState));
+
+    if (drag_index == idx) drag_index = window_count - 1;
+    else if (drag_index > idx) drag_index--;
+
+    active_window_index = window_count - 1;
+    rebuild_app_window_index();
+
+    if (wm_hooks.on_focus) {
+        wm_hooks.on_focus(windows[window_count - 1].id);
+    }
+}
+
+/*
+ * Destroy the window with the given id.
+ * Returns 0 on success, -1 if the id does not exist.
+ */
+static int destroy_window_internal(int id)
+{
+    int idx = -1;
+    for (int i = 0; i < window_count; i++) {
+        if (windows[i].id == id) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return -1;
+
+    if (wm_hooks.on_destroy) {
+        wm_hooks.on_destroy(id);
+    }
+
+    /* Shift everything above idx down one slot */
+    for (int j = idx; j < window_count - 1; j++) {
+        windows[j] = windows[j + 1];
+        memcpy(&app_states[j], &app_states[j + 1], sizeof(AppWindowState));
+    }
+    window_count--;
+
+    memset(&windows[window_count], 0, sizeof(CompositorWindow));
+    memset(&app_states[window_count], 0, sizeof(AppWindowState));
+
+    /* Fix up indices */
+    if (drag_index == idx) {
+        dragging = false;
+        drag_index = -1;
+    } else if (drag_index > idx) {
+        drag_index--;
+    }
+    if (active_window_index == idx) {
+        active_window_index = window_count - 1;
+    } else if (active_window_index > idx) {
+        active_window_index--;
+    }
+    rebuild_app_window_index();
+    return 0;
+}
+
+/*
+ * Close the open window (if any) of a given app type.
+ */
+static void close_app_window(AppType type)
+{
+    if (type < 0 || type >= APP_COUNT) return;
+    int idx = app_window_index[type];
+    if (idx >= 0 && idx < window_count) {
+        destroy_window_internal(windows[idx].id);
     }
 }
 
@@ -2096,12 +2801,18 @@ static void terminal_history_apply(TerminalState *term, int direction)
 static void terminal_make_prompt(const TerminalState *term, char *out, size_t size)
 {
     const char *home = "/Users/guest";
+    size_t home_len = strlen(home);
     char path[128];
-    if (strncmp(term->cwd, home, strlen(home)) == 0) {
+    /* Only treat as home when the cwd is /Users/guest or below it
+     * (the old prefix match also rewrote /Users/guestx as ~/x) */
+    if (strncmp(term->cwd, home, home_len) == 0 &&
+        (term->cwd[home_len] == '\0' || term->cwd[home_len] == '/')) {
         strcpy(path, "~");
-        strncpy(path + 1, term->cwd + strlen(home), sizeof(path) - 2);
+        strncpy(path + 1, term->cwd + home_len, sizeof(path) - 2);
+        path[sizeof(path) - 1] = '\0';
     } else {
         strncpy(path, term->cwd, sizeof(path) - 1);
+        path[sizeof(path) - 1] = '\0';
     }
 
     out[0] = '\0';
@@ -2110,22 +2821,27 @@ static void terminal_make_prompt(const TerminalState *term, char *out, size_t si
     str_append(out, size, " %");
 }
 
-static void terminal_resolve_path(const TerminalState *term, const char *input, char *out, size_t size)
+/*
+ * Resolve a user-typed path (absolute, ~, ~/..., or relative to cwd)
+ * into an absolute path. Returns 0 on success, -1 if the result would
+ * not fit in `size` (in which case `out` must not be used).
+ */
+static int terminal_resolve_path(const TerminalState *term, const char *input, char *out, size_t size)
 {
-    if (!input || !out || size == 0) return;
+    if (!input || !out || size == 0) return -1;
 
     if (input[0] == '/') {
         strncpy(out, input, size - 1);
         out[size - 1] = '\0';
         normalize_path(out, size);
-        return;
+        return 0;
     }
 
     if (strcmp(input, "~") == 0) {
         strncpy(out, "/Users/guest", size - 1);
         out[size - 1] = '\0';
         normalize_path(out, size);
-        return;
+        return 0;
     }
 
     if (strncmp(input, "~/", 2) == 0) {
@@ -2133,11 +2849,13 @@ static void terminal_resolve_path(const TerminalState *term, const char *input, 
         str_append(out, size, "/Users/guest/");
         str_append(out, size, input + 2);
         normalize_path(out, size);
-        return;
+        return strlen(out) > 0 ? 0 : -1;
     }
 
     if (term->cwd[0]) {
-        vfs_join_path(out, size, term->cwd, input);
+        if (vfs_join_path(out, size, term->cwd, input) != 0) {
+            return -1;  /* Path too long - out is untouched, do not use it */
+        }
     } else {
         out[0] = '\0';
         str_append(out, size, "/");
@@ -2145,6 +2863,7 @@ static void terminal_resolve_path(const TerminalState *term, const char *input, 
     }
 
     normalize_path(out, size);
+    return 0;
 }
 
 static void terminal_ls(TerminalState *term, const char *path)
@@ -2170,11 +2889,26 @@ static void terminal_cat(TerminalState *term, const char *path)
         return;
     }
 
-    char buffer[64];
-    ssize_t bytes = vfs_read(file, buffer, sizeof(buffer) - 1);
-    if (bytes > 0) {
-        buffer[bytes] = '\0';
-        terminal_append_line(term, buffer);
+    /* Read the WHOLE file (the old single 63-byte read showed only the
+     * first line of any longer file). The line ring drops old output. */
+    char line[TERMINAL_LINE_MAX];
+    int guard = 0;
+    while (guard++ < 200) {
+        ssize_t bytes = vfs_read(file, line, sizeof(line) - 1);
+        if (bytes <= 0) break;
+
+        size_t start = 0;
+        while (start < (size_t)bytes) {
+            size_t end = start;
+            while (end < (size_t)bytes && line[end] != '\n') end++;
+            size_t seg = end - start;
+            if (seg > TERMINAL_LINE_MAX - 1) seg = TERMINAL_LINE_MAX - 1;
+            char chunk[TERMINAL_LINE_MAX];
+            memcpy(chunk, line + start, seg);
+            chunk[seg] = '\0';
+            terminal_append_line(term, chunk);
+            start = end + 1;  /* Skip the newline */
+        }
     }
     vfs_close(file);
 }
@@ -2184,12 +2918,32 @@ static void terminal_exec(TerminalState *term, const char *cmd)
     if (!term || !cmd) return;
 
     if (strcmp(cmd, "help") == 0) {
-        terminal_append_line(term, "Commands: ls, cd, pwd, cat, echo, touch, mkdir, open, clear");
+        terminal_append_line(term, "Commands: ls, cd, pwd, cat, echo, touch,");
+        terminal_append_line(term, "  mkdir, rm, mv, cp, open, clear");
+        terminal_append_line(term, "Paths may be absolute, relative or ~/...");
         return;
     }
 
     if (strcmp(cmd, "clear") == 0) {
         term->line_count = 0;
+        return;
+    }
+
+    if (strcmp(cmd, "sync") == 0) {
+        system_request_sync();
+        terminal_append_line(term, "Saving state to disk...");
+        return;
+    }
+
+    if (strcmp(cmd, "shutdown") == 0) {
+        terminal_append_line(term, "Shutting down...");
+        system_request_shutdown();
+        return;
+    }
+
+    if (strcmp(cmd, "reboot") == 0) {
+        terminal_append_line(term, "Restarting...");
+        system_request_restart();
         return;
     }
 
@@ -2205,9 +2959,13 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
     if (strncmp(cmd, "cd ", 3) == 0) {
         char path[256];
-        terminal_resolve_path(term, cmd + 3, path, sizeof(path));
+        if (terminal_resolve_path(term, cmd + 3, path, sizeof(path)) != 0) {
+            terminal_append_line(term, "cd: path too long");
+            return;
+        }
         if (vfs_isdir(path)) {
             strncpy(term->cwd, path, sizeof(term->cwd) - 1);
+            term->cwd[sizeof(term->cwd) - 1] = '\0';
         } else {
             terminal_append_line(term, "cd: no such directory");
         }
@@ -2219,9 +2977,13 @@ static void terminal_exec(TerminalState *term, const char *cmd)
         while (*arg == ' ') arg++;
         char path[256];
         if (*arg) {
-            terminal_resolve_path(term, arg, path, sizeof(path));
+            if (terminal_resolve_path(term, arg, path, sizeof(path)) != 0) {
+                terminal_append_line(term, "ls: path too long");
+                return;
+            }
         } else {
             strncpy(path, term->cwd[0] ? term->cwd : "/", sizeof(path) - 1);
+            path[sizeof(path) - 1] = '\0';
         }
         terminal_ls(term, path);
         return;
@@ -2229,14 +2991,20 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
     if (strncmp(cmd, "cat ", 4) == 0) {
         char path[256];
-        terminal_resolve_path(term, cmd + 4, path, sizeof(path));
+        if (terminal_resolve_path(term, cmd + 4, path, sizeof(path)) != 0) {
+            terminal_append_line(term, "cat: path too long");
+            return;
+        }
         terminal_cat(term, path);
         return;
     }
 
     if (strncmp(cmd, "touch ", 6) == 0) {
         char path[256];
-        terminal_resolve_path(term, cmd + 6, path, sizeof(path));
+        if (terminal_resolve_path(term, cmd + 6, path, sizeof(path)) != 0) {
+            terminal_append_line(term, "touch: path too long");
+            return;
+        }
         VfsFile *file = vfs_open(path, VFS_O_CREATE | VFS_O_WRITE);
         if (file) vfs_close(file);
         return;
@@ -2244,7 +3012,10 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
     if (strncmp(cmd, "rm ", 3) == 0) {
         char path[256];
-        terminal_resolve_path(term, cmd + 3, path, sizeof(path));
+        if (terminal_resolve_path(term, cmd + 3, path, sizeof(path)) != 0) {
+            terminal_append_line(term, "rm: path too long");
+            return;
+        }
         if (vfs_unlink(path) != 0) {
             terminal_append_line(term, "rm: failed");
         }
@@ -2259,15 +3030,21 @@ static void terminal_exec(TerminalState *term, const char *cmd)
             return;
         }
         char src[256];
+        char src_resolved[256];
         char dst[256];
         size_t len = (size_t)(space - args);
         if (len >= sizeof(src)) len = sizeof(src) - 1;
         memcpy(src, args, len);
         src[len] = '\0';
         const char *dst_arg = space + 1;
-        terminal_resolve_path(term, src, src, sizeof(src));
-        terminal_resolve_path(term, dst_arg, dst, sizeof(dst));
-        if (vfs_rename(src, dst) != 0) {
+        /* Resolve into SEPARATE buffers: resolving src in place
+         * clobbered the source string and corrupted every relative mv */
+        if (terminal_resolve_path(term, src, src_resolved, sizeof(src_resolved)) != 0 ||
+            terminal_resolve_path(term, dst_arg, dst, sizeof(dst)) != 0) {
+            terminal_append_line(term, "mv: path too long");
+            return;
+        }
+        if (vfs_rename(src_resolved, dst) != 0) {
             terminal_append_line(term, "mv: failed");
         }
         return;
@@ -2281,16 +3058,20 @@ static void terminal_exec(TerminalState *term, const char *cmd)
             return;
         }
         char src[256];
+        char src_resolved[256];
         char dst[256];
         size_t len = (size_t)(space - args);
         if (len >= sizeof(src)) len = sizeof(src) - 1;
         memcpy(src, args, len);
         src[len] = '\0';
         const char *dst_arg = space + 1;
-        terminal_resolve_path(term, src, src, sizeof(src));
-        terminal_resolve_path(term, dst_arg, dst, sizeof(dst));
+        if (terminal_resolve_path(term, src, src_resolved, sizeof(src_resolved)) != 0 ||
+            terminal_resolve_path(term, dst_arg, dst, sizeof(dst)) != 0) {
+            terminal_append_line(term, "cp: path too long");
+            return;
+        }
 
-        VfsFile *in = vfs_open(src, VFS_O_READ);
+        VfsFile *in = vfs_open(src_resolved, VFS_O_READ);
         if (!in) {
             terminal_append_line(term, "cp: cannot open source");
             return;
@@ -2313,7 +3094,10 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
     if (strncmp(cmd, "mkdir ", 6) == 0) {
         char path[256];
-        terminal_resolve_path(term, cmd + 6, path, sizeof(path));
+        if (terminal_resolve_path(term, cmd + 6, path, sizeof(path)) != 0) {
+            terminal_append_line(term, "mkdir: path too long");
+            return;
+        }
         if (vfs_mkdir(path) != 0) {
             terminal_append_line(term, "mkdir: failed");
         }
@@ -2331,7 +3115,10 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
             const char *path_arg = redir + 2;
             char path[256];
-            terminal_resolve_path(term, path_arg, path, sizeof(path));
+            if (terminal_resolve_path(term, path_arg, path, sizeof(path)) != 0) {
+                terminal_append_line(term, "echo: path too long");
+                return;
+            }
             VfsFile *file = vfs_open(path, VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
             if (file) {
                 vfs_write(file, text, strlen(text));
@@ -2346,12 +3133,17 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
     if (strncmp(cmd, "open ", 5) == 0) {
         char path[256];
-        terminal_resolve_path(term, cmd + 5, path, sizeof(path));
+        if (terminal_resolve_path(term, cmd + 5, path, sizeof(path)) != 0) {
+            terminal_append_line(term, "open: path too long");
+            return;
+        }
         if (!vfs_exists(path)) {
             char alt[256];
-            vfs_join_path(alt, sizeof(alt), "/Applications", cmd + 5);
-            if (vfs_exists(alt)) {
-                strncpy(path, alt, sizeof(path) - 1);
+            if (vfs_join_path(alt, sizeof(alt), "/Applications", cmd + 5) == 0) {
+                if (vfs_exists(alt)) {
+                    strncpy(path, alt, sizeof(path) - 1);
+                    path[sizeof(path) - 1] = '\0';
+                }
             }
         }
 
@@ -2467,6 +3259,7 @@ static void textedit_delete_line(TextEditState *edit, int line)
     if (line < 0 || line >= edit->line_count) return;
     for (int i = line + 1; i < edit->line_count; i++) {
         strncpy(edit->lines[i - 1], edit->lines[i], TEXTEDIT_LINE_MAX - 1);
+        edit->lines[i - 1][TEXTEDIT_LINE_MAX - 1] = '\0';
     }
     if (edit->line_count > 1) {
         edit->line_count--;
@@ -2489,8 +3282,11 @@ static void textedit_insert_line(TextEditState *edit, int line, const char *text
 
     for (int i = edit->line_count; i > line; i--) {
         strncpy(edit->lines[i], edit->lines[i - 1], TEXTEDIT_LINE_MAX - 1);
+        /* Guarantee termination when the shifted line is full-width */
+        edit->lines[i][TEXTEDIT_LINE_MAX - 1] = '\0';
     }
     strncpy(edit->lines[line], text, TEXTEDIT_LINE_MAX - 1);
+    edit->lines[line][TEXTEDIT_LINE_MAX - 1] = '\0';
     edit->line_count++;
     edit->dirty = true;
     strcpy(edit->status, "Edited");
@@ -2737,15 +3533,23 @@ static void textedit_handle_key(TextEditState *edit, char ascii, KeyCode key, ui
         if (edit->line_count < TEXTEDIT_MAX_LINES - 1) {
             char tail[TEXTEDIT_LINE_MAX];
             tail[0] = '\0';
-            if (edit->cursor_col < (int)strlen(edit->lines[edit->cursor_line])) {
+            bool have_tail = edit->cursor_col < (int)strlen(edit->lines[edit->cursor_line]);
+            if (have_tail) {
                 strncpy(tail, &edit->lines[edit->cursor_line][edit->cursor_col], sizeof(tail) - 1);
+                tail[sizeof(tail) - 1] = '\0';
                 edit->lines[edit->cursor_line][edit->cursor_col] = '\0';
-            }
-            edit->cursor_line++;
-            edit->cursor_col = 0;
-            edit->line_count = MAX(edit->line_count, edit->cursor_line + 1);
-            if (tail[0]) {
-                textedit_insert_line(edit, edit->cursor_line, tail);
+                /* Split: insert the tail as a new line after the cursor
+                 * line (insert_line bumps line_count exactly once) */
+                textedit_insert_line(edit, edit->cursor_line + 1, tail);
+                edit->cursor_line++;
+                edit->cursor_col = 0;
+            } else {
+                /* New empty line at the cursor position */
+                edit->cursor_line++;
+                edit->cursor_col = 0;
+                if (edit->cursor_line >= edit->line_count) {
+                    edit->line_count = edit->cursor_line + 1;
+                }
             }
             edit->dirty = true;
             strcpy(edit->status, "Edited");
@@ -2758,9 +3562,12 @@ static void textedit_handle_key(TextEditState *edit, char ascii, KeyCode key, ui
         if (edit->sel_active) {
             textedit_delete_selection(edit);
         }
-        if (edit->cursor_col < TEXTEDIT_LINE_MAX - 1) {
-            int len = (int)strlen(edit->lines[edit->cursor_line]);
-            for (int i = len; i >= edit->cursor_col && i < TEXTEDIT_LINE_MAX - 1; i--) {
+        int len = (int)strlen(edit->lines[edit->cursor_line]);
+        /* Insert (shift right) only while the line has room; when the
+         * line is full the old code shifted nothing and silently
+         * OVERWROTE the character at the cursor */
+        if (edit->cursor_col < TEXTEDIT_LINE_MAX - 1 && len < TEXTEDIT_LINE_MAX - 1) {
+            for (int i = len; i >= edit->cursor_col; i--) {
                 edit->lines[edit->cursor_line][i + 1] = edit->lines[edit->cursor_line][i];
             }
             edit->lines[edit->cursor_line][edit->cursor_col++] = ascii;
@@ -2782,6 +3589,7 @@ static AppType app_type_from_bundle(const char *bundle_id)
     if (strcmp(bundle_id, "com.ojjyos.preview") == 0) return APP_PREVIEW;
     if (strcmp(bundle_id, "com.ojjyos.calendar") == 0) return APP_CALENDAR;
     if (strcmp(bundle_id, "com.ojjyos.about") == 0) return APP_ABOUT;
+    if (strcmp(bundle_id, "com.ojjyos.web") == 0) return APP_WEB;
     return APP_DEMO;
 }
 
@@ -2796,6 +3604,7 @@ static const char *app_name_from_type(AppType type)
         case APP_PREVIEW: return "Preview";
         case APP_CALENDAR: return "Calendar";
         case APP_ABOUT: return "About";
+        case APP_WEB: return "Web";
         default: return "App";
     }
 }
@@ -2834,8 +3643,11 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
     } else if (type == APP_SETTINGS) {
         state->settings.page = SETTINGS_PAGE_APPEARANCE;
     } else if (type == APP_TERMINAL) {
-        terminal_append_line(&state->terminal, "ojjyOS Terminal");
-        terminal_append_line(&state->terminal, "Type 'help' for commands");
+        terminal_append_line(&state->terminal, "+--------------------------------------+");
+        terminal_append_line(&state->terminal, "|     Welcome to the ojjyOS Shell      |");
+        terminal_append_line(&state->terminal, "|        Created by Jonas Lee          |");
+        terminal_append_line(&state->terminal, "+--------------------------------------+");
+        terminal_append_line(&state->terminal, "Type 'help' for commands.");
         strncpy(state->terminal.cwd, "/Users/guest", sizeof(state->terminal.cwd) - 1);
         state->terminal.history_count = 0;
         state->terminal.history_pos = 0;
@@ -2870,6 +3682,12 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         state->calendar.edit_mode = false;
         state->calendar.edit_buffer[0] = '\0';
         calendar_load(&state->calendar);
+    } else if (type == APP_WEB) {
+        state->web.history_count = 0;
+        state->web.history_pos = 0;
+        state->web.address[0] = '\0';
+        strcpy(state->web.address, "home");
+        web_load_page(&state->web, "home");
     }
 
     window_count++;
@@ -2885,18 +3703,9 @@ static int app_open_window(AppType type, const char *title)
 
     if (app_window_index[type] >= 0 && app_window_index[type] < window_count) {
         int idx = app_window_index[type];
-        if (idx != window_count - 1) {
-            CompositorWindow temp = windows[idx];
-            AppWindowState temp_state = app_states[idx];
-            for (int j = idx; j < window_count - 1; j++) {
-                windows[j] = windows[j + 1];
-                app_states[j] = app_states[j + 1];
-            }
-            windows[window_count - 1] = temp;
-            app_states[window_count - 1] = temp_state;
-        }
-        active_window_index = window_count - 1;
-        rebuild_app_window_index();
+        /* Restore if minimized, then bring to front */
+        windows[idx].minimized = false;
+        raise_window_to_top(idx);
         return windows[window_count - 1].id;
     }
 
@@ -2911,6 +3720,8 @@ static int app_open_window(AppType type, const char *title)
     if (type == APP_NOTES) { w = 460; h = 320; }
     if (type == APP_PREVIEW) { w = 480; h = 320; }
     if (type == APP_CALENDAR) { w = 720; h = 440; }
+    if (type == APP_ABOUT) { w = 460; h = 300; }
+    if (type == APP_WEB) { w = 640; h = 420; }
 
     int id = create_window_internal(title, x, y, w, h, type);
     if (id >= 0) {
@@ -2961,6 +3772,12 @@ void compositor_init(uint32_t width, uint32_t height)
 
     icon_folder_loaded = load_system_icon("/System/Library/Icons/Folder.raw", icon_folder);
     icon_file_loaded = load_system_icon("/System/Library/Icons/File.raw", icon_file);
+
+    /* Desktop icons */
+    desktop_last_reload = 0;
+    desktop_selected = -1;
+    desktop_last_click_ms = 0;
+    desktop_last_click_idx = -1;
 }
 
 void compositor_set_dark_mode(bool enabled)
@@ -3076,10 +3893,7 @@ void compositor_set_wm_hooks(const CompositorWmHooks *hooks)
 
 int compositor_destroy_window(int id)
 {
-    if (wm_hooks.on_destroy) {
-        wm_hooks.on_destroy(id);
-    }
-    return -1;
+    return destroy_window_internal(id);
 }
 
 void compositor_open_default_apps(void)
@@ -3092,11 +3906,75 @@ void compositor_open_default_apps(void)
     }
 }
 
+/*
+ * Handle a Cmd (Super) shortcut inside an app.
+ * Returns true if the key was consumed.
+ */
+static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
+{
+    if (state->type != APP_TEXTEDIT && state->type != APP_NOTES) {
+        return false;
+    }
+    TextEditState *edit = (state->type == APP_NOTES) ? &state->notes : &state->textedit;
+
+    switch (keycode) {
+        case KEY_S:
+            textedit_save(edit);
+            return true;
+        case KEY_O:
+            if (last_opened_path[0]) {
+                textedit_load_file(edit, last_opened_path);
+            }
+            return true;
+        case KEY_C:
+            if (edit->sel_active) {
+                textedit_copy_selection(edit);
+                strcpy(edit->status, "Copied");
+            } else {
+                strncpy(text_clipboard, edit->lines[edit->cursor_line],
+                        sizeof(text_clipboard) - 1);
+                text_clipboard[sizeof(text_clipboard) - 1] = '\0';
+                strcpy(edit->status, "Copied line");
+            }
+            return true;
+        case KEY_X:
+            if (edit->sel_active) {
+                textedit_copy_selection(edit);
+                textedit_delete_selection(edit);
+                strcpy(edit->status, "Cut");
+            } else {
+                strncpy(text_clipboard, edit->lines[edit->cursor_line],
+                        sizeof(text_clipboard) - 1);
+                text_clipboard[sizeof(text_clipboard) - 1] = '\0';
+                textedit_delete_line(edit, edit->cursor_line);
+                strcpy(edit->status, "Cut line");
+            }
+            return true;
+        case KEY_V:
+            if (text_clipboard[0]) {
+                textedit_insert_line(edit, edit->cursor_line + 1, text_clipboard);
+                strcpy(edit->status, "Pasted line");
+            }
+            return true;
+        default:
+            return false;
+    }
+}
+
 void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
 {
     if (keycode == KEY_ESCAPE && overlay != OVERLAY_NONE) {
         overlay_set(OVERLAY_NONE);
         return;
+    }
+
+    /* App-level Cmd shortcuts take priority over the global ones.
+     * (The old global Cmd+C shadowed the editor's copy.) */
+    if ((modifiers & INPUT_MOD_SUPER) && overlay == OVERLAY_NONE &&
+        active_window_index >= 0 && active_window_index < window_count) {
+        if (handle_app_shortcut(&app_states[active_window_index], keycode)) {
+            return;
+        }
     }
 
     bool shortcuts = settings_get()->shortcuts_enabled;
@@ -3148,11 +4026,19 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
     }
 
     if (shortcuts && (modifiers & INPUT_MOD_SUPER) && keycode == KEY_Q) {
-        int idx = app_registry_find_by_name(active_app_name);
-        AppInfo *app = app_registry_get(idx);
-        if (app) {
-            app->running = false;
-            strncpy(active_app_name, "Finder", sizeof(active_app_name) - 1);
+        /* Quit the active app: mark it not running AND close its
+         * window (the old code left a dead window on screen).
+         * Finder, like on macOS, is never quit. */
+        if (active_window_index >= 0 && active_window_index < window_count) {
+            AppWindowState *state = &app_states[active_window_index];
+            if (state->type != APP_FINDER) {
+                const char *closing_name = app_name_from_type(state->type);
+                int idx = app_registry_find_by_name(closing_name);
+                close_app_window(state->type);
+                AppInfo *app = app_registry_get(idx);
+                if (app) app->running = false;
+                strncpy(active_app_name, "Finder", sizeof(active_app_name) - 1);
+            }
         }
         return;
     }
@@ -3217,68 +4103,20 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
         if (state->type == APP_TERMINAL) {
             terminal_handle_key(&state->terminal, ascii, keycode);
         } else if (state->type == APP_TEXTEDIT) {
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_S) {
-                textedit_save(&state->textedit);
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_O) {
-                if (last_opened_path[0]) {
-                    textedit_load_file(&state->textedit, last_opened_path);
-                }
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_C) {
-                strncpy(text_clipboard, state->textedit.lines[state->textedit.cursor_line],
-                        sizeof(text_clipboard) - 1);
-                strcpy(state->textedit.status, "Copied line");
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_X) {
-                strncpy(text_clipboard, state->textedit.lines[state->textedit.cursor_line],
-                        sizeof(text_clipboard) - 1);
-                textedit_delete_line(&state->textedit, state->textedit.cursor_line);
-                strcpy(state->textedit.status, "Cut line");
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_V) {
-                if (text_clipboard[0]) {
-                    textedit_insert_line(&state->textedit, state->textedit.cursor_line + 1, text_clipboard);
-                    strcpy(state->textedit.status, "Pasted line");
-                }
-                return;
-            }
+            /* Cmd shortcuts were already handled by handle_app_shortcut */
             textedit_handle_key(&state->textedit, ascii, keycode, modifiers);
         } else if (state->type == APP_NOTES) {
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_S) {
-                textedit_save(&state->notes);
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_C) {
-                strncpy(text_clipboard, state->notes.lines[state->notes.cursor_line],
-                        sizeof(text_clipboard) - 1);
-                strcpy(state->notes.status, "Copied line");
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_X) {
-                strncpy(text_clipboard, state->notes.lines[state->notes.cursor_line],
-                        sizeof(text_clipboard) - 1);
-                textedit_delete_line(&state->notes, state->notes.cursor_line);
-                strcpy(state->notes.status, "Cut line");
-                return;
-            }
-            if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_V) {
-                if (text_clipboard[0]) {
-                    textedit_insert_line(&state->notes, state->notes.cursor_line + 1, text_clipboard);
-                    strcpy(state->notes.status, "Pasted line");
-                }
-                return;
-            }
             textedit_handle_key(&state->notes, ascii, keycode, modifiers);
             if (state->notes.dirty) {
                 textedit_save(&state->notes);
             }
         } else if (state->type == APP_FINDER) {
             FinderState *finder = &state->finder;
+            /* A stale selection (e.g. after delete/refresh) must not act
+             * on a slot that now holds a different item */
+            if (finder->selected >= finder->entry_count) {
+                finder->selected = finder->entry_count - 1;
+            }
             if (finder->rename_mode) {
                 if (keycode == KEY_ESCAPE) {
                     finder->rename_mode = false;
@@ -3289,9 +4127,9 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                         FinderEntry *entry = &finder->entries[finder->selected];
                         char src[256];
                         char dst[256];
-                        vfs_join_path(src, sizeof(src), finder->path, entry->name);
-                        vfs_join_path(dst, sizeof(dst), finder->path, finder->rename_buffer);
-                        if (vfs_rename(src, dst) == 0) {
+                        if (vfs_join_path(src, sizeof(src), finder->path, entry->name) == 0 &&
+                            vfs_join_path(dst, sizeof(dst), finder->path, finder->rename_buffer) == 0 &&
+                            vfs_rename(src, dst) == 0) {
                             finder->needs_refresh = true;
                         }
                     }
@@ -3360,9 +4198,12 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                 }
                 return;
             }
-            if (keycode == KEY_R && finder->selected >= 0) {
+            /* Rename: only when nothing has been typed into search
+             * (otherwise 'r' could never be part of a query) */
+            if (keycode == KEY_R && finder->selected >= 0 && finder->search[0] == '\0') {
                 FinderEntry *entry = &finder->entries[finder->selected];
                 strncpy(finder->rename_buffer, entry->name, sizeof(finder->rename_buffer) - 1);
+                finder->rename_buffer[sizeof(finder->rename_buffer) - 1] = '\0';
                 finder->rename_mode = true;
                 return;
             }
@@ -3420,6 +4261,9 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                     return;
                 }
                 if (keycode == KEY_TAB) {
+                    /* Apply what was typed before switching fields,
+                     * otherwise edits are silently discarded */
+                    calendar_apply_edit(cal);
                     cal->edit_field = (cal->edit_field + 1) % 4;
                     calendar_start_edit(cal, cal->edit_field);
                     return;
@@ -3469,6 +4313,28 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                 calendar_start_edit(cal, 3);
                 return;
             }
+        } else if (state->type == APP_WEB) {
+            WebState *web = &state->web;
+            if (keycode == KEY_BACKSPACE) {
+                size_t len = strlen(web->address);
+                if (len > 0) {
+                    web->address[len - 1] = '\0';
+                }
+                return;
+            }
+            if (keycode == KEY_ENTER) {
+                if (web->address[0]) {
+                    web_load_page(web, web->address);
+                }
+                return;
+            }
+            if (ascii >= 32 && ascii <= 126) {
+                size_t len = strlen(web->address);
+                if (len < sizeof(web->address) - 1) {
+                    web->address[len] = ascii;
+                    web->address[len + 1] = '\0';
+                }
+            }
         }
     }
 }
@@ -3483,53 +4349,63 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
     cursor_x = x;
     cursor_y = y;
 
-    if (active_window_index >= 0 && active_window_index < window_count) {
-        AppWindowState *state = &app_states[active_window_index];
-        CompositorWindow *win = &windows[active_window_index];
-        if (state->type == APP_FINDER && state->finder.drag_active) {
-            FinderState *finder = &state->finder;
-            finder->drag_hover_index = -1;
+    /* Drag hover: highlight drop targets in any Finder window with an
+     * active drag (not just the active window) */
+    for (int wi = 0; wi < window_count; wi++) {
+        AppWindowState *state = &app_states[wi];
+        CompositorWindow *win = &windows[wi];
+        if (state->type != APP_FINDER || !state->finder.drag_active) {
+            continue;
+        }
+        FinderState *finder = &state->finder;
+        finder->drag_hover_index = -1;
 
-            int content_x = win->x + 12;
-            int content_y = win->y + 40;
-            int sidebar_w = 150;
-            int preview_w = 180;
-            int main_x = content_x + sidebar_w + 10;
-            int main_w = win->w - 24 - sidebar_w - preview_w - 20;
+        int content_x = win->x + 12;
+        int content_y = win->y + 40;
+        int sidebar_w = 150;
+        int preview_w = 180;
+        int main_x = content_x + sidebar_w + 10;
+        int main_w = win->w - 24 - sidebar_w - preview_w - 20;
 
-            if (x >= main_x && x <= main_x + main_w) {
-                if (finder->view_mode == FINDER_VIEW_LIST) {
-                    int row = (y - (content_y + 44)) / 18;
-                    if (row >= 0 && row < finder->entry_count) {
-                        FinderEntry *entry = &finder->entries[row];
-                        if (entry->type == VFS_TYPE_DIR) {
-                            finder->drag_hover_index = row;
-                        }
+        if (x >= main_x && x <= main_x + main_w) {
+            if (finder->view_mode == FINDER_VIEW_LIST) {
+                int row = (y - (content_y + 44)) / 18 + finder->scroll;
+                if (row >= 0 && row < finder->entry_count) {
+                    FinderEntry *entry = &finder->entries[row];
+                    if (entry->type == VFS_TYPE_DIR) {
+                        finder->drag_hover_index = row;
                     }
-                } else {
-                    int icon = 40;
-                    int gap = 18;
-                    int cols = 4;
-                    int start_x = main_x + 16;
-                    int start_y = content_y + 40;
-                    int col = (x - start_x) / (icon + gap);
-                    int row = (y - start_y) / (icon + 28);
-                    int idx = row * cols + col;
-                    if (col >= 0 && row >= 0 && idx >= 0 && idx < finder->entry_count) {
-                        FinderEntry *entry = &finder->entries[idx];
-                        if (entry->type == VFS_TYPE_DIR) {
-                            finder->drag_hover_index = idx;
-                        }
+                }
+            } else {
+                int icon = 40;
+                int gap = 18;
+                int cols = 4;
+                int start_x = main_x + 16;
+                int start_y = content_y + 40;
+                int col = (x - start_x) / (icon + gap);
+                int row = (y - start_y) / (icon + 28);
+                int idx = row * cols + col + finder->scroll;
+                if (col >= 0 && row >= 0 &&
+                    idx >= finder->scroll && idx < finder->entry_count) {
+                    FinderEntry *entry = &finder->entries[idx];
+                    if (entry->type == VFS_TYPE_DIR) {
+                        finder->drag_hover_index = idx;
                     }
                 }
             }
         }
     }
 
-    if (up && active_window_index >= 0 && active_window_index < window_count) {
-        AppWindowState *state = &app_states[active_window_index];
-        CompositorWindow *win = &windows[active_window_index];
-        if (state->type == APP_FINDER && state->finder.drag_active) {
+    if (up) {
+        /* Clear drag state in ANY Finder window (the active window may
+         * have changed between press and release, e.g. a file click
+         * raised TextEdit - the old code leaked drag_active forever) */
+        for (int wi = 0; wi < window_count; wi++) {
+            AppWindowState *state = &app_states[wi];
+            CompositorWindow *win = &windows[wi];
+            if (state->type != APP_FINDER || !state->finder.drag_active) {
+                continue;
+            }
             FinderState *finder = &state->finder;
             finder->drag_active = false;
             finder->drag_hover_index = -1;
@@ -3543,7 +4419,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
 
             if (x >= main_x && x <= main_x + main_w) {
                 if (finder->view_mode == FINDER_VIEW_LIST) {
-                    int row = (y - (content_y + 44)) / 18;
+                    int row = (y - (content_y + 44)) / 18 + finder->scroll;
                     if (row >= 0 && row < finder->entry_count) {
                         FinderEntry *entry = &finder->entries[row];
                         if (entry->type == VFS_TYPE_DIR) {
@@ -3565,8 +4441,9 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     int start_y = content_y + 40;
                     int col = (x - start_x) / (icon + gap);
                     int row = (y - start_y) / (icon + 28);
-                    int idx = row * cols + col;
-                    if (col >= 0 && row >= 0 && idx >= 0 && idx < finder->entry_count) {
+                    int idx = row * cols + col + finder->scroll;
+                    if (col >= 0 && row >= 0 &&
+                        idx >= finder->scroll && idx < finder->entry_count) {
                         FinderEntry *entry = &finder->entries[idx];
                         if (entry->type == VFS_TYPE_DIR) {
                             char dst_dir[256];
@@ -3674,6 +4551,35 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
             return;
         }
 
+        if (overlay == OVERLAY_APP_SWITCHER) {
+            /* Click an icon to activate it; click anywhere else to
+             * dismiss (the old code let clicks fall through to the
+             * windows and dock behind the overlay) */
+            int count = app_registry_count();
+            int running[APP_REGISTRY_MAX];
+            int running_count = 0;
+            for (int i = 0; i < count; i++) {
+                AppInfo *app = app_registry_get(i);
+                if (app && app->running) running[running_count++] = i;
+            }
+            if (running_count > 0) {
+                int shown = MIN(running_count, 8);
+                int width = 40 + shown * 64;
+                int px = ((int)comp_width - width) / 2;
+                int py = 160;
+                for (int i = 0; i < shown; i++) {
+                    int icon_x = px + 20 + i * 64;
+                    if (x >= icon_x - 6 && x <= icon_x + 46 &&
+                        y >= py + 28 && y <= py + 80) {
+                        launch_app_index(running[i], timer_get_ticks());
+                        break;
+                    }
+                }
+            }
+            overlay_set(OVERLAY_NONE);
+            return;
+        }
+
         int count = app_registry_count();
         if (count > 0) {
             SettingsState *settings = settings_get();
@@ -3691,9 +4597,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 for (int i = 0; i < count; i++) {
                     int icon_center_x = base_x + i * (icon_base + spacing) + icon_base / 2;
                     int icon_center_y = dock_y + 36;
-                    int size = icon_base;
-                    if (x >= icon_center_x - size && x <= icon_center_x + size &&
-                        y >= icon_center_y - size && y <= icon_center_y + size) {
+                    int half = icon_base / 2;
+                    /* Hit box matches the drawn icon (the old +/-size box
+                     * was 2x the icon and overlapped neighbors) */
+                    if (x >= icon_center_x - half && x <= icon_center_x + half &&
+                        y >= icon_center_y - half && y <= icon_center_y + half) {
                         launch_app_index(i, timer_get_ticks());
                         return;
                     }
@@ -3701,10 +4609,15 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
             }
         }
 
+        bool hit_window = false;
         for (int i = window_count - 1; i >= 0; i--) {
             CompositorWindow *win = &windows[i];
             AppWindowState *state = &app_states[i];
+                if (win->minimized) {
+                    continue;  /* Minimized windows are not on screen */
+                }
                 if (x >= win->x && x < win->x + win->w && y >= win->y && y < win->y + win->h) {
+                    hit_window = true;
                     active_window_index = i;
                     strncpy(active_app_name, app_name_from_type(state->type),
                             sizeof(active_app_name) - 1);
@@ -3713,6 +4626,25 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     }
 
                 if (y < win->y + 32) {
+                    /* Traffic lights: close (red), minimize (yellow) */
+                    if (x >= win->x + 10 && x <= win->x + 18 && y >= win->y + 10 && y <= win->y + 18) {
+                        AppType closing = state->type;
+                        destroy_window_internal(win->id);
+                        if (app_registry_find_by_name(active_app_name) >= 0) {
+                            /* Mark the app not running if this was its window */
+                            int aidx = app_registry_find_by_name(app_name_from_type(closing));
+                            AppInfo *app = app_registry_get(aidx);
+                            if (app) app->running = false;
+                        }
+                        if (active_window_index < 0) {
+                            strncpy(active_app_name, "Finder", sizeof(active_app_name) - 1);
+                        }
+                        return;
+                    } else if (x >= win->x + 22 && x <= win->x + 30 && y >= win->y + 10 && y <= win->y + 18) {
+                        win->minimized = true;
+                        return;
+                    }
+
                     dragging = true;
                     drag_index = i;
                     drag_dx = x - win->x;
@@ -3750,7 +4682,9 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         int main_x = content_x + sidebar_w + 10;
                         if (x >= main_x) {
                             if (state->finder.view_mode == FINDER_VIEW_LIST) {
-                                int row = (y - (content_y + 36)) / 18;
+                                /* Rows are drawn from content_y+44 (the old
+                                 * +36 offset made clicks select the wrong row) */
+                                int row = (y - (content_y + 44)) / 18 + state->finder.scroll;
                                 if (row >= 0 && row < state->finder.entry_count) {
                                     state->finder.selected = row;
                                     finder_update_preview(&state->finder);
@@ -3795,8 +4729,9 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                                 int start_y = content_y + 40;
                                 int col = (x - start_x) / (icon + gap);
                                 int row = (y - start_y) / (icon + 28);
-                                int idx = row * cols + col;
-                                if (col >= 0 && row >= 0 && idx >= 0 && idx < state->finder.entry_count) {
+                                int idx = row * cols + col + state->finder.scroll;
+                                if (col >= 0 && row >= 0 &&
+                                    idx >= state->finder.scroll && idx < state->finder.entry_count) {
                                     FinderEntry *entry = &state->finder.entries[idx];
                                     state->finder.selected = idx;
                                     finder_update_preview(&state->finder);
@@ -3960,18 +4895,24 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         int first_wd = weekday_of_date(cal->year, cal->month, 1);
                         int days = days_in_month(cal->year, cal->month);
 
-                        int rel_x = x - grid_x;
-                        int rel_y = y - (grid_y + 14);
-                        if (rel_x >= 0 && rel_y >= 0) {
+                        /* Only clicks INSIDE the 7x6 grid may change the
+                         * selected day (the old unchecked col/row also
+                         * reacted to clicks in the sidebar/agenda) */
+                        if (x >= grid_x && x < grid_x + grid_w &&
+                            y >= grid_y + 14 && y < grid_y + 14 + cell_h * 6) {
+                            int rel_x = x - grid_x;
+                            int rel_y = y - (grid_y + 14);
                             int col = rel_x / cell_w;
                             int row = rel_y / cell_h;
-                            int idx = row * 7 + col;
-                            int day = idx - first_wd + 1;
-                            if (day >= 1 && day <= days) {
-                                cal->selected_day = day;
-                                int indices[8];
-                                int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 8);
-                                cal->selected_event = (count > 0) ? indices[0] : -1;
+                            if (col >= 0 && col < 7 && row >= 0 && row < 6) {
+                                int idx = row * 7 + col;
+                                int day = idx - first_wd + 1;
+                                if (day >= 1 && day <= days) {
+                                    cal->selected_day = day;
+                                    int indices[8];
+                                    int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 8);
+                                    cal->selected_event = (count > 0) ? indices[0] : -1;
+                                }
                             }
                         }
                     }
@@ -3981,7 +4922,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         int indices[8];
                         int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 8);
                         int row = (y - (content_y + 30)) / 18;
-                        if (row >= 0 && row < count) {
+                        /* Only the 6 rows that are actually drawn are
+                         * clickable (the old row < count bound allowed
+                         * selecting an event from uninitialized memory) */
+                        int shown = MIN(count, 6);
+                        if (row >= 0 && row < shown) {
                             cal->selected_event = indices[row];
                         }
                     }
@@ -4006,26 +4951,47 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         compositor_set_dark_mode(true);
                         settings_save();
                     }
+                } else if (state->type == APP_WEB) {
+                    WebState *web = &state->web;
+                    int content_x = win->x + 12;
+                    int content_y = win->y + 40;
+                    int content_w = win->w - 24;
+
+                    int bar_y = content_y + 8;
+                    /* Back / forward buttons */
+                    if (y >= bar_y && y <= bar_y + 22) {
+                        if (x >= content_x + 8 && x <= content_x + 30) {
+                            web_go_history(web, -1);
+                            return;
+                        }
+                        if (x >= content_x + 34 && x <= content_x + 56) {
+                            web_go_history(web, 1);
+                            return;
+                        }
+                    }
+
+                    /* Link lines */
+                    int page_y = content_y + 40;
+                    if (y >= page_y + 8) {
+                        int row = (y - (page_y + 8)) / 18 + web->scroll;
+                        if (row >= 0 && row < web->line_count && web->links[row][0]) {
+                            web_load_page(web, web->links[row]);
+                            return;
+                        }
+                    }
+                    (void)content_w;
                 }
 
                 if (i != window_count - 1) {
-                    CompositorWindow temp = windows[i];
-                    AppWindowState temp_state = app_states[i];
-                    for (int j = i; j < window_count - 1; j++) {
-                        windows[j] = windows[j + 1];
-                        app_states[j] = app_states[j + 1];
-                    }
-                    windows[window_count - 1] = temp;
-                    app_states[window_count - 1] = temp_state;
-                    drag_index = window_count - 1;
-                    active_window_index = window_count - 1;
-                    rebuild_app_window_index();
-                    if (wm_hooks.on_focus) {
-                        wm_hooks.on_focus(windows[window_count - 1].id);
-                    }
+                    raise_window_to_top(i);
                 }
                 break;
             }
+        }
+
+        /* Click landed on the desktop (no window or dock consumed it) */
+        if (!hit_window) {
+            desktop_handle_click(x, y, timer_get_ticks());
         }
     }
 
@@ -4057,6 +5023,93 @@ void compositor_handle_mouse_move(int32_t dx, int32_t dy)
     if (dragging && drag_index >= 0 && drag_index < window_count) {
         windows[drag_index].x = cursor_x - drag_dx;
         windows[drag_index].y = cursor_y - drag_dy;
+    }
+}
+
+/*
+ * Current compositor cursor position. The compositor is the single
+ * source of truth for the on-screen cursor (it applies the configured
+ * mouse speed); main.c must hit-test button events at THIS position,
+ * not at the input subsystem's raw tracking position.
+ */
+void compositor_get_cursor(int32_t *x, int32_t *y)
+{
+    if (x) *x = cursor_x;
+    if (y) *y = cursor_y;
+}
+
+/*
+ * Mouse wheel / trackpad scroll.
+ * Scrolls the content of the active (non-minimized) window.
+ */
+void compositor_handle_scroll(int32_t dx, int32_t dy)
+{
+    (void)dx;
+
+    if (overlay != OVERLAY_NONE) return;
+    if (active_window_index < 0 || active_window_index >= window_count) return;
+
+    CompositorWindow *win = &windows[active_window_index];
+    if (win->minimized) return;
+    AppWindowState *state = &app_states[active_window_index];
+
+    /* Three lines per wheel notch, macOS-style */
+    int delta = (dy > 0) ? -3 : 3;
+
+    switch (state->type) {
+        case APP_FINDER:
+            state->finder.scroll += delta;
+            if (state->finder.scroll < 0) state->finder.scroll = 0;
+            break;
+        case APP_TERMINAL:
+            state->terminal.scroll += delta;
+            if (state->terminal.scroll < 0) state->terminal.scroll = 0;
+            break;
+        case APP_TEXTEDIT:
+            state->textedit.scroll += delta;
+            if (state->textedit.scroll < 0) state->textedit.scroll = 0;
+            break;
+        case APP_NOTES:
+            state->notes.scroll += delta;
+            if (state->notes.scroll < 0) state->notes.scroll = 0;
+            break;
+        case APP_CALENDAR:
+            /* No scrollable region in the calendar yet */
+            break;
+        case APP_WEB:
+            state->web.scroll += delta;
+            if (state->web.scroll < 0) state->web.scroll = 0;
+            break;
+        default:
+            break;
+    }
+
+    /* Draw functions clamp scroll to the valid range */
+}
+
+/*
+ * Key release notification (used for macOS-style behaviors such as
+ * dismissing the app switcher when Super is let go).
+ */
+void compositor_handle_key_release(KeyCode keycode, uint8_t modifiers)
+{
+    bool super_now = (modifiers & INPUT_MOD_SUPER) != 0;
+
+    if ((keycode == KEY_LSUPER || keycode == KEY_RSUPER) && !super_now) {
+        if (overlay == OVERLAY_APP_SWITCHER) {
+            /* Released Super while holding the switcher: activate selection */
+            int count = app_registry_count();
+            int running[APP_REGISTRY_MAX];
+            int running_count = 0;
+            for (int i = 0; i < count; i++) {
+                AppInfo *app = app_registry_get(i);
+                if (app && app->running) running[running_count++] = i;
+            }
+            if (running_count > 0) {
+                launch_app_index(running[app_switcher_index % running_count], timer_get_ticks());
+            }
+            overlay_set(OVERLAY_NONE);
+        }
     }
 }
 
@@ -4106,17 +5159,22 @@ void compositor_tick(uint64_t now_ms)
     update_animations();
 
     draw_wallpaper();
+    draw_desktop_icons();  /* Desktop sits under windows */
 
     if (anim_launchpad > 0) {
         draw_launchpad(anim_launchpad);
     } else if (mission_control_active || anim_mission_control > 0) {
         for (int i = 0; i < window_count; i++) {
-            draw_window(i);
+            if (!windows[i].minimized) {
+                draw_window(i);
+            }
         }
         draw_mission_control(anim_mission_control);
     } else {
         for (int i = 0; i < window_count; i++) {
-            draw_window(i);
+            if (!windows[i].minimized) {
+                draw_window(i);
+            }
         }
     }
 

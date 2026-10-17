@@ -1,7 +1,9 @@
 /*
  * ojjyOS v3 Kernel - Basic Types
  *
- * Standard integer types for freestanding environment
+ * Standard integer types for freestanding environment, plus the
+ * architecture-specific low-level helpers (port I/O, interrupt
+ * masking, idle) for both x86_64 and aarch64.
  */
 
 #ifndef _OJJY_TYPES_H
@@ -11,7 +13,7 @@
 typedef unsigned char       uint8_t;
 typedef signed char         int8_t;
 typedef unsigned short      uint16_t;
-typedef signed short        int16_t;
+typedef signed short       int16_t;
 typedef unsigned int        uint32_t;
 typedef signed int          int32_t;
 typedef unsigned long long  uint64_t;
@@ -46,8 +48,16 @@ typedef _Bool               bool;
 /* Packed attribute */
 #define PACKED              __attribute__((packed))
 
-/* Inline assembly helpers */
+/* Barrier */
 #define barrier()           __asm__ volatile("" ::: "memory")
+
+/*
+ * Architecture-specific low-level helpers.
+ *
+ * x86_64:   port I/O + sti/cli/hlt
+ * aarch64:  no port I/O; enable/disable via DAIF; idle via WFI
+ */
+#ifdef __x86_64__
 
 static inline void outb(uint16_t port, uint8_t val)
 {
@@ -116,5 +126,38 @@ static inline void write_cr3(uint64_t val)
 {
     __asm__ volatile("mov %0, %%cr3" : : "r"(val) : "memory");
 }
+
+#else /* __aarch64__ */
+
+/* No port I/O on ARM: these exist only so common code compiles.
+ * (Port-I/O device drivers are excluded from aarch64 builds.) */
+static inline void outb(uint16_t port, uint8_t val) { (void)port; (void)val; }
+static inline uint8_t inb(uint16_t port) { (void)port; return 0; }
+static inline void outw(uint16_t port, uint16_t val) { (void)port; (void)val; }
+static inline uint16_t inw(uint16_t port) { (void)port; return 0; }
+static inline void outl(uint16_t port, uint32_t val) { (void)port; (void)val; }
+static inline uint32_t inl(uint16_t port) { (void)port; return 0; }
+static inline void io_wait(void) { __asm__ volatile("nop"); }
+
+/* Interrupt masking via DAIF */
+static inline void cli(void)
+{
+    __asm__ volatile("msr daifset, #0xf");
+}
+
+static inline void sti(void)
+{
+    __asm__ volatile("msr daifclr, #0xf");
+}
+
+static inline void hlt(void)
+{
+    __asm__ volatile("wfi");
+}
+
+static inline uint64_t read_cr3(void) { return 0; }
+static inline void write_cr3(uint64_t val) { (void)val; }
+
+#endif /* __x86_64__ */
 
 #endif /* _OJJY_TYPES_H */

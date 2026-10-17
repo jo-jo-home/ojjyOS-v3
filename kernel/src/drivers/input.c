@@ -270,6 +270,16 @@ bool input_is_mouse_button_down(MouseButton button)
 }
 
 /*
+ * Get the current mouse bounds (screen size), used by absolute
+ * pointer devices (e.g. virtio tablets) to map to pixels.
+ */
+void input_get_bounds(int32_t *width, int32_t *height)
+{
+    if (width) *width = mouse_max_x;
+    if (height) *height = mouse_max_y;
+}
+
+/*
  * Get bitmask of all pressed mouse buttons
  */
 uint8_t input_get_mouse_buttons(void)

@@ -1,0 +1,379 @@
+/*
+ * ojjyOS v3 Kernel - virtio-input Driver (aarch64)
+ *
+ * Drives QEMU's virtio-keyboard-device and virtio-tablet-device
+ * (evdev-style event streams over virtio-mmio) and feeds the shared
+ * input event queue used by the desktop:
+ *
+ *   EV_KEY  + keycode < 128   ->  keyboard events (ASCII translation)
+ *   EV_KEY  + BTN_*           ->  mouse button events
+ *   EV_ABS  + ABS_X/ABS_Y     ->  absolute pointer -> relative moves
+ *   EV_REL  + REL_WHEEL        ->  scroll events
+ *
+ * Events are harvested by polling: the 1 kHz timer keeps the kernel
+ * main loop alive, and a64_poll_input() drains the event queues.
+ *
+ * ojjyOS - Created by Jonas Lee
+ */
+
+#include "virtio.h"
+#include "virtio_devices.h"
+#include "../drivers/input.h"
+#include "../serial.h"
+#include "../string.h"
+
+/* virtio-input config selectors */
+#define VIRTIO_INPUT_CFG_ABS_INFO    6
+
+/* evdev event types */
+#define EV_SYN    0
+#define EV_KEY    1
+#define EV_REL    2
+#define EV_ABS    3
+
+/* Linux key codes used below */
+#define KEY_BACKSPACE  14
+#define KEY_TAB        15
+#define KEY_ENTER      28
+#define KEY_LEFTCTRL   29
+#define KEY_LEFTSHIFT  42
+#define KEY_RIGHTSHIFT 54
+#define KEY_LEFTALT    56
+#define KEY_SPACE      57
+#define KEY_CAPSLOCK   58
+#define KEY_RIGHTCTRL  97
+#define KEY_RIGHTALT   100
+#define KEY_HOME      102
+#define KEY_UP        103
+#define KEY_PAGEUP    104
+#define KEY_LEFT      105
+#define KEY_RIGHT     106
+#define KEY_END       107
+#define KEY_DOWN      108
+#define KEY_PAGEDOWN  109
+#define KEY_INSERT    110
+#define KEY_DELETE    111
+#define KEY_LEFTMETA  125
+#define KEY_RIGHTMETA 126
+
+/* mouse buttons */
+#define BTN_LEFT     0x110
+#define BTN_RIGHT    0x111
+#define BTN_MIDDLE   0x112
+
+/* relative axes */
+#define REL_WHEEL    0x08
+
+/* absolute axes */
+#define ABS_X        0
+#define ABS_Y        1
+
+#define INPUT_EVENTS_PER_BUF    32
+#define MAX_INPUT_DEVICES       4
+
+typedef struct {
+    uint16_t type;
+    uint16_t code;
+    int32_t value;
+} PACKED VirtioInputEvent;
+
+typedef struct {
+    VirtQueue vq;
+    bool has_pointer;
+    uint32_t abs_max_x, abs_max_y;
+    int32_t last_px, last_py;
+    bool have_pos;
+    VirtioInputEvent events[INPUT_EVENTS_PER_BUF];
+} InputDevState;
+
+static InputDevState input_devs[MAX_INPUT_DEVICES];
+static int input_dev_count = 0;
+
+/* Modifier state (shared across devices, like a real system) */
+static bool in_shift, in_ctrl, in_alt, in_super, in_caps, in_numlock;
+static bool caps_down;
+
+/* Linux keycode -> kernel KeyCode */
+static const KeyCode key_to_keycode[128] = {
+    [1] = KEY_ESCAPE,
+    [14] = KEY_BACKSPACE,
+    [15] = KEY_TAB,
+    [28] = KEY_ENTER,
+    [29] = KEY_LCTRL,
+    [42] = KEY_LSHIFT,
+    [54] = KEY_RSHIFT,
+    [56] = KEY_LALT,
+    [57] = KEY_SPACE,
+    [58] = KEY_CAPSLOCK,
+    [96] = KEY_ENTER,
+    [97] = KEY_RCTRL,
+    [100] = KEY_RALT,
+    [102] = KEY_HOME,
+    [103] = KEY_UP,
+    [104] = KEY_PAGEUP,
+    [105] = KEY_LEFT,
+    [106] = KEY_RIGHT,
+    [107] = KEY_END,
+    [108] = KEY_DOWN,
+    [109] = KEY_PAGEDOWN,
+    [110] = KEY_INSERT,
+    [111] = KEY_DELETE,
+    [125] = KEY_LSUPER,
+    [126] = KEY_RSUPER,
+    /* F1..F12 = 59..70 */
+    [59] = KEY_F1,  [60] = KEY_F2,  [61] = KEY_F3,
+    [62] = KEY_F4,  [63] = KEY_F5,  [64] = KEY_F6,
+    [65] = KEY_F7,  [66] = KEY_F8,  [67] = KEY_F9,
+    [68] = KEY_F10, [69] = KEY_F11, [70] = KEY_F12,
+};
+
+/* Linux keycode -> ASCII (unshifted) */
+static const char key_to_ascii[128] = {
+    [2] = '1', [3] = '2', [4] = '3', [5] = '4', [6] = '5',
+    [7] = '6', [8] = '7', [9] = '8', [10] = '9', [11] = '0',
+    [12] = '-', [13] = '=',
+    [16] = 'q', [17] = 'w', [18] = 'e', [19] = 'r', [20] = 't',
+    [21] = 'y', [22] = 'u', [23] = 'i', [24] = 'o', [25] = 'p',
+    [26] = '[', [27] = ']',
+    [30] = 'a', [31] = 's', [32] = 'd', [33] = 'f', [34] = 'g',
+    [35] = 'h', [36] = 'j', [37] = 'k', [38] = 'l',
+    [39] = ';', [40] = '\'', [41] = '`',
+    [43] = '\\',
+    [44] = 'z', [45] = 'x', [46] = 'c', [47] = 'v', [48] = 'b',
+    [49] = 'n', [50] = 'm',
+    [51] = ',', [52] = '.', [53] = '/',
+    [57] = ' ',
+};
+
+/* Linux keycode -> ASCII (shifted) */
+static const char key_to_ascii_shift[128] = {
+    [2] = '!', [3] = '@', [4] = '#', [5] = '$', [6] = '%',
+    [7] = '^', [8] = '&', [9] = '*', [10] = '(', [11] = ')',
+    [12] = '_', [13] = '+',
+    [16] = 'Q', [17] = 'W', [18] = 'E', [19] = 'R', [20] = 'T',
+    [21] = 'Y', [22] = 'U', [23] = 'I', [24] = 'O', [25] = 'P',
+    [26] = '{', [27] = '}',
+    [30] = 'A', [31] = 'S', [32] = 'D', [33] = 'F', [34] = 'G',
+    [35] = 'H', [36] = 'J', [37] = 'K', [38] = 'L',
+    [39] = ':', [40] = '"', [41] = '~',
+    [43] = '|',
+    [44] = 'Z', [45] = 'X', [46] = 'C', [47] = 'V', [48] = 'B',
+    [49] = 'N', [50] = 'M',
+    [51] = '<', [52] = '>', [53] = '?',
+    [57] = ' ',
+};
+
+static void update_modifiers(void)
+{
+    uint8_t mods = 0;
+    if (in_shift) mods |= INPUT_MOD_SHIFT;
+    if (in_ctrl)  mods |= INPUT_MOD_CTRL;
+    if (in_alt)   mods |= INPUT_MOD_ALT;
+    if (in_super) mods |= INPUT_MOD_SUPER;
+    if (in_caps)  mods |= INPUT_MOD_CAPSLOCK;
+    if (in_numlock) mods |= INPUT_MOD_NUMLOCK;
+    input_set_modifiers(mods);
+}
+
+static void handle_key_event(int code, int value)
+{
+    bool down = (value != 0);
+
+    /* Pointer buttons */
+    if (code == BTN_LEFT || code == BTN_RIGHT || code == BTN_MIDDLE) {
+        MouseButton button = MOUSE_BUTTON_LEFT;
+        if (code == BTN_RIGHT) button = MOUSE_BUTTON_RIGHT;
+        if (code == BTN_MIDDLE) button = MOUSE_BUTTON_MIDDLE;
+        input_post_mouse_button(
+            down ? INPUT_EVENT_MOUSE_BUTTON_DOWN : INPUT_EVENT_MOUSE_BUTTON_UP,
+            button);
+        return;
+    }
+
+    if (code >= 128) {
+        return;
+    }
+
+    /* Modifier bookkeeping */
+    switch (code) {
+        case KEY_LEFTSHIFT:
+        case KEY_RIGHTSHIFT:
+            in_shift = down;
+            update_modifiers();
+            break;
+        case KEY_LEFTCTRL:
+        case KEY_RIGHTCTRL:
+            in_ctrl = down;
+            update_modifiers();
+            break;
+        case KEY_LEFTALT:
+        case KEY_RIGHTALT:
+            in_alt = down;
+            update_modifiers();
+            break;
+        case KEY_LEFTMETA:
+        case KEY_RIGHTMETA:
+            in_super = down;
+            update_modifiers();
+            break;
+        case KEY_CAPSLOCK:
+            if (down && !caps_down) in_caps = !in_caps;
+            caps_down = down;
+            update_modifiers();
+            break;
+    }
+
+    KeyCode keycode = key_to_keycode[code];
+    if (keycode == KEY_NONE) {
+        return;
+    }
+
+    char ascii = 0;
+    const char plain = key_to_ascii[code];
+    if (plain) {
+        bool shifted = in_shift;
+        if (in_caps && plain >= 'a' && plain <= 'z') {
+            shifted = !shifted;
+        }
+        ascii = shifted ? key_to_ascii_shift[code] : plain;
+    }
+
+    input_post_key_event(
+        down ? INPUT_EVENT_KEY_PRESS : INPUT_EVENT_KEY_RELEASE,
+        (uint8_t)code, keycode, ascii);
+}
+
+static void handle_abs_event(InputDevState *dev, int code, int value)
+{
+    int32_t bounds_w = 1, bounds_h = 1;
+    input_get_bounds(&bounds_w, &bounds_h);
+
+    int32_t px = dev->last_px;
+    int32_t py = dev->last_py;
+
+    if (code == ABS_X && dev->abs_max_x > 0) {
+        px = (int32_t)(((int64_t)value * (bounds_w - 1)) / (int64_t)dev->abs_max_x);
+    } else if (code == ABS_Y && dev->abs_max_y > 0) {
+        py = (int32_t)(((int64_t)value * (bounds_h - 1)) / (int64_t)dev->abs_max_y);
+    } else {
+        return;
+    }
+
+    if (dev->have_pos) {
+        int dx = px - dev->last_px;
+        int dy = py - dev->last_py;
+        if (dx != 0 || dy != 0) {
+            input_post_mouse_move(dx, dy);
+        }
+    }
+    dev->last_px = px;
+    dev->last_py = py;
+    dev->have_pos = true;
+}
+
+static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
+{
+    switch (ev->type) {
+        case EV_KEY:
+            handle_key_event(ev->code, ev->value);
+            break;
+        case EV_REL:
+            if (ev->code == REL_WHEEL && ev->value != 0) {
+                input_post_mouse_scroll(0, -ev->value);
+            }
+            break;
+        case EV_ABS:
+            if (dev->has_pointer) {
+                handle_abs_event(dev, ev->code, ev->value);
+            }
+            break;
+        case EV_SYN:
+        default:
+            break;
+    }
+}
+
+/*
+ * Read the absinfo max value for one axis from the device config.
+ */
+static uint32_t input_abs_max(uint32_t mmio, uint8_t axis)
+{
+    volatile uint8_t *cfg = (volatile uint8_t *)(uintptr_t)(mmio + VIO_CFG);
+    cfg[0] = VIRTIO_INPUT_CFG_ABS_INFO;
+    cfg[1] = axis;
+    __asm__ volatile("dmb ish" ::: "memory");
+
+    /* absinfo: min(u32), max(u32), fuzz, flat, res at CFG+8 */
+    volatile uint32_t *data = (volatile uint32_t *)(uintptr_t)(mmio + VIO_CFG + 8);
+    return data[1];
+}
+
+int virtio_input_attach(uint32_t mmio_base)
+{
+    if (input_dev_count >= MAX_INPUT_DEVICES) {
+        return -1;
+    }
+
+    int idx = input_dev_count++;
+    InputDevState *dev = &input_devs[idx];
+    memset(dev, 0, sizeof(*dev));
+
+    /* Static queue memory per device */
+    static VirtQueueMem input_queue_mem[MAX_INPUT_DEVICES];
+    if (virtio_queue_init(&dev->vq, mmio_base, &input_queue_mem[idx]) != 0) {
+        return -1;
+    }
+
+    /* A device reporting ABS ranges is a pointer (tablet) */
+    uint32_t abs_x_max = input_abs_max(mmio_base, ABS_X);
+    uint32_t abs_y_max = input_abs_max(mmio_base, ABS_Y);
+    if (abs_x_max > 0 && abs_y_max > 0) {
+        dev->has_pointer = true;
+        dev->abs_max_x = abs_x_max;
+        dev->abs_max_y = abs_y_max;
+    }
+
+    virtio_dev_ready(mmio_base);
+
+    /* Prime the queue with the event buffer (device-writable) */
+    uint16_t d = virtio_desc_add(&dev->vq,
+        (uint64_t)(uintptr_t)dev->events,
+        sizeof(dev->events),
+        VRING_DESC_F_WRITE);
+    virtio_submit(&dev->vq, d);
+
+    serial_printf("[VIRTIO-INPUT] Device %d attached (%s, abs %dx%d)\n",
+        idx, dev->has_pointer ? "pointer" : "keyboard",
+        (int)dev->abs_max_x, (int)dev->abs_max_y);
+    return 0;
+}
+
+/*
+ * Drain all pending events from every input device.
+ */
+void virtio_input_poll(void)
+{
+    for (int i = 0; i < input_dev_count; i++) {
+        InputDevState *dev = &input_devs[i];
+        VirtQueue *vq = &dev->vq;
+
+        /* Only one buffer is ever in flight per device */
+        uint32_t len = 0;
+        if (virtio_poll_used(vq, &len)) {
+            int n_events = (int)(len / sizeof(VirtioInputEvent));
+            if (n_events > INPUT_EVENTS_PER_BUF) {
+                n_events = INPUT_EVENTS_PER_BUF;
+            }
+            for (int e = 0; e < n_events; e++) {
+                handle_event(dev, &dev->events[e]);
+            }
+
+            /* Recycle the buffer for the next batch */
+            uint16_t d = virtio_desc_add(vq,
+                (uint64_t)(uintptr_t)dev->events,
+                sizeof(dev->events),
+                VRING_DESC_F_WRITE);
+            virtio_submit(vq, d);
+        }
+    }
+}

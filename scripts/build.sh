@@ -53,11 +53,6 @@ mkdir -p "$BUILD_DIR"
 
 # Step 1: Build bootloader
 echo -e "${YELLOW}[1/5] Building bootloader ($ARCH)...${NC}"
-if [ ! -f "/usr/include/efi/efi.h" ]; then
-    echo -e "${RED}Error: gnu-efi headers not found (/usr/include/efi/efi.h)${NC}"
-    echo "Install on Debian/Ubuntu with: sudo apt install -y gnu-efi"
-    exit 1
-fi
 cd "$BOOT_DIR"
 make clean 2>/dev/null || true
 make ARCH="$ARCH"

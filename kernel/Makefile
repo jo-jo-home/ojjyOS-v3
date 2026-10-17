@@ -10,7 +10,11 @@
 ARCH ?= x86_64
 
 CC = clang
+LD := $(shell command -v ld.lld 2>/dev/null || \
+        ls /opt/homebrew/opt/lld/bin/ld.lld /opt/homebrew/opt/llvm/bin/ld.lld /usr/local/opt/lld/bin/ld.lld 2>/dev/null | head -n 1)
+ifeq ($(LD),)
 LD = ld.lld
+endif
 NASM = nasm
 
 COMMON_CFLAGS = -ffreestanding \

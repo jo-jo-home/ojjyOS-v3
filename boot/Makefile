@@ -1,17 +1,57 @@
 # ojjyOS v3 UEFI Bootloader Makefile
 #
-# Supports both x86_64 (BOOTX64.EFI) and aarch64 (BOOTAA64.EFI)
-# using Debian's gnu-efi package (build on Linux / Debian).
+# Supports both x86_64 (BOOTX64.EFI) and aarch64 (BOOTAA64.EFI).
+# Works natively on macOS (clang + lld-link via `brew install lld`)
+# AND on Debian/Ubuntu Linux (gnu-efi OR clang + lld-link).
 
 ARCH ?= $(shell uname -m)
 ifeq ($(ARCH),arm64)
   override ARCH := aarch64
 endif
 
-# GNU-EFI paths (Debian package: gnu-efi)
 EFI_INC = /usr/include/efi
 EFI_LIB = /usr/lib
 
+HAVE_GNUEFI := $(wildcard $(EFI_INC)/efi.h)
+
+LLD_LINK := $(shell command -v lld-link 2>/dev/null || \
+              ls /opt/homebrew/opt/lld/bin/lld-link /opt/homebrew/opt/llvm/bin/lld-link /usr/local/opt/lld/bin/lld-link 2>/dev/null | head -n 1)
+
+TARGET = ojjy-boot.efi
+
+.PHONY: all clean
+
+ifeq ($(HAVE_GNUEFI),)
+# Standalone PE/COFF UEFI build (macOS / clang + lld-link)
+ifeq ($(ARCH),aarch64)
+  PE_TARGET = aarch64-unknown-windows
+else
+  PE_TARGET = x86_64-unknown-windows
+endif
+
+CC = clang
+CFLAGS = --target=$(PE_TARGET) -DOJJY_STANDALONE_EFI \
+         -ffreestanding -fno-stack-protector -fno-stack-check \
+         -fshort-wchar -mno-stack-arg-probe -Wall -Wextra -O2 -c
+OBJ = ojjy-boot.obj
+
+all: $(TARGET)
+
+$(OBJ): ojjy-boot.c efi_minimal.h
+	$(CC) $(CFLAGS) -o $@ $<
+
+$(TARGET): $(OBJ)
+	@if [ -z "$(LLD_LINK)" ]; then \
+		echo "Error: lld-link not found. Install on macOS with: brew install lld"; \
+		exit 1; \
+	fi
+	"$(LLD_LINK)" /subsystem:efi_application /entry:efi_main /nodefaultlib /dll /out:$@ $<
+
+clean:
+	rm -f *.o *.obj *.so *.efi
+
+else
+# Linux gnu-efi build
 ifeq ($(ARCH),aarch64)
   CROSS_PREFIX ?=
   CC = $(CROSS_PREFIX)gcc
@@ -44,13 +84,8 @@ endif
 
 LDFLAGS = -nostdlib -znocombreloc -T $(EFI_LDS) -shared \
           -Bsymbolic -L $(EFI_LIB)
-
 LIBS = -lefi -lgnuefi
-
-TARGET = ojjy-boot.efi
 OBJ = ojjy-boot.o
-
-.PHONY: all clean
 
 all: $(TARGET)
 
@@ -64,4 +99,5 @@ $(TARGET): ojjy-boot.so
 	$(OBJCOPY) $(OBJCOPY_FLAGS) $< $@
 
 clean:
-	rm -f *.o *.so *.efi
+	rm -f *.o *.obj *.so *.efi
+endif

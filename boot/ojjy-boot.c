@@ -12,8 +12,12 @@
  * ojjyOS — Created by Jonas Lee
  */
 
+#ifdef OJJY_STANDALONE_EFI
+#include "efi_minimal.h"
+#else
 #include <efi.h>
 #include <efilib.h>
+#endif
 
 /* Boot information passed to kernel */
 typedef struct {

@@ -209,6 +209,39 @@ static void create_web_icon(void)
     }
 }
 
+/* Calculator icon - Tahoe blue keypad tile */
+static void create_calculator_icon(void)
+{
+    fill_rounded_rect(4, 3, 24, 26, 5, 36, 98, 168, 255);
+    /* Display screen */
+    fill_rect(7, 6, 18, 6, 210, 236, 255, 255);
+    /* Button grid (3x3) */
+    for (int r = 0; r < 3; r++) {
+        for (int c = 0; c < 3; c++) {
+            uint8_t br = (c == 2) ? 90 : 235;
+            uint8_t bg = (c == 2) ? 180 : 244;
+            uint8_t bb = (c == 2) ? 245 : 255;
+            fill_rect(7 + c * 6, 14 + r * 4, 4, 3, br, bg, bb, 255);
+        }
+    }
+}
+
+/* Activity Monitor icon - dark blue tile with pulse waveform */
+static void create_monitor_icon(void)
+{
+    fill_rounded_rect(3, 3, 26, 26, 5, 24, 46, 84, 255);
+    fill_rect(5, 16, 6, 2, 82, 196, 255, 255);
+    for (int i = 0; i < 5; i++) {
+        set_pixel(11 + i, 16 - i * 2, 82, 196, 255, 255);
+        set_pixel(11 + i, 17 - i * 2, 82, 196, 255, 255);
+    }
+    for (int i = 0; i < 6; i++) {
+        set_pixel(16 + i, 8 + i * 2, 82, 196, 255, 255);
+        set_pixel(16 + i, 9 + i * 2, 82, 196, 255, 255);
+    }
+    fill_rect(22, 16, 5, 2, 82, 196, 255, 255);
+}
+
 /* Wallpaper gradient */
 static void create_wallpaper(void)
 {
@@ -259,6 +292,10 @@ int main(int argc, char *argv[])
         create_calendar_icon();
     } else if (strcmp(type, "web") == 0) {
         create_web_icon();
+    } else if (strcmp(type, "calculator") == 0) {
+        create_calculator_icon();
+    } else if (strcmp(type, "monitor") == 0) {
+        create_monitor_icon();
     } else if (strcmp(type, "wallpaper") == 0) {
         create_wallpaper();
     } else {

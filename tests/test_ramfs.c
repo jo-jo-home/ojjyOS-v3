@@ -13,6 +13,8 @@
 
 #include "fs/ramfs.h"
 #include "fs/vfs.h"
+#include "users.h"
+#include "drivers/rtc.h"
 #include "string.h"
 
 extern long write(int fd, const void *buf, unsigned long count);
@@ -45,6 +47,19 @@ void serial_putc(char c) { (void)c; }
 void console_printf(const char *fmt, ...) { (void)fmt; }
 void console_puts(const char *s) { (void)s; }
 void console_putc(char c) { (void)c; }
+uint64_t timer_get_ticks(void) { return 424242; }
+void rtc_read_time(RtcTime *time)
+{
+    if (!time) return;
+    time->year = 2026;
+    time->month = 10;
+    time->day = 17;
+    time->hour = 12;
+    time->minute = 30;
+    time->second = 0;
+    time->weekday = 6;
+}
+void system_request_sync(void) {}
 
 #define CHECK(cond, name) do { \
     tests_run++; \
@@ -149,9 +164,52 @@ int main(void)
               "O_TRUNC without write does not truncate");
     }
 
+    /* --- User Accounts & Salted SHA-256 Credentials Tests --- */
+    vfs_init();
+    void *u_fs = ramfs_create();
+    void *l_fs = ramfs_create();
+    CHECK(vfs_mount("/Users", ops, u_fs, false) == 0, "mount /Users for accounts test");
+    CHECK(vfs_mount("/Library", ops, l_fs, false) == 0, "mount /Library for accounts test");
+
+    users_init();
+    CHECK(users_count() == 0, "fresh boot has 0 accounts (triggers Setup Assistant)");
+    CHECK(!users_is_authenticated(), "fresh boot starts unauthenticated");
+
+    CHECK(users_create("jonas", "Jonas Lee", "tahoe2026", true) == 0, "create admin account jonas");
+    CHECK(users_count() == 1, "users_count is 1 after create");
+    CHECK(users_create("jonas", "Duplicate", "pass", false) != 0, "duplicate username rejected");
+    CHECK(users_create("bad user!", "Bad", "pass", false) != 0, "invalid username chars rejected");
+
+    /* Verify home directory provisioning */
+    CHECK(vfs_isdir("/Users/jonas") != 0, "provisioned /Users/jonas");
+    CHECK(vfs_isdir("/Users/jonas/Desktop") != 0, "provisioned /Users/jonas/Desktop");
+    CHECK(vfs_isdir("/Users/jonas/Documents") != 0, "provisioned /Users/jonas/Documents");
+    CHECK(vfs_isfile("/Users/jonas/Desktop/Welcome.txt") != 0, "seeded Welcome.txt in user Desktop");
+    CHECK(vfs_isfile("/Library/Accounts/users.db") != 0, "persisted /Library/Accounts/users.db");
+
+    /* Verify salted SHA-256 password authentication */
+    CHECK(!users_verify_credentials("jonas", "wrongpass"), "wrong password rejected");
+    CHECK(users_verify_credentials("jonas", "tahoe2026"), "correct password verified via SHA-256");
+    CHECK(users_login("jonas", "wrongpass") != 0, "users_login rejects wrong password");
+    CHECK(users_login("jonas", "tahoe2026") == 0, "users_login succeeds with valid password");
+    CHECK(users_is_authenticated(), "session is authenticated after login");
+    CHECK(strcmp(users_current_username(), "jonas") == 0, "active username is jonas");
+    CHECK(strcmp(users_current_home(), "/Users/jonas") == 0, "active home is /Users/jonas");
+
+    /* Verify password change */
+    CHECK(users_change_password("jonas", "wrongold", "newsecret") != 0, "password change rejects bad old password");
+    CHECK(users_change_password("jonas", "tahoe2026", "newsecret") == 0, "password change succeeds");
+    CHECK(!users_verify_credentials("jonas", "tahoe2026"), "old password no longer valid");
+    CHECK(users_verify_credentials("jonas", "newsecret"), "new password valid");
+
+    /* Verify reload from /Library/Accounts/users.db */
+    users_init();
+    CHECK(users_count() == 1, "users_init reloads account from users.db");
+    CHECK(users_verify_credentials("jonas", "newsecret"), "reloaded account preserves salted SHA-256 hash");
+
     emit_num("tests run: ", tests_run);
     if (tests_failed == 0) {
-        emit("ALL RAMFS TESTS PASSED");
+        emit("ALL RAMFS & USERS TESTS PASSED");
         return 0;
     }
     emit_num("TESTS FAILED: ", tests_failed);

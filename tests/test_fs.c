@@ -133,9 +133,12 @@ int main(int argc, char **argv)
     CHECK(about != NULL, "open About.app/resources/about.txt (deep path)");
     if (about) ops->close(about);
 
-    /* Web app pages */
+    /* Web app pages & new apps */
     CHECK(ops->isfile(inst, "/System/Web/home.page") != 0, "isfile /System/Web/home.page");
+    CHECK(ops->isfile(inst, "/System/Web/accounts.page") != 0, "isfile /System/Web/accounts.page");
     CHECK(ops->isfile(inst, "/Applications/Web.app/manifest.json") != 0, "isfile Web.app manifest");
+    CHECK(ops->isfile(inst, "/Applications/Calculator.app/manifest.json") != 0, "isfile Calculator.app manifest");
+    CHECK(ops->isfile(inst, "/Applications/Monitor.app/manifest.json") != 0, "isfile Monitor.app manifest");
     VfsFile *home = ops->open(inst, "/System/Web/home.page", VFS_O_READ);
     CHECK(home != NULL, "open /System/Web/home.page");
     if (home) {
@@ -151,17 +154,21 @@ int main(int argc, char **argv)
     VfsDir *dir = ops->opendir(inst, "/Applications");
     CHECK(dir != NULL, "opendir /Applications");
     if (dir) {
-        int found_about = 0, found_finder = 0, count = 0;
+        int found_about = 0, found_finder = 0, found_calc = 0, found_mon = 0, count = 0;
         VfsDirEntry entry;
         while (ops->readdir(dir, &entry) == 0) {
             count++;
             if (strcmp(entry.name, "About.app") == 0) found_about = 1;
             if (strcmp(entry.name, "Finder.app") == 0) found_finder = 1;
+            if (strcmp(entry.name, "Calculator.app") == 0) found_calc = 1;
+            if (strcmp(entry.name, "Monitor.app") == 0) found_mon = 1;
         }
         ops->closedir(dir);
-        CHECK(count >= 7, "opendir /Applications lists >= 7 bundles");
+        CHECK(count >= 11, "opendir /Applications lists >= 11 bundles");
         CHECK(found_about, "listing includes About.app");
         CHECK(found_finder, "listing includes Finder.app");
+        CHECK(found_calc, "listing includes Calculator.app");
+        CHECK(found_mon, "listing includes Monitor.app");
     }
 
     /* Non-existent paths must fail (no false positives) */

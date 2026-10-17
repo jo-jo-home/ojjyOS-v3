@@ -1,0 +1,9 @@
+{
+    "name": "Activity Monitor",
+    "bundle_id": "com.ojjyos.monitor",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Live memory, driver, and system monitor"
+}

@@ -44,6 +44,7 @@
 #include "system.h"
 #include "arch_power.h"
 #include "drivers/blockdev.h"
+#include "users.h"
 
 /* UI compositor */
 #include "ui/compositor.h"
@@ -318,6 +319,11 @@ static void cmd_help(void)
     console_printf("  apps           - List applications\n");
     console_printf("  launch <app>   - Launch an application\n");
     console_printf("  ui [dark]      - Start the desktop\n");
+    console_printf("  whoami         - Show active user account\n");
+    console_printf("  users          - List user accounts\n");
+    console_printf("  adduser <u> <p>- Create account with SHA-256 credentials\n");
+    console_printf("  login <u> <p>  - Authenticate and switch user\n");
+    console_printf("  passwd <o> <n> - Change active user password\n");
     console_printf("  about          - Show About ojjyOS\n");
     console_printf("  diag           - Show diagnostics\n");
     console_printf("  time           - Show current time\n");
@@ -537,6 +543,85 @@ static void process_command(void)
         cmd_launch(arg);
     } else if (strcmp(cmd, "ui") == 0) {
         cmd_ui(arg);
+    } else if (strcmp(cmd, "whoami") == 0) {
+        console_printf("%s (%s) — %s\n",
+            users_current_username(), users_current_full_name(), users_current_home());
+    } else if (strcmp(cmd, "users") == 0) {
+        int n = users_count();
+        if (n == 0) {
+            console_printf("No registered accounts (guest session)\n");
+        } else {
+            for (int i = 0; i < n; i++) {
+                const UserAccount *acc = users_get_by_index(i);
+                if (!acc) continue;
+                console_printf("  %s %s (%s)%s\n",
+                    (i == users_current_index()) ? "*" : " ",
+                    acc->username, acc->full_name, acc->is_admin ? " [admin]" : "");
+            }
+        }
+    } else if (strcmp(cmd, "adduser") == 0) {
+        if (!arg || !arg[0]) {
+            console_printf("Usage: adduser <username> <password> [Full Name]\n");
+        } else {
+            char uname[USER_NAME_MAX];
+            char upass[USER_PASS_MAX];
+            char fname[USER_FULLNAME_MAX];
+            const char *p = arg;
+            size_t i = 0;
+            while (*p && *p != ' ' && i + 1 < sizeof(uname)) uname[i++] = *p++;
+            uname[i] = '\0';
+            while (*p == ' ') p++;
+            i = 0;
+            while (*p && *p != ' ' && i + 1 < sizeof(upass)) upass[i++] = *p++;
+            upass[i] = '\0';
+            while (*p == ' ') p++;
+            if (*p) {
+                strncpy(fname, p, sizeof(fname) - 1);
+                fname[sizeof(fname) - 1] = '\0';
+            } else {
+                strncpy(fname, uname, sizeof(fname) - 1);
+                fname[sizeof(fname) - 1] = '\0';
+            }
+            if (users_create(uname, fname, upass, true) == 0) {
+                console_printf("Created account '%s' (salted SHA-256 credentials stored).\n", uname);
+            } else {
+                console_printf("adduser failed (invalid or duplicate username).\n");
+            }
+        }
+    } else if (strcmp(cmd, "login") == 0) {
+        if (!arg || !arg[0]) {
+            console_printf("Usage: login <username> <password>\n");
+        } else {
+            char uname[USER_NAME_MAX];
+            const char *p = arg;
+            size_t i = 0;
+            while (*p && *p != ' ' && i + 1 < sizeof(uname)) uname[i++] = *p++;
+            uname[i] = '\0';
+            while (*p == ' ') p++;
+            if (users_login(uname, p) == 0) {
+                if (ui_initialized) compositor_on_user_switched();
+                console_printf("Logged in as %s (%s)\n",
+                    users_current_username(), users_current_full_name());
+            } else {
+                console_printf("Login failed: invalid username or password.\n");
+            }
+        }
+    } else if (strcmp(cmd, "passwd") == 0) {
+        if (!arg || !arg[0]) {
+            console_printf("Usage: passwd <old_password> <new_password>\n");
+        } else {
+            char oldp[USER_PASS_MAX];
+            const char *p = arg;
+            size_t i = 0;
+            while (*p && *p != ' ' && i + 1 < sizeof(oldp)) oldp[i++] = *p++;
+            oldp[i] = '\0';
+            while (*p == ' ') p++;
+            if (users_change_password(users_current_username(), oldp, p) == 0) {
+                console_printf("Password updated.\n");
+            } else {
+                console_printf("passwd failed: incorrect current password.\n");
+            }
+        }
     } else if (strcmp(cmd, "about") == 0) {
         about_app_handler(NULL);
     } else if (strcmp(cmd, "diag") == 0) {
@@ -706,6 +791,7 @@ void kernel_main(BootInfo *boot_info)
         if (!restored) {
             seed_user_data();
         }
+        users_init();
     }
 
     splash_render("Preparing applications...", 72);
@@ -741,6 +827,8 @@ void kernel_main(BootInfo *boot_info)
     console_printf("  [ OK ] Root filesystem mounted (OJFS)\n");
     console_printf("  [ OK ] User filesystems mounted (RAMFS%s)\n",
         block_available() ? " + disk persistence" : ", no disk attached");
+    console_printf("  [ OK ] Accounts: %d registered (active: %s)\n",
+        users_count(), users_current_username());
     console_printf("  [ OK ] Keyboard and mouse ready\n");
     console_printf("  [ OK ] Interrupts enabled\n\n");
     console_printf("  Tip: type 'ui' to start the desktop, 'help' for commands\n\n");
@@ -803,7 +891,9 @@ void kernel_main(BootInfo *boot_info)
             if (ui_mode) {
                 switch (event.type) {
                     case INPUT_EVENT_KEY_PRESS:
-                        if (event.key.keycode == KEY_ESCAPE && !compositor_overlay_active()) {
+                        if (event.key.keycode == KEY_ESCAPE &&
+                            (event.key.modifiers & INPUT_MOD_SHIFT) &&
+                            !compositor_overlay_active()) {
                             ui_mode = false;
                             console_clear();
                             console_printf("Type 'help' for available commands.\n\n> ");
@@ -822,13 +912,19 @@ void kernel_main(BootInfo *boot_info)
                          * (the compositor applies the mouse speed setting) */
                         int32_t cx = 0, cy = 0;
                         compositor_get_cursor(&cx, &cy);
-                        compositor_handle_mouse(cx, cy, true, false);
+                        if (event.button.button == MOUSE_BUTTON_RIGHT) {
+                            compositor_handle_right_click(cx, cy);
+                        } else {
+                            compositor_handle_mouse(cx, cy, true, false);
+                        }
                         break;
                     }
                     case INPUT_EVENT_MOUSE_BUTTON_UP: {
                         int32_t cx = 0, cy = 0;
                         compositor_get_cursor(&cx, &cy);
-                        compositor_handle_mouse(cx, cy, false, true);
+                        if (event.button.button != MOUSE_BUTTON_RIGHT) {
+                            compositor_handle_mouse(cx, cy, false, true);
+                        }
                         break;
                     }
                     case INPUT_EVENT_MOUSE_SCROLL:

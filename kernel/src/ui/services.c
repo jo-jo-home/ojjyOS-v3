@@ -6,6 +6,7 @@
 #include "../string.h"
 #include "../fs/vfs.h"
 #include "../serial.h"
+#include "../users.h"
 
 static AppInfo app_registry[APP_REGISTRY_MAX];
 static int app_count = 0;
@@ -220,18 +221,37 @@ void search_index_init(void)
     }
     vfs_closedir(dir);
 
-    VfsDir *docs = vfs_opendir("/Users/guest/Documents");
-    if (!docs) return;
-    while (vfs_readdir(docs, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
-        if (entry.type == VFS_TYPE_FILE) {
-            char full[256];
-            if (vfs_join_path(full, sizeof(full), "/Users/guest/Documents", entry.name) == 0) {
-                strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
-                file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
+    char docs_dir[128];
+    users_make_home_path(docs_dir, sizeof(docs_dir), "Documents");
+    VfsDir *docs = vfs_opendir(docs_dir);
+    if (docs) {
+        while (vfs_readdir(docs, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
+            if (entry.type == VFS_TYPE_FILE) {
+                char full[256];
+                if (vfs_join_path(full, sizeof(full), docs_dir, entry.name) == 0) {
+                    strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+                    file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
+                }
             }
         }
+        vfs_closedir(docs);
     }
-    vfs_closedir(docs);
+
+    char desk_dir[128];
+    users_make_home_path(desk_dir, sizeof(desk_dir), "Desktop");
+    VfsDir *desk = vfs_opendir(desk_dir);
+    if (desk) {
+        while (vfs_readdir(desk, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
+            if (entry.type == VFS_TYPE_FILE) {
+                char full[256];
+                if (vfs_join_path(full, sizeof(full), desk_dir, entry.name) == 0) {
+                    strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+                    file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
+                }
+            }
+        }
+        vfs_closedir(desk);
+    }
 }
 
 static void add_result(SearchResult *results, int *count, int max_results,

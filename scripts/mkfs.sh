@@ -36,9 +36,12 @@ mkdir -p "$SYSROOT/Applications/Notes.app"
 mkdir -p "$SYSROOT/Applications/Preview.app"
 mkdir -p "$SYSROOT/Applications/Calendar.app"
 mkdir -p "$SYSROOT/Applications/Web.app"
+mkdir -p "$SYSROOT/Applications/Calculator.app"
+mkdir -p "$SYSROOT/Applications/Monitor.app"
 mkdir -p "$SYSROOT/Users/guest/Desktop"
 mkdir -p "$SYSROOT/Users/guest/Documents"
 mkdir -p "$SYSROOT/Library/Preferences"
+mkdir -p "$SYSROOT/Library/Accounts"
 mkdir -p "$SYSROOT/Volumes"
 
 # Generate icons
@@ -52,6 +55,8 @@ echo "Generating icons..."
 ./mkicon preview "$SYSROOT/Applications/Preview.app/icon.raw"
 ./mkicon calendar "$SYSROOT/Applications/Calendar.app/icon.raw"
 ./mkicon web "$SYSROOT/Applications/Web.app/icon.raw"
+./mkicon calculator "$SYSROOT/Applications/Calculator.app/icon.raw"
+./mkicon monitor "$SYSROOT/Applications/Monitor.app/icon.raw"
 ./mkicon folder "$SYSROOT/System/Library/Icons/Folder.raw"
 ./mkicon file "$SYSROOT/System/Library/Icons/File.raw"
 
@@ -185,6 +190,32 @@ cat > "$SYSROOT/Applications/Web.app/manifest.json" << 'EOF'
 }
 EOF
 
+# Create manifest for Calculator.app
+cat > "$SYSROOT/Applications/Calculator.app/manifest.json" << 'EOF'
+{
+    "name": "Calculator",
+    "bundle_id": "com.ojjyos.calculator",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Tahoe desktop calculator"
+}
+EOF
+
+# Create manifest for Monitor.app
+cat > "$SYSROOT/Applications/Monitor.app/manifest.json" << 'EOF'
+{
+    "name": "Activity Monitor",
+    "bundle_id": "com.ojjyos.monitor",
+    "version": "1.0.0",
+    "executable": "executable",
+    "icon": "icon.raw",
+    "category": "utility",
+    "description": "Live memory, driver, and system monitor"
+}
+EOF
+
 # Create the Web app's offline pages (tiny markup:
 #   "# text" = heading, ">id text" = link to <id>.page, else plain text)
 mkdir -p "$SYSROOT/System/Web"
@@ -195,8 +226,26 @@ This is the offline browser for ojjyOS. Pages are stored on the
 system disk under /System/Web - no network connection needed.
 
 >about About ojjyOS and its creator
+>accounts User Accounts & Credentials Guide
 >shortcuts Keyboard shortcuts
 >release What is new in this release
+EOF
+
+cat > "$SYSROOT/System/Web/accounts.page" << 'EOF'
+# User Accounts & Credentials
+
+ojjyOS includes a built-in multi-user account and credential
+system with salted SHA-256 password hashing.
+
+Creating or managing accounts:
+- On first boot into the Tahoe desktop, Setup Assistant prompts
+  you to create your administrator account and password.
+- Open Settings -> Users & Accounts to add accounts, change
+  your password, lock the screen, or switch users.
+- In Terminal or Console: adduser, passwd, login, su, whoami,
+  users, lock, and logout.
+
+>home Back to the start page
 EOF
 
 cat > "$SYSROOT/System/Web/about.page" << 'EOF'

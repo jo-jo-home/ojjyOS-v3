@@ -8,7 +8,7 @@
 - **Native Dual-Architecture Support (`aarch64` + `x86_64`):**
   - **Apple Silicon Native (`aarch64`):** Runs near-natively on Apple Silicon Macs (M1/M2/M3/M4) via `qemu-system-aarch64 -M virt,gic-version=2 -accel hvf` with `ramfb` GOP display, PL011 UART, PL031 RTC, `virtio-mmio` v2 (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), ARM Generic Timer, and PSCI power management.
   - **Intel/AMD (`x86_64`):** Runs in QEMU or VirtualBox via UEFI GOP, GDT/IDT/4-level paging, 8259 PIC + PIT, PS/2 keyboard & scroll mouse, PIIX4 ATA/IDE + LRU block cache, CMOS RTC, and ACPI S5 power management.
-- **macOS Tahoe Blue Glass Desktop:** Translucent blue glass windows, multi-sample wallpaper blur, traffic-light window controls (close, minimize, maximize/zoom), bottom-right drag resizing, Dock with hover magnification, Menu Bar, Spotlight, Launchpad, Control Center, Mission Control, App Switcher, Desktop icons, and 8 built-in apps.
+- **macOS Tahoe Blue Glass Desktop:** Translucent blue glass windows, multi-sample wallpaper blur, First-Boot Account Setup Assistant, Tahoe Lock/Login Screen with salted SHA-256 credentials, traffic-light window controls (close, minimize, maximize/zoom), bottom-right drag resizing, Dock with hover magnification, interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`), Desktop right-click context menu, Spotlight, Launchpad, Control Center, Mission Control, App Switcher, Desktop icons, and 11 built-in apps.
 
 ---
 
@@ -24,6 +24,10 @@ Per project documentation standards, features are categorized into **Implemented
   - **`aarch64` (`kernel/src/arch/aarch64/`):** EL3/EL2 $\rightarrow$ EL1 transition (`entry.S`), `VBAR_EL1` exception vectors with visual framebuffer crash diagnostics, GICv2 interrupt controller, 1 kHz ARM Generic Timer (PPI 30), PL011 serial UART, PL031 RTC, `virtio-mmio` v2 transport (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), and PSCI (`hvc`/`smc`) shutdown & reboot. Inherits UEFI identity-mapped page tables.
   - **`x86_64` (`kernel/src/`):** 64-bit long mode entry (`entry.asm`), GDT/TSS, IDT (256 vectors + visual panic screen), 4-level paging with on-demand `paging_map()` (including high-MMIO framebuffers above 4 GB), 8259 PIC with automatic IRQ2 cascade unmasking, 1 kHz PIT timer, 16550 UART, PS/2 keyboard (with `0xE0` extended scancodes & Super/Cmd keys) and 3-button scroll mouse, ATA PIO (LBA28/LBA48) + 64-sector LRU block cache, CMOS RTC, and ACPI S5 power-off + 8042 reset.
   - **Physical Memory Manager (`memory.c`):** Bitmap page allocator initialized from the UEFI memory map, dynamically reserving `[_kernel_start .. _kernel_end)` and the GOP framebuffer.
+- **User Accounts & Salted SHA-256 Credentials (`kernel/src/users.c`):**
+  - **Salted FIPS 180-4 SHA-256 Password Hashing:** Domain-separated 32-bit salt + 256-bit SHA-256 digest with constant-time verification (`hash_equal_ct`), stored in `/Library/Accounts/users.db` and persisted across reboots.
+  - **First-Boot Account Setup Assistant & Tahoe Lock/Login Screen:** When no accounts exist (`users_count() == 0`) or **+ New Account** is clicked, presents a glass Setup Assistant card (`Full Name`, `Username`, `Password`, `Confirm`). When locked or logged out, presents the macOS Tahoe Lock Screen with clock, user avatar initials, `@username` badge, masked password field, **Sign In**, **Switch User**, and **+ New Account**.
+  - **Per-User Home Directory Isolation (`/Users/<username>`):** Automatically provisions `/Users/<username>/Desktop` and `/Users/<username>/Documents` with starter `Welcome.txt`, `Notes.txt`, and `Calendar.txt`. Finder, Desktop icons, Terminal (`<user>@ojjyos:~ %`), Notes, Calendar, TextEdit, and Spotlight dynamically bind to the logged-in user's home directory.
 - **Filesystems & Disk Persistence (`kernel/src/fs/`):**
   - **VFS (`vfs.c`):** Unified mount table (`/`, `/Users`, `/Library`), path normalization (`.`, `..`, duplicate slashes), per-mount `fs_data` isolation.
   - **OJFS (`ojfs.c`):** Custom read-only system filesystem embedded in the kernel (`/` with `/System` and `/Applications`).
@@ -31,15 +35,16 @@ Per project documentation standards, features are categorized into **Implemented
   - **Disk Persistence (`persist.c`):** Snapshots `/Users` and `/Library` to the `ojjyOS Data` GPT partition (LBA `67584`) with CRC-32 verification. Restores automatically on boot, autosaves every 30 seconds when dirty, and flushes on `sync`, `shutdown`, and `reboot`.
 - **macOS Tahoe Blue Glass Desktop (`kernel/src/ui/`):**
   - **Window Management:** Close (red), Minimize to Dock (yellow), Maximize/Zoom (green) traffic lights, `Cmd+Q` close, titlebar drag, and bottom-right corner drag resize (`360x220` minimum).
-  - **Desktop & Overlays:** Desktop icons (`/Users/guest/Desktop` + `ojjyHD` volume icon), top Menu Bar (click `ojjy` for About, active app name, status cluster + clock for Control Center), Dock with magnification & bounce animations, Spotlight (`Cmd+Space`), Launchpad (`Cmd+L` with centered full app names), Control Center (`Cmd+C` with Wi-Fi/Bluetooth/Dark Mode/Reduced Transparency toggles and **Restart** / **Shut Down** buttons), Mission Control (`Cmd+M` live window cards), and App Switcher (`Cmd+Tab` with Super-release activation).
+  - **Interactive Menu Bar & Desktop Context Menu:** Dropdown menus for `ojjy` (About, Settings, Activity Monitor, Lock Screen, Switch User, Restart, Shut Down), `File`, `Edit`, `View`, and `Window`, plus clickable active username pill (`Settings → Users & Accounts`) and right-click desktop context menu (New Folder on Desktop, New Text Note, Open Home in Finder, Open Terminal, Open Calculator, Toggle Dark/Light, Lock Screen).
+  - **Desktop & Overlays:** Desktop icons (`/Users/<user>/Desktop` + `ojjyHD` volume icon), Dock with magnification & bounce animations, Spotlight (`Cmd+Space`), Launchpad (`Cmd+L` with centered full app names), Control Center (`Cmd+C` with Wi-Fi/Bluetooth/Dark Mode/Reduced Transparency toggles and **Restart** / **Shut Down** buttons), Mission Control (`Cmd+M` live window cards), and App Switcher (`Cmd+Tab` with Super-release activation).
   - **Accessibility & Preferences:** Persisted in `/Library/Preferences/system.conf` (Dark/Light mode, 12/24-hour clock, Dock size/magnification, mouse speed, keyboard shortcuts, **Reduced Transparency**, and **Reduced Motion**).
-  - **Built-In Applications:** **Finder**, **Terminal**, **TextEdit**, **Notes**, **Calendar**, **Settings**, **Preview**, **Web** (offline hypertext browser over `/System/Web/*.page`), and **About ojjyOS** (creding Jonas Lee).
+  - **11 Built-In Applications:** **Finder**, **Terminal**, **TextEdit**, **Notes**, **Calendar**, **Settings** (including **Users & Accounts**), **Preview**, **Web** (offline hypertext browser over `/System/Web/*.page`), **Calculator**, **Activity Monitor** (live RAM bar, uptime, active user, and kernel driver IRQ/IO table), and **About ojjyOS** (crediting Jonas Lee).
 
 ### Tested
-- **Freestanding Cross-Compilation (`clang`):** Every C and assembly translation unit compiles cleanly with `-Wall -Wextra -Werror`-clean zero warnings under both `ARCH=aarch64` (`aarch64-unknown-none-elf`) and `ARCH=x86_64` (`x86_64-unknown-none-elf`).
-- **Host Unit Test Suites (`tests/`):**
-  - `tests/test_fs.c` (41 assertions): OJFS validation, root & nested directory listing, file reads, VFS path normalization, and exact-`n` `strncpy` bounds.
-  - `tests/test_ramfs.c` (24 assertions): RAMFS free-list allocation, repeated file growth/shrink/unlink cycles without pool exhaustion, `mkdir` return semantics, and rename validation.
+- **Freestanding Cross-Compilation (`clang`):** Every C and assembly translation unit compiles cleanly with `-Wall -Wextra` zero warnings and zero errors under both `ARCH=aarch64` (`aarch64-unknown-none-elf`) and `ARCH=x86_64` (`x86_64-unknown-none-elf`).
+- **Host Unit Test Suites (`tests/` — 96 total assertions):**
+  - `tests/test_fs.c` (37 assertions): OJFS validation, root & nested directory listing (all 11 `.app` bundles + `/System/Web/accounts.page`), file reads, VFS path normalization, and exact-`n` `strncpy` bounds.
+  - `tests/test_ramfs.c` (59 assertions): RAMFS free-list allocation, repeated file growth/shrink/unlink cycles without pool exhaustion, `mkdir` return semantics, rename validation, and full `users.c` account creation, salted SHA-256 authentication, password change, home directory provisioning, and `/Library/Accounts/users.db` reload verification.
 - **Host Asset & Filesystem Builders (`tools/`):** `mkojfs`, `mkicon`, `mkwallpaper`, and `mkarray` build and generate `build/system.ojfs` and `kernel/src/fs/system_fs.h`.
 
 ### Planned (Future Milestones)
@@ -122,11 +127,13 @@ ARCH=x86_64 ./scripts/build.sh
 ## Running the Host Unit Tests
 
 ```bash
-mkdir -p build
-clang -Wall -Wextra -O2 -Itests -Ikernel/src -o build/test_fs tests/test_fs.c
-clang -Wall -Wextra -O2 -Itests -Ikernel/src -o build/test_ramfs tests/test_ramfs.c
-./build/test_fs
-./build/test_ramfs
+mkdir -p build/tests
+clang -fno-builtin -Wno-incompatible-library-redeclaration -Ikernel/src -O2 \
+  -o build/tests/test_fs tests/test_fs.c kernel/src/fs/ojfs.c kernel/src/fs/vfs.c kernel/src/string.c
+clang -fno-builtin -Wno-incompatible-library-redeclaration -Ikernel/src -O2 \
+  -o build/tests/test_ramfs tests/test_ramfs.c kernel/src/fs/ramfs.c kernel/src/fs/vfs.c kernel/src/users.c kernel/src/string.c
+./build/tests/test_fs
+./build/tests/test_ramfs
 ```
 
 ---
@@ -142,15 +149,17 @@ clang -Wall -Wextra -O2 -Itests -Ikernel/src -o build/test_ramfs tests/test_ramf
 | `Cmd+M` | Toggle Mission Control (live window cards) |
 | `Cmd+Tab` | Open App Switcher (release `Cmd` or click an icon to activate) |
 | `Cmd+Q` | Close active window / quit active app |
+| `Ctrl+Cmd+Q` | Lock Screen immediately |
 | `Cmd+S` / `Cmd+O` | Save / Open file in TextEdit or Notes |
-| `Esc` | Dismiss active overlay |
+| `Esc` / `Shift+Esc` | Dismiss active overlay or menu (`Shift+Esc` returns to kernel console) |
 
 ### Console & Terminal Commands
 - `ui` / `ui dark` — Launch the macOS Tahoe blue glass desktop
+- `whoami`, `users`, `adduser <user> <pass> [Full Name]`, `passwd <old> <new>`, `su <user> <pass>` / `login <user> <pass>`, `lock` / `logout` — User account & credential management
 - `ls`, `cd`, `pwd`, `cat`, `touch`, `mkdir`, `rm`, `mv`, `cp`, `echo`, `clear` — Filesystem operations
 - `sync` — Immediately checkpoint `/Users` and `/Library` RAMFS state to disk
 - `shutdown` / `reboot` — Save writable filesystems to disk and power off or restart via PSCI (`aarch64`) or ACPI S5 / 8042 (`x86_64`)
-- `diag`, `mem`, `time`, `apps`, `about` — System diagnostics and credits
+- `diag`, `time`, `apps`, `about` — System diagnostics and credits
 
 ---
 

@@ -26,6 +26,7 @@ COMMON_CFLAGS = -ffreestanding \
 
 COMMON_C_SOURCES = src/main.c \
                    src/system.c \
+                   src/users.c \
                    src/string.c \
                    src/memory.c \
                    src/framebuffer.c \

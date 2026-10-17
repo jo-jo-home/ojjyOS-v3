@@ -4,13 +4,17 @@
 document: what this project is, everything that has happened, the exact
 current state, and a precise, ordered checklist of what to do next.
 Session 3 completed all items in §4.2 (aarch64 port), §4.3 (docs sweep),
-and §4.4 (desktop & input polish).
+and §4.4 (desktop & input polish). Session 4 completed the multi-user
+account & credential system (`users.c`/`users.h`), First-Boot Setup
+Assistant, macOS Tahoe Lock/Login Screen, `Calculator.app`,
+`Activity Monitor.app`, interactive Menu Bar dropdown menus, Desktop
+right-click context menu, and `Settings → Users & Accounts`.
 
 ---
 
-## 0. START-HERE CHECKLIST (current status: v3.1.0 COMPLETE ✅)
+## 0. START-HERE CHECKLIST (current status: v3.1.0 + Session 4 COMPLETE ✅)
 
-All v3.1.0 checklist items are **DONE and verified**:
+All v3.1.0 and Session 4 checklist items are **DONE and verified**:
 
 1. [x] Verified current state builds & host unit tests pass (§6).
 2. [x] Finished the `aarch64` port (§4.2): `main.c` ifdefs, `diagnostics.c`
@@ -23,7 +27,7 @@ All v3.1.0 checklist items are **DONE and verified**:
    index in `virtio.c` and write `VRING_DESC_F_NEXT` in `virtio_blk.c`).
 3. [x] Compile-verified BOTH architectures (`make -C kernel ARCH=aarch64 objs`
    and `make -C kernel ARCH=x86_64 objs` — 0 warnings, 0 errors) + reran
-   host tests (`test_fs` 32/32 and `test_ramfs` 33/33 passed).
+   host tests (`test_fs` 37/37 and `test_ramfs` 59/59 passed — 96/96 total).
 4. [x] Completed the desktop & input items (§4.4): window resize (bottom-right
    corner drag) + green traffic-light maximize/zoom, real Mission Control
    cards (`Cmd+M`), Settings Appearance toggles (`Reduced Transparency`
@@ -34,7 +38,26 @@ All v3.1.0 checklist items are **DONE and verified**:
    events so releasing `Cmd` dismisses the App Switcher on both arches.
 5. [x] Completed the docs sweep (§4.3): `LICENSE`, `BUGFIXES.md`,
    `README.md`, `RELEASE.md`, `ARCHITECTURE.md`, and `PLAN.md`.
-6. [x] Committed locally (author `"Jonas Lee"`). **Never push to a remote**
+6. [x] Completed Session 4 (User Accounts & macOS Tahoe Desktop Expansion):
+   - Multi-user account & credential engine (`kernel/src/users.h`,
+     `kernel/src/users.c`) with salted FIPS 180-4 SHA-256 password hashing,
+     constant-time hash comparison, `/Library/Accounts/users.db` persistence,
+     and per-user `/Users/<username>` home provisioning (`Desktop`,
+     `Documents`, `Welcome.txt`, `Notes.txt`, `Calendar.txt`).
+   - First-Boot Account Setup Assistant (`users_count() == 0` or `+ New Account`)
+     and macOS Tahoe Lock/Login Screen (`!users_is_authenticated()`,
+     `Ctrl+Cmd+Q` lock shortcut).
+   - `Settings → Users & Accounts` (`SETTINGS_PAGE_USERS`) with active user
+     card, SHA-256 password change form, registered accounts list,
+     `+ Add Account`, `Lock Screen`, and `Switch User` buttons.
+   - Interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`)
+     + clickable active user pill in the top-right menu bar.
+   - Desktop right-click context menu (`compositor_handle_right_click`).
+   - Built-in `Calculator.app` (`APP_CALCULATOR`) and `Activity Monitor.app`
+     (`APP_MONITOR`), bringing total built-in apps to 11.
+   - Shell & Terminal commands (`whoami`, `users`, `adduser`, `passwd`,
+     `su`/`login`, `lock`, `logout`).
+7. [x] Committed locally (author `"Jonas Lee"`). **Never push to a remote**
    — Jonas pushes himself when he says so.
 
 ---
@@ -90,15 +113,17 @@ ojjyOS-v3/
 ├── AGENTS.md               THIS FILE (handoff; update at session end)
 ├── PLAN.md                 improvement plan (bug-fix plan + feature plan)
 ├── README.md, RELEASE.md, ARCHITECTURE.md, DESKTOP.md, APPS.md,
-│   FILESYSTEM.md, VISUALS.md   docs (STALE — need the §4.3 update pass)
+│   FILESYSTEM.md, VISUALS.md, BUGFIXES.md, LICENSE   (up-to-date docs)
 ├── boot/
 │   ├── ojjy-boot.c         UEFI bootloader (ELF64 loader; both arches)
-│   └── Makefile            builds BOOTX64.EFI (x86 only for now)
+│   └── Makefile            builds BOOTX64.EFI / BOOTAA64.EFI
 ├── kernel/
-│   ├── Makefile            ARCH=x86_64 (default) | aarch64  [switch TODO]
+│   ├── Makefile            ARCH=x86_64 (default) | aarch64 (+ `objs` target)
 │   ├── linker.ld           x86_64 script (base 0x100000)
+│   ├── linker-aarch64.ld   aarch64 script (base 0x41000000)
 │   └── src/
 │       ├── main.c          entry, console shell, splash art, power seq
+│       ├── users.c/h       multi-user accounts, salted SHA-256 credentials, home dirs
 │       ├── system.c/h      power requests (shutdown/restart/sync flags)
 │       ├── arch_power.h    arch_power_off()/arch_reboot() interface
 │       ├── types.h         types + per-arch asm helpers (both arches)
@@ -109,12 +134,12 @@ ojjyOS-v3/
 │       ├── framebuffer.c font.c console.c string.c panic.c  (neutral)
 │       ├── drivers/        driver.c model, input.c, ps2_*, ata, block_cache,
 │       │                   acpi (x86 S5), blockdev.h + blockdev_x86.c,
-│       │                   diagnostics.c (needs #ifdef guards, TODO)
+│       │                   diagnostics.c
 │       ├── fs/             vfs, ojfs (read-only), ramfs (writable),
 │       │                   bundle, persist (disk checkpoints)
-│       └── ui/             compositor.c (whole desktop + all apps, ~4.7k
-│                           lines), services.c, theme.c
-├── scripts/                build.sh mkfs.sh mkimg.sh run.sh  (+run-qemu.sh TODO)
+│       └── ui/             compositor.c (whole desktop + 11 apps + login/lock),
+│                           services.c, theme.c
+├── scripts/                build.sh mkfs.sh mkimg.sh run.sh run-qemu.sh
 ├── tools/                  mkojfs mkicon mkwallpaper mkarray (host tools)
 ├── sysroot/                files packed into the OJFS image
 │   └── System/Web/*.page   the offline Web app's pages

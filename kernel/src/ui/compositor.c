@@ -11,9 +11,11 @@
 #include "../timer.h"
 #include "../fs/vfs.h"
 #include "../drivers/rtc.h"
+#include "../drivers/driver.h"
 #include "../serial.h"
 #include "../memory.h"
 #include "../system.h"
+#include "../users.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -76,6 +78,8 @@ typedef enum {
     APP_CALENDAR,
     APP_ABOUT,
     APP_WEB,
+    APP_CALCULATOR,
+    APP_MONITOR,
     APP_COUNT
 } AppType;
 
@@ -121,6 +125,7 @@ typedef struct {
 
 typedef enum {
     SETTINGS_PAGE_APPEARANCE = 0,
+    SETTINGS_PAGE_USERS,
     SETTINGS_PAGE_WALLPAPER,
     SETTINGS_PAGE_DOCK,
     SETTINGS_PAGE_KEYBOARD,
@@ -131,6 +136,11 @@ typedef enum {
 
 typedef struct {
     SettingsPage page;
+    int user_field;             /* 0=none, 1=old_pw, 2=new_pw */
+    char old_pw[32];
+    char new_pw[32];
+    char msg[48];
+    bool msg_ok;
 } SettingsStateUi;
 
 #define TERMINAL_MAX_LINES 48
@@ -239,6 +249,14 @@ typedef struct {
 } WebState;
 
 typedef struct {
+    char display[24];
+    int64_t acc;
+    char op;                    /* 0, '+', '-', '*', '/' */
+    bool clear_next;
+    bool has_error;
+} CalculatorState;
+
+typedef struct {
     AppType type;
     FinderState finder;
     SettingsStateUi settings;
@@ -248,6 +266,7 @@ typedef struct {
     PreviewState preview;
     CalendarState calendar;
     WebState web;
+    CalculatorState calc;
 } AppWindowState;
 
 static AppWindowState app_states[COMPOSITOR_MAX_WINDOWS];
@@ -295,6 +314,25 @@ static int anim_launchpad = 0;
 static int anim_control_center = 0;
 static int anim_mission_control = 0;
 static int anim_app_switcher = 0;
+
+/* Account Setup Assistant & Lock/Login screen state */
+static bool login_create_mode = false;
+static int login_selected_user = 0;
+static int login_active_field = 0;
+static char login_full_name[USER_FULLNAME_MAX];
+static char login_username[USER_NAME_MAX];
+static char login_password[USER_PASS_MAX];
+static char login_confirm[USER_PASS_MAX];
+static char login_status[64];
+static bool login_status_ok = false;
+
+/* Menu bar dropdown state (0=none, 1=ojjy, 2=File, 3=Edit, 4=View, 5=Window) */
+static int active_menu = 0;
+
+/* Desktop right-click context menu state */
+static bool ctx_menu_open = false;
+static int ctx_menu_x = 0;
+static int ctx_menu_y = 0;
 
 static uint64_t last_frame_ms = 0;
 
@@ -497,6 +535,8 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     fb_draw_string(content_x + 12, content_y + 32, "Applications", theme->text, theme->dock_tint);
     fb_draw_string(content_x + 12, content_y + 52, "System", theme->text, theme->dock_tint);
     fb_draw_string(content_x + 12, content_y + 72, "Users", theme->text, theme->dock_tint);
+    fb_draw_string(content_x + 12, content_y + 92, "Home", theme->accent, theme->dock_tint);
+    fb_draw_string(content_x + 12, content_y + 112, "Desktop", theme->text, theme->dock_tint);
 
     int main_x = content_x + sidebar_w + 10;
     int main_w = content_w - sidebar_w - preview_w - 20;
@@ -644,6 +684,15 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     }
 }
 
+static void mask_password_str(const char *src, char *dst, size_t dst_size)
+{
+    size_t n = 0;
+    while (src[n] && n + 1 < dst_size) {
+        dst[n++] = '*';
+    }
+    dst[n] = '\0';
+}
+
 static void draw_settings_window(SettingsStateUi *state, int content_x, int content_y, int content_w, int content_h)
 {
     int sidebar_w = 160;
@@ -651,6 +700,7 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
 
     const char *items[] = {
         "Appearance",
+        "Users & Accounts",
         "Wallpaper",
         "Dock & Menu",
         "Keyboard",
@@ -694,6 +744,79 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
                        theme->text_muted, theme->dock_tint);
         fb_fill_rect(main_x + 230, content_y + 110, 40, 14,
                      settings->reduced_motion ? theme->accent : theme->accent_soft);
+    } else if (state->page == SETTINGS_PAGE_USERS) {
+        fb_draw_string(main_x + 16, content_y + 14, "Users & Credentials", theme->text, theme->dock_tint);
+
+        /* Active user card */
+        draw_rounded_rect_blend(main_x + 14, content_y + 34, main_w - 28, 52, 10, theme->glass_aqua, 120);
+        draw_rounded_rect_blend(main_x + 22, content_y + 42, 36, 36, 10, theme->accent, 230);
+        char initials[3] = { 'U', '\0', '\0' };
+        const char *fn = users_current_full_name();
+        if (fn && fn[0]) initials[0] = (fn[0] >= 'a' && fn[0] <= 'z') ? (char)(fn[0] - 32) : fn[0];
+        fb_draw_string(main_x + 36, content_y + 54, initials, COLOR_WHITE, theme->accent);
+
+        char uline[96];
+        uline[0] = '\0';
+        str_append(uline, sizeof(uline), fn);
+        str_append(uline, sizeof(uline), " (@");
+        str_append(uline, sizeof(uline), users_current_username());
+        str_append(uline, sizeof(uline), ")");
+        fb_draw_string(main_x + 68, content_y + 44, uline, theme->text, theme->glass_aqua);
+        fb_draw_string(main_x + 68, content_y + 62, users_current_home(), theme->text_muted, theme->glass_aqua);
+
+        /* Password change form */
+        fb_draw_string(main_x + 16, content_y + 98, "Change Password (SHA-256):", theme->text, theme->dock_tint);
+
+        fb_draw_string(main_x + 16, content_y + 122, "Current:", theme->text_muted, theme->dock_tint);
+        draw_rounded_rect_blend(main_x + 92, content_y + 118, 150, 20, 6,
+                                state->user_field == 1 ? theme->accent_soft : theme->glass_aqua, 170);
+        char masked[32];
+        mask_password_str(state->old_pw, masked, sizeof(masked));
+        fb_draw_string(main_x + 98, content_y + 122,
+                       masked[0] ? masked : (state->user_field == 1 ? "|" : "click to type"),
+                       masked[0] ? theme->text : theme->text_muted, theme->glass_aqua);
+
+        fb_draw_string(main_x + 16, content_y + 148, "New PW:", theme->text_muted, theme->dock_tint);
+        draw_rounded_rect_blend(main_x + 92, content_y + 144, 150, 20, 6,
+                                state->user_field == 2 ? theme->accent_soft : theme->glass_aqua, 170);
+        mask_password_str(state->new_pw, masked, sizeof(masked));
+        fb_draw_string(main_x + 98, content_y + 148,
+                       masked[0] ? masked : (state->user_field == 2 ? "|" : "click to type"),
+                       masked[0] ? theme->text : theme->text_muted, theme->glass_aqua);
+
+        draw_rounded_rect_blend(main_x + 250, content_y + 130, 86, 24, 8, theme->accent, 210);
+        fb_draw_string(main_x + 260, content_y + 136, "Save PW", COLOR_WHITE, theme->accent);
+
+        if (state->msg[0]) {
+            fb_draw_string(main_x + 16, content_y + 172, state->msg,
+                           state->msg_ok ? theme->accent : RGB(220, 72, 68), theme->dock_tint);
+        }
+
+        /* Accounts list */
+        fb_draw_string(main_x + 16, content_y + 194, "Registered Accounts:", theme->text_muted, theme->dock_tint);
+        int ucount = users_count();
+        for (int ui = 0; ui < ucount && ui < 4; ui++) {
+            const UserAccount *acc = users_get_by_index(ui);
+            if (!acc) continue;
+            char aline[96];
+            aline[0] = '\0';
+            str_append(aline, sizeof(aline), acc->username);
+            str_append(aline, sizeof(aline), " - ");
+            str_append(aline, sizeof(aline), acc->full_name);
+            if (acc->is_admin) str_append(aline, sizeof(aline), " [Admin]");
+            fb_draw_string(main_x + 24, content_y + 212 + ui * 16, aline, theme->text, theme->dock_tint);
+        }
+
+        /* Bottom action buttons: Add Account, Lock Screen, Switch User */
+        int by = content_y + content_h - 36;
+        draw_rounded_rect_blend(main_x + 16, by, 112, 24, 8, theme->accent, 210);
+        fb_draw_string(main_x + 24, by + 6, "+ Add Account", COLOR_WHITE, theme->accent);
+
+        draw_rounded_rect_blend(main_x + 136, by, 96, 24, 8, theme->accent_soft, 180);
+        fb_draw_string(main_x + 144, by + 6, "Lock Screen", theme->text, theme->accent_soft);
+
+        draw_rounded_rect_blend(main_x + 240, by, 98, 24, 8, theme->accent_soft, 180);
+        fb_draw_string(main_x + 248, by + 6, "Switch User", theme->text, theme->accent_soft);
     } else if (state->page == SETTINGS_PAGE_WALLPAPER) {
         fb_draw_string(main_x + 16, content_y + 16, "Wallpaper", theme->text, theme->dock_tint);
         fb_fill_rect(main_x + 16, content_y + 48, 80, 50, theme->accent_soft);
@@ -1325,6 +1448,280 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
     fb_draw_string(cx, content_y + 194, buf, theme->text_muted, theme->dock_tint);
 }
 
+/* ================================================================== */
+/* Calculator app                                                      */
+/* ================================================================== */
+
+static void calc_reset(CalculatorState *calc)
+{
+    if (!calc) return;
+    strcpy(calc->display, "0");
+    calc->acc = 0;
+    calc->op = 0;
+    calc->clear_next = true;
+    calc->has_error = false;
+}
+
+static int64_t calc_parse_display(const CalculatorState *calc)
+{
+    if (!calc || !calc->display[0]) return 0;
+    const char *p = calc->display;
+    bool neg = false;
+    if (*p == '-') { neg = true; p++; }
+    int64_t v = 0;
+    while (*p >= '0' && *p <= '9') {
+        v = v * 10 + (*p - '0');
+        p++;
+    }
+    return neg ? -v : v;
+}
+
+static void calc_format_int64(int64_t v, char *out, size_t size)
+{
+    if (!out || size < 4) return;
+    out[0] = '\0';
+    uint64_t u;
+    if (v < 0) {
+        str_append(out, size, "-");
+        u = (uint64_t)(-v);
+    } else {
+        u = (uint64_t)v;
+    }
+    char num[24];
+    utoa(u, num, 10);
+    str_append(out, size, num);
+}
+
+static void calc_press_digit(CalculatorState *calc, char d)
+{
+    if (!calc || d < '0' || d > '9') return;
+    if (calc->has_error) calc_reset(calc);
+    if (calc->clear_next || strcmp(calc->display, "0") == 0) {
+        calc->display[0] = d;
+        calc->display[1] = '\0';
+        calc->clear_next = false;
+    } else {
+        size_t len = strlen(calc->display);
+        if (len < 16) {
+            calc->display[len] = d;
+            calc->display[len + 1] = '\0';
+        }
+    }
+}
+
+static void calc_eval_pending(CalculatorState *calc)
+{
+    if (!calc || calc->has_error) return;
+    int64_t cur = calc_parse_display(calc);
+    if (calc->op == '+') calc->acc = calc->acc + cur;
+    else if (calc->op == '-') calc->acc = calc->acc - cur;
+    else if (calc->op == '*') calc->acc = calc->acc * cur;
+    else if (calc->op == '/') {
+        if (cur == 0) {
+            strcpy(calc->display, "Error: Div 0");
+            calc->has_error = true;
+            calc->op = 0;
+            calc->clear_next = true;
+            return;
+        }
+        calc->acc = calc->acc / cur;
+    } else {
+        calc->acc = cur;
+    }
+    calc_format_int64(calc->acc, calc->display, sizeof(calc->display));
+}
+
+static void calc_press_op(CalculatorState *calc, char op)
+{
+    if (!calc) return;
+    if (calc->has_error) calc_reset(calc);
+    if (!calc->clear_next || calc->op == 0) {
+        calc_eval_pending(calc);
+    }
+    calc->op = op;
+    calc->clear_next = true;
+}
+
+static void calc_press_eq(CalculatorState *calc)
+{
+    if (!calc) return;
+    if (calc->op != 0) {
+        calc_eval_pending(calc);
+        calc->op = 0;
+        calc->clear_next = true;
+    }
+}
+
+static void calc_press_neg(CalculatorState *calc)
+{
+    if (!calc || calc->has_error) return;
+    int64_t v = -calc_parse_display(calc);
+    calc_format_int64(v, calc->display, sizeof(calc->display));
+}
+
+static void draw_calculator_window(CalculatorState *calc, int content_x, int content_y, int content_w, int content_h)
+{
+    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
+
+    /* LCD readout */
+    int lcd_x = content_x + 12;
+    int lcd_y = content_y + 10;
+    int lcd_w = content_w - 24;
+    int lcd_h = 44;
+    draw_rounded_rect_blend(lcd_x, lcd_y, lcd_w, lcd_h, 10, theme->midnight, 210);
+
+    if (calc->op) {
+        char op_str[4] = { calc->op, '\0', '\0', '\0' };
+        fb_draw_string(lcd_x + 10, lcd_y + 8, op_str, theme->accent_soft, theme->midnight);
+    }
+    int dlen = (int)strlen(calc->display);
+    int tx = lcd_x + lcd_w - 12 - dlen * FONT_WIDTH;
+    if (tx < lcd_x + 10) tx = lcd_x + 10;
+    fb_draw_string(tx, lcd_y + 18, calc->display, COLOR_WHITE, theme->midnight);
+
+    static const char *labels[5][4] = {
+        { "C",  "+/-", "%",  "/" },
+        { "7",  "8",   "9",  "*" },
+        { "4",  "5",   "6",  "-" },
+        { "1",  "2",   "3",  "+" },
+        { "0",  "00",  "BS", "=" }
+    };
+
+    int grid_y = lcd_y + lcd_h + 10;
+    int grid_h = content_h - (lcd_h + 28);
+    int cell_w = (content_w - 24 - 3 * 6) / 4;
+    int cell_h = (grid_h - 4 * 6) / 5;
+    if (cell_h < 22) cell_h = 22;
+
+    for (int r = 0; r < 5; r++) {
+        for (int c = 0; c < 4; c++) {
+            int bx = lcd_x + c * (cell_w + 6);
+            int by = grid_y + r * (cell_h + 6);
+            Color bg = (c == 3) ? theme->accent :
+                       (r == 0 ? theme->accent_soft : theme->glass_aqua);
+            uint8_t alpha = (c == 3) ? 220 : 150;
+            draw_rounded_rect_blend(bx, by, cell_w, cell_h, 8, bg, alpha);
+            const char *lbl = labels[r][c];
+            int lx = bx + (cell_w - (int)strlen(lbl) * FONT_WIDTH) / 2;
+            int ly = by + (cell_h - FONT_HEIGHT) / 2;
+            fb_draw_string(lx, ly, lbl, (c == 3) ? COLOR_WHITE : theme->text, bg);
+        }
+    }
+}
+
+/* ================================================================== */
+/* Activity Monitor app                                                */
+/* ================================================================== */
+
+typedef struct {
+    int x;
+    int y;
+    int w;
+    int row;
+} MonitorDrvCtx;
+
+static void monitor_draw_drv_cb(Driver *drv, void *ctx_ptr)
+{
+    MonitorDrvCtx *ctx = (MonitorDrvCtx *)ctx_ptr;
+    if (!drv || !ctx || ctx->row >= 6) return;
+
+    int ry = ctx->y + ctx->row * 18;
+    fb_draw_string(ctx->x + 8, ry, drv->name ? drv->name : "drv", theme->text, theme->dock_tint);
+    fb_draw_string(ctx->x + 150, ry, driver_type_string(drv->type), theme->text_muted, theme->dock_tint);
+    fb_draw_string(ctx->x + 230, ry, driver_state_string(drv->state), theme->accent, theme->dock_tint);
+
+    char num[24];
+    utoa(drv->irq_total, num, 10);
+    fb_draw_string(ctx->x + 310, ry, num, theme->text_muted, theme->dock_tint);
+
+    utoa(drv->read_bytes + drv->write_bytes, num, 10);
+    fb_draw_string(ctx->x + 380, ry, num, theme->text_muted, theme->dock_tint);
+
+    ctx->row++;
+}
+
+static void draw_monitor_window(int content_x, int content_y, int content_w, int content_h)
+{
+    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
+
+    int cx = content_x + 14;
+    fb_draw_string(cx, content_y + 10, "ojjyOS Activity Monitor", theme->text, theme->dock_tint);
+
+#if defined(__aarch64__)
+    const char *arch_str = "Arch: Apple Silicon ARM64 (EL1 / HVF)";
+#else
+    const char *arch_str = "Arch: x86_64 Long Mode";
+#endif
+    fb_draw_string(cx, content_y + 30, arch_str, theme->accent, theme->dock_tint);
+
+    /* Uptime + Active User */
+    uint64_t secs = timer_get_ticks() / 1000;
+    char up_line[96];
+    char num[24];
+    up_line[0] = '\0';
+    str_append(up_line, sizeof(up_line), "Uptime: ");
+    utoa(secs / 60, num, 10);
+    str_append(up_line, sizeof(up_line), num);
+    str_append(up_line, sizeof(up_line), "m ");
+    utoa(secs % 60, num, 10);
+    str_append(up_line, sizeof(up_line), num);
+    str_append(up_line, sizeof(up_line), "s   User: ");
+    str_append(up_line, sizeof(up_line), users_current_username());
+    fb_draw_string(cx, content_y + 48, up_line, theme->text_muted, theme->dock_tint);
+
+    /* Physical Memory Usage Bar */
+    uint64_t total_mb = pmm_get_total_memory() / (1024 * 1024);
+    uint64_t free_mb = pmm_get_free_memory() / (1024 * 1024);
+    uint64_t used_mb = (total_mb >= free_mb) ? (total_mb - free_mb) : 0;
+    if (total_mb == 0) total_mb = 1;
+
+    char mem_line[96];
+    mem_line[0] = '\0';
+    str_append(mem_line, sizeof(mem_line), "Physical Memory: ");
+    utoa(used_mb, num, 10);
+    str_append(mem_line, sizeof(mem_line), num);
+    str_append(mem_line, sizeof(mem_line), " MB used / ");
+    utoa(total_mb, num, 10);
+    str_append(mem_line, sizeof(mem_line), num);
+    str_append(mem_line, sizeof(mem_line), " MB total (");
+    utoa(free_mb, num, 10);
+    str_append(mem_line, sizeof(mem_line), num);
+    str_append(mem_line, sizeof(mem_line), " MB free)");
+    fb_draw_string(cx, content_y + 72, mem_line, theme->text, theme->dock_tint);
+
+    int bar_w = content_w - 28;
+    draw_rounded_rect_blend(cx, content_y + 92, bar_w, 14, 6, theme->glass_aqua, 140);
+    int fill_w = (int)((used_mb * (uint64_t)bar_w) / total_mb);
+    if (fill_w < 8) fill_w = 8;
+    if (fill_w > bar_w) fill_w = bar_w;
+    draw_rounded_rect_blend(cx, content_y + 92, fill_w, 14, 6, theme->accent, 220);
+
+    /* Kernel Drivers Table */
+    fb_draw_string(cx, content_y + 118, "Kernel Drivers & Subsystems", theme->text, theme->dock_tint);
+    fb_draw_string(cx + 8,   content_y + 138, "Driver", theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 150, content_y + 138, "Class",  theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 230, content_y + 138, "State",  theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 310, content_y + 138, "IRQs",   theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 380, content_y + 138, "I/O B",  theme->text_muted, theme->dock_tint);
+
+    MonitorDrvCtx dctx;
+    dctx.x = cx;
+    dctx.y = content_y + 158;
+    dctx.w = content_w - 28;
+    dctx.row = 0;
+    driver_for_each(monitor_draw_drv_cb, &dctx);
+
+    /* Open Windows / Tasks summary at bottom */
+    char task_line[96];
+    task_line[0] = '\0';
+    str_append(task_line, sizeof(task_line), "Open Windows: ");
+    utoa((uint64_t)window_count, num, 10);
+    str_append(task_line, sizeof(task_line), num);
+    str_append(task_line, sizeof(task_line), "   Active App: ");
+    str_append(task_line, sizeof(task_line), active_app_name);
+    fb_draw_string(cx, content_y + content_h - 22, task_line, theme->text_muted, theme->dock_tint);
+}
+
 static void draw_window(int idx)
 {
     CompositorWindow *win = &windows[idx];
@@ -1403,6 +1800,12 @@ static void draw_window(int idx)
         case APP_WEB:
             draw_web_window(&state->web, content_x, content_y, content_w, content_h);
             break;
+        case APP_CALCULATOR:
+            draw_calculator_window(&state->calc, content_x, content_y, content_w, content_h);
+            break;
+        case APP_MONITOR:
+            draw_monitor_window(content_x, content_y, content_w, content_h);
+            break;
         default:
             break;
     }
@@ -1452,10 +1855,27 @@ static void draw_wallpaper(void)
 static void draw_menu_bar(void)
 {
     draw_rounded_rect_blend(0, 0, (int)comp_width, MENU_BAR_HEIGHT, 0,
-                            theme->dock_tint, 140);
+                            theme->dock_tint, 155);
 
-    fb_draw_string(14, 8, active_app_name, theme->text, theme->dock_tint);
-    fb_draw_string(120, 8, "File  Edit  View  Window  Help", theme->text_muted, theme->dock_tint);
+    /* System 'ojjy' glyph pill */
+    if (active_menu == 1) {
+        draw_rounded_rect_blend(6, 3, 44, MENU_BAR_HEIGHT - 6, 6, theme->accent, 180);
+    }
+    fb_draw_string(12, 8, "ojjy", active_menu == 1 ? COLOR_WHITE : theme->accent, theme->dock_tint);
+
+    fb_draw_string(60, 8, active_app_name, theme->text, theme->dock_tint);
+
+    /* Interactive menu items: File (140), Edit (184), View (228), Window (272) */
+    const char *menus[4] = { "File", "Edit", "View", "Window" };
+    int mx[4] = { 140, 184, 228, 272 };
+    for (int i = 0; i < 4; i++) {
+        int mw = (int)strlen(menus[i]) * FONT_WIDTH + 10;
+        if (active_menu == i + 2) {
+            draw_rounded_rect_blend(mx[i] - 5, 3, mw, MENU_BAR_HEIGHT - 6, 6, theme->accent, 170);
+        }
+        fb_draw_string(mx[i], 8, menus[i],
+                       active_menu == i + 2 ? COLOR_WHITE : theme->text_muted, theme->dock_tint);
+    }
 
     RtcTime time;
     rtc_read_time(&time);
@@ -1481,9 +1901,298 @@ static void draw_menu_bar(void)
     str_append(time_buf, sizeof(time_buf), num);
     str_append(time_buf, sizeof(time_buf), suffix);
 
+    /* Active user pill + Control + Clock on right */
+    const char *uname = users_current_username();
+    int user_w = ((int)strlen(uname) + 1) * FONT_WIDTH;
     int status_x = (int)comp_width - 136;
+    fb_draw_string(status_x - user_w - 14, 8, uname, theme->accent, theme->dock_tint);
     fb_draw_string(status_x, 8, "Control", theme->text_muted, theme->dock_tint);
     fb_draw_string((int)comp_width - 70, 8, time_buf, theme->text, theme->dock_tint);
+}
+
+static void draw_menu_dropdown(void)
+{
+    if (active_menu <= 0) return;
+
+    const char *items[7];
+    int count = 0;
+    int x = 8;
+    int w = 210;
+
+    if (active_menu == 1) {
+        x = 6;
+        items[count++] = "About ojjyOS";
+        items[count++] = "System Settings...";
+        items[count++] = "Activity Monitor";
+        items[count++] = "Lock Screen";
+        items[count++] = "Switch User / Log Out...";
+        items[count++] = "Restart...";
+        items[count++] = "Shut Down...";
+    } else if (active_menu == 2) {
+        x = 136;
+        items[count++] = "New Finder Window";
+        items[count++] = "New Text Document";
+        items[count++] = "Open Home Folder";
+        items[count++] = "Save Document (Cmd+S)";
+        items[count++] = "Close Window (Cmd+Q)";
+    } else if (active_menu == 3) {
+        x = 180;
+        items[count++] = "Copy (Cmd+C)";
+        items[count++] = "Cut (Cmd+X)";
+        items[count++] = "Paste (Cmd+V)";
+        items[count++] = "Clear Selection";
+    } else if (active_menu == 4) {
+        x = 224;
+        items[count++] = "Toggle Dark / Light";
+        items[count++] = "Toggle Transparency";
+        items[count++] = "Mission Control (Cmd+M)";
+        items[count++] = "Launchpad (Cmd+L)";
+    } else if (active_menu == 5) {
+        x = 268;
+        items[count++] = "Minimize Window";
+        items[count++] = "Zoom / Maximize";
+        items[count++] = "Calculator";
+        items[count++] = "Activity Monitor";
+    }
+
+    int h = count * 22 + 12;
+    int y = MENU_BAR_HEIGHT + 4;
+    draw_shadow(x, y, w, h, 10);
+    draw_rounded_rect_blend(x, y, w, h, 10, theme->dock_tint, 225);
+
+    for (int i = 0; i < count; i++) {
+        int iy = y + 6 + i * 22;
+        if (cursor_x >= x + 4 && cursor_x <= x + w - 4 &&
+            cursor_y >= iy && cursor_y < iy + 20) {
+            draw_rounded_rect_blend(x + 4, iy, w - 8, 20, 6, theme->accent, 180);
+            fb_draw_string(x + 12, iy + 3, items[i], COLOR_WHITE, theme->accent);
+        } else {
+            fb_draw_string(x + 12, iy + 3, items[i], theme->text, theme->dock_tint);
+        }
+    }
+}
+
+static void draw_context_menu(void)
+{
+    if (!ctx_menu_open) return;
+
+    static const char *items[7] = {
+        "New Folder on Desktop",
+        "New Text Note",
+        "Open Home in Finder",
+        "Open Terminal Here",
+        "Open Calculator",
+        "Toggle Dark / Light Mode",
+        "Lock Screen"
+    };
+    int count = 7;
+    int w = 216;
+    int h = count * 22 + 12;
+    int x = ctx_menu_x;
+    int y = ctx_menu_y;
+    if (x + w > (int)comp_width - 8) x = (int)comp_width - w - 8;
+    if (y + h > (int)comp_height - 8) y = (int)comp_height - h - 8;
+
+    draw_shadow(x, y, w, h, 10);
+    draw_rounded_rect_blend(x, y, w, h, 10, theme->dock_tint, 230);
+
+    for (int i = 0; i < count; i++) {
+        int iy = y + 6 + i * 22;
+        if (cursor_x >= x + 4 && cursor_x <= x + w - 4 &&
+            cursor_y >= iy && cursor_y < iy + 20) {
+            draw_rounded_rect_blend(x + 4, iy, w - 8, 20, 6, theme->accent, 180);
+            fb_draw_string(x + 12, iy + 3, items[i], COLOR_WHITE, theme->accent);
+        } else {
+            fb_draw_string(x + 12, iy + 3, items[i], theme->text, theme->dock_tint);
+        }
+    }
+}
+
+static bool login_screen_visible(void)
+{
+    return (!users_is_authenticated()) || login_create_mode || (users_count() == 0);
+}
+
+static void draw_login_screen(void)
+{
+    /* Dim/tint the Tahoe wallpaper beneath the lock/setup card */
+    draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0,
+                            theme->midnight, 115);
+
+    /* Top clock display (macOS Tahoe Lock Screen style) */
+    RtcTime now;
+    rtc_read_time(&now);
+    char clock_str[16];
+    char num[8];
+    clock_str[0] = '\0';
+    if (now.hour < 10) str_append(clock_str, sizeof(clock_str), "0");
+    utoa(now.hour, num, 10);
+    str_append(clock_str, sizeof(clock_str), num);
+    str_append(clock_str, sizeof(clock_str), ":");
+    if (now.minute < 10) str_append(clock_str, sizeof(clock_str), "0");
+    utoa(now.minute, num, 10);
+    str_append(clock_str, sizeof(clock_str), num);
+    fb_draw_string(((int)comp_width - (int)strlen(clock_str) * FONT_WIDTH) / 2, 42,
+                   clock_str, COLOR_WHITE, theme->midnight);
+
+    const char *brand = "ojjyOS Tahoe  •  Created by Jonas Lee";
+    fb_draw_string(((int)comp_width - (int)strlen(brand) * FONT_WIDTH) / 2,
+                   (int)comp_height - 28, brand, COLOR_TEXT_LIGHT, theme->midnight);
+
+    bool create_mode = login_create_mode || (users_count() == 0);
+
+    if (create_mode) {
+        int cw = 440;
+        int ch = 340;
+        int cx = ((int)comp_width - cw) / 2;
+        int cy = ((int)comp_height - ch) / 2;
+
+        draw_shadow(cx, cy, cw, ch, 18);
+        draw_rounded_rect_blend(cx, cy, cw, ch, 18, theme->dock_tint, 230);
+
+        const char *title = (users_count() == 0)
+            ? "Welcome to ojjyOS — Create Your Account"
+            : "Create a New ojjyOS Account";
+        fb_draw_string(cx + (cw - (int)strlen(title) * FONT_WIDTH) / 2, cy + 20,
+                       title, theme->text, theme->dock_tint);
+
+        const char *sub = "Credentials are salted & SHA-256 hashed on disk";
+        fb_draw_string(cx + (cw - (int)strlen(sub) * FONT_WIDTH) / 2, cy + 40,
+                       sub, theme->text_muted, theme->dock_tint);
+
+        const char *labels[4] = {
+            "Full Name:",
+            "Username:",
+            "Password:",
+            "Confirm:"
+        };
+        for (int f = 0; f < 4; f++) {
+            int fy = cy + 74 + f * 40;
+            fb_draw_string(cx + 28, fy + 6, labels[f], theme->text, theme->dock_tint);
+
+            int bx = cx + 132;
+            int bw = cw - 160;
+            bool focused = (login_active_field == f);
+            draw_rounded_rect_blend(bx, fy, bw, 26, 8,
+                                    focused ? theme->accent_soft : theme->glass_aqua, 190);
+            if (focused) {
+                fb_draw_rect(bx, fy, bw, 26, theme->accent);
+            }
+
+            char val[40];
+            if (f == 0) {
+                strncpy(val, login_full_name, sizeof(val) - 1);
+                val[sizeof(val) - 1] = '\0';
+            } else if (f == 1) {
+                strncpy(val, login_username, sizeof(val) - 1);
+                val[sizeof(val) - 1] = '\0';
+            } else if (f == 2) {
+                mask_password_str(login_password, val, sizeof(val));
+            } else {
+                mask_password_str(login_confirm, val, sizeof(val));
+            }
+
+            if (focused && strlen(val) + 1 < sizeof(val)) {
+                str_append(val, sizeof(val), "|");
+            }
+            fb_draw_string(bx + 8, fy + 6, val, theme->text, theme->glass_aqua);
+        }
+
+        if (login_status[0]) {
+            fb_draw_string(cx + 28, cy + 240, login_status,
+                           login_status_ok ? theme->accent : RGB(225, 76, 70), theme->dock_tint);
+        } else {
+            fb_draw_string(cx + 28, cy + 240, "Press Tab to switch fields, Enter to create",
+                           theme->text_muted, theme->dock_tint);
+        }
+
+        int btn_y = cy + ch - 46;
+        int btn_w = (users_count() > 0) ? 230 : (cw - 56);
+        draw_rounded_rect_blend(cx + 28, btn_y, btn_w, 30, 10, theme->accent, 230);
+        const char *btxt = "Create Account & Sign In";
+        fb_draw_string(cx + 28 + (btn_w - (int)strlen(btxt) * FONT_WIDTH) / 2,
+                       btn_y + 8, btxt, COLOR_WHITE, theme->accent);
+
+        if (users_count() > 0) {
+            int cancel_x = cx + 28 + btn_w + 12;
+            int cancel_w = cw - 56 - btn_w - 12;
+            draw_rounded_rect_blend(cancel_x, btn_y, cancel_w, 30, 10, theme->accent_soft, 180);
+            fb_draw_string(cancel_x + (cancel_w - 6 * FONT_WIDTH) / 2,
+                           btn_y + 8, "Cancel", theme->text, theme->accent_soft);
+        }
+    } else {
+        int cw = 360;
+        int ch = 280;
+        int cx = ((int)comp_width - cw) / 2;
+        int cy = ((int)comp_height - ch) / 2;
+
+        draw_shadow(cx, cy, cw, ch, 18);
+        draw_rounded_rect_blend(cx, cy, cw, ch, 18, theme->dock_tint, 230);
+
+        if (login_selected_user < 0 || login_selected_user >= users_count()) {
+            login_selected_user = 0;
+        }
+        const UserAccount *acc = users_get_by_index(login_selected_user);
+        const char *fname = acc ? acc->full_name : "User";
+        const char *uname = acc ? acc->username : "user";
+
+        /* Avatar circle/rounded square */
+        int av_x = cx + (cw - 56) / 2;
+        int av_y = cy + 20;
+        draw_rounded_rect_blend(av_x, av_y, 56, 56, 18, theme->accent, 235);
+        char init[2] = { 'U', '\0' };
+        if (fname[0]) init[0] = (fname[0] >= 'a' && fname[0] <= 'z') ? (char)(fname[0] - 32) : fname[0];
+        fb_draw_string(av_x + 24, av_y + 20, init, COLOR_WHITE, theme->accent);
+
+        fb_draw_string(cx + (cw - (int)strlen(fname) * FONT_WIDTH) / 2, cy + 86,
+                       fname, theme->text, theme->dock_tint);
+
+        char handle[48];
+        handle[0] = '@';
+        handle[1] = '\0';
+        str_append(handle, sizeof(handle), uname);
+        if (acc && acc->is_admin) str_append(handle, sizeof(handle), " • Admin");
+        fb_draw_string(cx + (cw - (int)strlen(handle) * FONT_WIDTH) / 2, cy + 104,
+                       handle, theme->text_muted, theme->dock_tint);
+
+        /* Password box */
+        int pw_x = cx + 36;
+        int pw_y = cy + 132;
+        int pw_w = cw - 72;
+        draw_rounded_rect_blend(pw_x, pw_y, pw_w, 28, 8, theme->glass_aqua, 200);
+        fb_draw_rect(pw_x, pw_y, pw_w, 28, theme->accent);
+
+        char masked[40];
+        mask_password_str(login_password, masked, sizeof(masked));
+        if (masked[0]) {
+            str_append(masked, sizeof(masked), "|");
+            fb_draw_string(pw_x + 10, pw_y + 7, masked, theme->text, theme->glass_aqua);
+        } else {
+            fb_draw_string(pw_x + 10, pw_y + 7, "Enter Password...", theme->text_muted, theme->glass_aqua);
+        }
+
+        if (login_status[0]) {
+            fb_draw_string(cx + (cw - (int)strlen(login_status) * FONT_WIDTH) / 2, cy + 168,
+                           login_status, login_status_ok ? theme->accent : RGB(225, 76, 70), theme->dock_tint);
+        }
+
+        /* Sign In button */
+        int sign_y = cy + 190;
+        draw_rounded_rect_blend(pw_x, sign_y, pw_w, 28, 8, theme->accent, 230);
+        fb_draw_string(pw_x + (pw_w - 7 * FONT_WIDTH) / 2, sign_y + 7,
+                       "Sign In", COLOR_WHITE, theme->accent);
+
+        /* Bottom row: Switch User | + New Account */
+        int bot_y = cy + ch - 42;
+        int half_w = (pw_w - 10) / 2;
+        draw_rounded_rect_blend(pw_x, bot_y, half_w, 24, 8, theme->accent_soft, 175);
+        fb_draw_string(pw_x + (half_w - 11 * FONT_WIDTH) / 2, bot_y + 5,
+                       "Switch User", theme->text, theme->accent_soft);
+
+        draw_rounded_rect_blend(pw_x + half_w + 10, bot_y, half_w, 24, 8, theme->accent_soft, 175);
+        fb_draw_string(pw_x + half_w + 10 + (half_w - 13 * FONT_WIDTH) / 2, bot_y + 5,
+                       "+ New Account", theme->text, theme->accent_soft);
+    }
 }
 
 static void draw_icon_scaled(const uint8_t *pixels, int src_size, int x, int y, int size)
@@ -1631,7 +2340,9 @@ static void desktop_reload(void)
     strcpy(disk->path, "/");
     disk->type = VFS_TYPE_DIR;
 
-    VfsDir *dir = vfs_opendir("/Users/guest/Desktop");
+    char desk_dir[160];
+    users_make_home_path(desk_dir, sizeof(desk_dir), "Desktop");
+    VfsDir *dir = vfs_opendir(desk_dir);
     if (!dir) return;
 
     VfsDirEntry entry;
@@ -1643,7 +2354,7 @@ static void desktop_reload(void)
         name_copy[sizeof(name_copy) - 1] = '\0';
 
         if (vfs_join_path(icon->path, sizeof(icon->path),
-                          "/Users/guest/Desktop", name_copy) != 0) {
+                          desk_dir, name_copy) != 0) {
             continue;
         }
         strncpy(icon->name, name_copy, sizeof(icon->name) - 1);
@@ -2325,7 +3036,9 @@ static bool calendar_load(CalendarState *cal)
     if (!cal) return false;
     cal->event_count = 0;
 
-    VfsFile *file = vfs_open("/Users/guest/Documents/Calendar.txt", VFS_O_READ);
+    char cal_path[160];
+    users_make_home_path(cal_path, sizeof(cal_path), "Documents/Calendar.txt");
+    VfsFile *file = vfs_open(cal_path, VFS_O_READ);
     if (!file) {
         cal->loaded = true;
         return false;
@@ -2431,7 +3144,9 @@ static void calendar_append_field(char *line, size_t size, const char *text)
 static void calendar_save(CalendarState *cal)
 {
     if (!cal) return;
-    VfsFile *file = vfs_open("/Users/guest/Documents/Calendar.txt",
+    char cal_path[160];
+    users_make_home_path(cal_path, sizeof(cal_path), "Documents/Calendar.txt");
+    VfsFile *file = vfs_open(cal_path,
                              VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
     if (!file) return;
 
@@ -2939,11 +3654,9 @@ static void terminal_history_apply(TerminalState *term, int direction)
 
 static void terminal_make_prompt(const TerminalState *term, char *out, size_t size)
 {
-    const char *home = "/Users/guest";
+    const char *home = users_current_home();
     size_t home_len = strlen(home);
     char path[128];
-    /* Only treat as home when the cwd is /Users/guest or below it
-     * (the old prefix match also rewrote /Users/guestx as ~/x) */
     if (strncmp(term->cwd, home, home_len) == 0 &&
         (term->cwd[home_len] == '\0' || term->cwd[home_len] == '/')) {
         strcpy(path, "~");
@@ -2955,7 +3668,8 @@ static void terminal_make_prompt(const TerminalState *term, char *out, size_t si
     }
 
     out[0] = '\0';
-    str_append(out, size, "guest@ojjyos:");
+    str_append(out, size, users_current_username());
+    str_append(out, size, "@ojjyos:");
     str_append(out, size, path[0] ? path : "/");
     str_append(out, size, " %");
 }
@@ -2977,16 +3691,14 @@ static int terminal_resolve_path(const TerminalState *term, const char *input, c
     }
 
     if (strcmp(input, "~") == 0) {
-        strncpy(out, "/Users/guest", size - 1);
+        strncpy(out, users_current_home(), size - 1);
         out[size - 1] = '\0';
         normalize_path(out, size);
         return 0;
     }
 
     if (strncmp(input, "~/", 2) == 0) {
-        out[0] = '\0';
-        str_append(out, size, "/Users/guest/");
-        str_append(out, size, input + 2);
+        users_make_home_path(out, size, input + 2);
         normalize_path(out, size);
         return strlen(out) > 0 ? 0 : -1;
     }
@@ -3058,8 +3770,138 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 
     if (strcmp(cmd, "help") == 0) {
         terminal_append_line(term, "Commands: ls, cd, pwd, cat, echo, touch,");
-        terminal_append_line(term, "  mkdir, rm, mv, cp, open, clear");
-        terminal_append_line(term, "Paths may be absolute, relative or ~/...");
+        terminal_append_line(term, "  mkdir, rm, mv, cp, open, clear, sync,");
+        terminal_append_line(term, "  whoami, users, adduser, passwd, su, lock");
+        return;
+    }
+
+    if (strcmp(cmd, "whoami") == 0) {
+        char uline[80];
+        uline[0] = '\0';
+        str_append(uline, sizeof(uline), users_current_username());
+        str_append(uline, sizeof(uline), " (");
+        str_append(uline, sizeof(uline), users_current_full_name());
+        str_append(uline, sizeof(uline), ")");
+        terminal_append_line(term, uline);
+        return;
+    }
+
+    if (strcmp(cmd, "users") == 0) {
+        int n = users_count();
+        if (n == 0) {
+            terminal_append_line(term, "No registered accounts (guest session)");
+            return;
+        }
+        for (int i = 0; i < n; i++) {
+            const UserAccount *acc = users_get_by_index(i);
+            if (!acc) continue;
+            char uline[80];
+            uline[0] = '\0';
+            str_append(uline, sizeof(uline), (i == users_current_index()) ? "* " : "  ");
+            str_append(uline, sizeof(uline), acc->username);
+            str_append(uline, sizeof(uline), " - ");
+            str_append(uline, sizeof(uline), acc->full_name);
+            if (acc->is_admin) str_append(uline, sizeof(uline), " [admin]");
+            terminal_append_line(term, uline);
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "adduser ", 8) == 0) {
+        const char *args = cmd + 8;
+        while (*args == ' ') args++;
+        const char *sp = str_find(args, " ");
+        if (!sp) {
+            terminal_append_line(term, "Usage: adduser <username> <password> [Full Name]");
+            return;
+        }
+        char uname[USER_NAME_MAX];
+        size_t ulen = (size_t)(sp - args);
+        if (ulen >= sizeof(uname)) ulen = sizeof(uname) - 1;
+        memcpy(uname, args, ulen);
+        uname[ulen] = '\0';
+
+        const char *parg = sp + 1;
+        while (*parg == ' ') parg++;
+        const char *sp2 = str_find(parg, " ");
+        char upass[USER_PASS_MAX];
+        char fname[USER_FULLNAME_MAX];
+        if (sp2) {
+            size_t plen = (size_t)(sp2 - parg);
+            if (plen >= sizeof(upass)) plen = sizeof(upass) - 1;
+            memcpy(upass, parg, plen);
+            upass[plen] = '\0';
+            const char *farg = sp2 + 1;
+            while (*farg == ' ') farg++;
+            strncpy(fname, farg, sizeof(fname) - 1);
+            fname[sizeof(fname) - 1] = '\0';
+        } else {
+            strncpy(upass, parg, sizeof(upass) - 1);
+            upass[sizeof(upass) - 1] = '\0';
+            strncpy(fname, uname, sizeof(fname) - 1);
+            fname[sizeof(fname) - 1] = '\0';
+        }
+        if (users_create(uname, fname, upass, true) == 0) {
+            terminal_append_line(term, "Account created & SHA-256 credentials saved.");
+        } else {
+            terminal_append_line(term, "adduser: failed (invalid or duplicate username)");
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "passwd ", 7) == 0) {
+        const char *args = cmd + 7;
+        while (*args == ' ') args++;
+        const char *sp = str_find(args, " ");
+        if (!sp) {
+            terminal_append_line(term, "Usage: passwd <old_password> <new_password>");
+            return;
+        }
+        char oldp[USER_PASS_MAX];
+        size_t olen = (size_t)(sp - args);
+        if (olen >= sizeof(oldp)) olen = sizeof(oldp) - 1;
+        memcpy(oldp, args, olen);
+        oldp[olen] = '\0';
+        const char *newp = sp + 1;
+        while (*newp == ' ') newp++;
+        if (users_change_password(users_current_username(), oldp, newp) == 0) {
+            terminal_append_line(term, "Password updated and saved.");
+        } else {
+            terminal_append_line(term, "passwd: incorrect old password or invalid account");
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "su ", 3) == 0) {
+        const char *args = cmd + 3;
+        while (*args == ' ') args++;
+        const char *sp = str_find(args, " ");
+        char uname[USER_NAME_MAX];
+        const char *upass = "";
+        if (sp) {
+            size_t ulen = (size_t)(sp - args);
+            if (ulen >= sizeof(uname)) ulen = sizeof(uname) - 1;
+            memcpy(uname, args, ulen);
+            uname[ulen] = '\0';
+            upass = sp + 1;
+            while (*upass == ' ') upass++;
+        } else {
+            strncpy(uname, args, sizeof(uname) - 1);
+            uname[sizeof(uname) - 1] = '\0';
+        }
+        if (users_login(uname, upass) == 0) {
+            compositor_on_user_switched();
+            terminal_append_line(term, "Switched user session.");
+        } else {
+            terminal_append_line(term, "su: authentication failed");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "lock") == 0 || strcmp(cmd, "logout") == 0) {
+        users_lock_session();
+        login_password[0] = '\0';
+        login_status[0] = '\0';
         return;
     }
 
@@ -3092,7 +3934,8 @@ static void terminal_exec(TerminalState *term, const char *cmd)
     }
 
     if (strcmp(cmd, "cd") == 0) {
-        strncpy(term->cwd, "/Users/guest", sizeof(term->cwd) - 1);
+        strncpy(term->cwd, users_current_home(), sizeof(term->cwd) - 1);
+        term->cwd[sizeof(term->cwd) - 1] = '\0';
         return;
     }
 
@@ -3480,8 +4323,7 @@ static void textedit_save(TextEditState *edit)
 {
     if (!edit) return;
     if (edit->file_path[0] == '\0') {
-        strncpy(edit->file_path, "/Users/guest/Documents/Untitled.txt",
-                sizeof(edit->file_path) - 1);
+        users_make_home_path(edit->file_path, sizeof(edit->file_path), "Documents/Untitled.txt");
     }
 
     VfsFile *file = vfs_open(edit->file_path, VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
@@ -3729,6 +4571,8 @@ static AppType app_type_from_bundle(const char *bundle_id)
     if (strcmp(bundle_id, "com.ojjyos.calendar") == 0) return APP_CALENDAR;
     if (strcmp(bundle_id, "com.ojjyos.about") == 0) return APP_ABOUT;
     if (strcmp(bundle_id, "com.ojjyos.web") == 0) return APP_WEB;
+    if (strcmp(bundle_id, "com.ojjyos.calculator") == 0) return APP_CALCULATOR;
+    if (strcmp(bundle_id, "com.ojjyos.monitor") == 0) return APP_MONITOR;
     return APP_DEMO;
 }
 
@@ -3744,6 +4588,8 @@ static const char *app_name_from_type(AppType type)
         case APP_CALENDAR: return "Calendar";
         case APP_ABOUT: return "About";
         case APP_WEB: return "Web";
+        case APP_CALCULATOR: return "Calculator";
+        case APP_MONITOR: return "Activity Monitor";
         default: return "App";
     }
 }
@@ -3777,17 +4623,22 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
 
     state->type = type;
     if (type == APP_FINDER) {
-        finder_set_path(&state->finder, "/Users");
+        finder_set_path(&state->finder, users_current_home());
         state->finder.view_mode = FINDER_VIEW_LIST;
     } else if (type == APP_SETTINGS) {
         state->settings.page = SETTINGS_PAGE_APPEARANCE;
+        state->settings.user_field = 0;
+        state->settings.old_pw[0] = '\0';
+        state->settings.new_pw[0] = '\0';
+        state->settings.msg[0] = '\0';
     } else if (type == APP_TERMINAL) {
         terminal_append_line(&state->terminal, "+--------------------------------------+");
         terminal_append_line(&state->terminal, "|     Welcome to the ojjyOS Shell      |");
         terminal_append_line(&state->terminal, "|        Created by Jonas Lee          |");
         terminal_append_line(&state->terminal, "+--------------------------------------+");
         terminal_append_line(&state->terminal, "Type 'help' for commands.");
-        strncpy(state->terminal.cwd, "/Users/guest", sizeof(state->terminal.cwd) - 1);
+        strncpy(state->terminal.cwd, users_current_home(), sizeof(state->terminal.cwd) - 1);
+        state->terminal.cwd[sizeof(state->terminal.cwd) - 1] = '\0';
         state->terminal.history_count = 0;
         state->terminal.history_pos = 0;
     } else if (type == APP_TEXTEDIT) {
@@ -3795,8 +4646,7 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         strcpy(state->textedit.status, "Ready");
     } else if (type == APP_NOTES) {
         textedit_clear(&state->notes);
-        strncpy(state->notes.file_path, "/Users/guest/Documents/Notes.txt",
-                sizeof(state->notes.file_path) - 1);
+        users_make_home_path(state->notes.file_path, sizeof(state->notes.file_path), "Documents/Notes.txt");
         textedit_load_file(&state->notes, state->notes.file_path);
         strcpy(state->notes.status, "Notes");
     } else if (type == APP_PREVIEW) {
@@ -3827,6 +4677,8 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         state->web.address[0] = '\0';
         strcpy(state->web.address, "home");
         web_load_page(&state->web, "home");
+    } else if (type == APP_CALCULATOR) {
+        calc_reset(&state->calc);
     }
 
     window_count++;
@@ -3850,8 +4702,8 @@ static int app_open_window(AppType type, const char *title)
 
     int w = 560;
     int h = 380;
-    int x = 140;
-    int y = 120;
+    int x = 140 + (window_count * 18) % 90;
+    int y = 90 + (window_count * 18) % 70;
     if (type == APP_FINDER) { w = 640; h = 420; }
     if (type == APP_SETTINGS) { w = 560; h = 400; }
     if (type == APP_TERMINAL) { w = 600; h = 360; }
@@ -3861,6 +4713,8 @@ static int app_open_window(AppType type, const char *title)
     if (type == APP_CALENDAR) { w = 720; h = 440; }
     if (type == APP_ABOUT) { w = 460; h = 300; }
     if (type == APP_WEB) { w = 640; h = 420; }
+    if (type == APP_CALCULATOR) { w = 300; h = 360; }
+    if (type == APP_MONITOR) { w = 520; h = 340; }
 
     int id = create_window_internal(title, x, y, w, h, type);
     if (id >= 0) {
@@ -3868,6 +4722,28 @@ static int app_open_window(AppType type, const char *title)
         active_window_index = window_count - 1;
     }
     return id;
+}
+
+void compositor_on_user_switched(void)
+{
+    search_index_init();
+    desktop_last_reload = 0;
+    desktop_reload();
+
+    for (int i = 0; i < window_count; i++) {
+        AppWindowState *st = &app_states[i];
+        if (st->type == APP_FINDER) {
+            finder_set_path(&st->finder, users_current_home());
+        } else if (st->type == APP_TERMINAL) {
+            strncpy(st->terminal.cwd, users_current_home(), sizeof(st->terminal.cwd) - 1);
+            st->terminal.cwd[sizeof(st->terminal.cwd) - 1] = '\0';
+        } else if (st->type == APP_NOTES) {
+            users_make_home_path(st->notes.file_path, sizeof(st->notes.file_path), "Documents/Notes.txt");
+            textedit_load_file(&st->notes, st->notes.file_path);
+        } else if (st->type == APP_CALENDAR) {
+            calendar_load(&st->calendar);
+        }
+    }
 }
 
 void compositor_init(uint32_t width, uint32_t height)
@@ -4104,8 +4980,133 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
 
 void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
 {
+    if (login_screen_visible()) {
+        active_menu = 0;
+        ctx_menu_open = false;
+
+        bool create_mode = login_create_mode || (users_count() == 0);
+        if (create_mode) {
+            if (keycode == KEY_TAB) {
+                login_active_field = (login_active_field + 1) % 4;
+                return;
+            }
+            if (keycode == KEY_ESCAPE && users_count() > 0) {
+                login_create_mode = false;
+                login_status[0] = '\0';
+                return;
+            }
+            if (keycode == KEY_BACKSPACE) {
+                char *buf = (login_active_field == 0) ? login_full_name :
+                            (login_active_field == 1) ? login_username :
+                            (login_active_field == 2) ? login_password : login_confirm;
+                size_t len = strlen(buf);
+                if (len > 0) buf[len - 1] = '\0';
+                return;
+            }
+            if (keycode == KEY_ENTER) {
+                if (login_username[0] == '\0') {
+                    strcpy(login_status, "Please enter a username.");
+                    login_status_ok = false;
+                    return;
+                }
+                if (strcmp(login_password, login_confirm) != 0) {
+                    strcpy(login_status, "Passwords do not match.");
+                    login_status_ok = false;
+                    return;
+                }
+                const char *fn = login_full_name[0] ? login_full_name : login_username;
+                if (users_create(login_username, fn, login_password, true) == 0) {
+                    users_login(login_username, login_password);
+                    login_password[0] = '\0';
+                    login_confirm[0] = '\0';
+                    login_status[0] = '\0';
+                    login_create_mode = false;
+                    login_selected_user = users_current_index();
+                    compositor_on_user_switched();
+                } else {
+                    strcpy(login_status, "Invalid or duplicate username (use a-z, 0-9).");
+                    login_status_ok = false;
+                }
+                return;
+            }
+            if (ascii >= 32 && ascii <= 126) {
+                char *buf = (login_active_field == 0) ? login_full_name :
+                            (login_active_field == 1) ? login_username :
+                            (login_active_field == 2) ? login_password : login_confirm;
+                size_t cap = (login_active_field == 0) ? sizeof(login_full_name) :
+                             (login_active_field == 1) ? sizeof(login_username) :
+                             (login_active_field == 2) ? sizeof(login_password) : sizeof(login_confirm);
+                if (login_active_field == 1 && ascii == ' ') {
+                    return;
+                }
+                size_t len = strlen(buf);
+                if (len + 1 < cap) {
+                    buf[len] = ascii;
+                    buf[len + 1] = '\0';
+                }
+            }
+            return;
+        } else {
+            if (keycode == KEY_TAB) {
+                int n = users_count();
+                if (n > 0) {
+                    login_selected_user = (login_selected_user + 1) % n;
+                    login_password[0] = '\0';
+                    login_status[0] = '\0';
+                }
+                return;
+            }
+            if (keycode == KEY_BACKSPACE) {
+                size_t len = strlen(login_password);
+                if (len > 0) login_password[len - 1] = '\0';
+                return;
+            }
+            if (keycode == KEY_ENTER) {
+                if (login_selected_user < 0 || login_selected_user >= users_count()) {
+                    login_selected_user = 0;
+                }
+                const UserAccount *acc = users_get_by_index(login_selected_user);
+                if (acc && users_login(acc->username, login_password) == 0) {
+                    login_password[0] = '\0';
+                    login_status[0] = '\0';
+                    compositor_on_user_switched();
+                } else {
+                    login_password[0] = '\0';
+                    strcpy(login_status, "Incorrect password. Try again.");
+                    login_status_ok = false;
+                }
+                return;
+            }
+            if (ascii >= 32 && ascii <= 126) {
+                size_t len = strlen(login_password);
+                if (len + 1 < sizeof(login_password)) {
+                    login_password[len] = ascii;
+                    login_password[len + 1] = '\0';
+                }
+            }
+            return;
+        }
+    }
+
+    if (keycode == KEY_ESCAPE && (active_menu > 0 || ctx_menu_open)) {
+        active_menu = 0;
+        ctx_menu_open = false;
+        return;
+    }
+
     if (keycode == KEY_ESCAPE && overlay != OVERLAY_NONE) {
         overlay_set(OVERLAY_NONE);
+        return;
+    }
+
+    /* Ctrl+Cmd+Q locks the screen immediately (macOS shortcut) */
+    if ((modifiers & INPUT_MOD_SUPER) && (modifiers & INPUT_MOD_CTRL) && keycode == KEY_Q) {
+        users_lock_session();
+        login_password[0] = '\0';
+        login_status[0] = '\0';
+        overlay_set(OVERLAY_NONE);
+        active_menu = 0;
+        ctx_menu_open = false;
         return;
     }
 
@@ -4476,6 +5477,67 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                     web->address[len + 1] = '\0';
                 }
             }
+        } else if (state->type == APP_SETTINGS) {
+            if (state->settings.page == SETTINGS_PAGE_USERS && state->settings.user_field > 0) {
+                if (keycode == KEY_TAB) {
+                    state->settings.user_field = (state->settings.user_field == 1) ? 2 : 1;
+                    return;
+                }
+                if (keycode == KEY_ESCAPE) {
+                    state->settings.user_field = 0;
+                    return;
+                }
+                char *buf = (state->settings.user_field == 1)
+                    ? state->settings.old_pw : state->settings.new_pw;
+                size_t cap = (state->settings.user_field == 1)
+                    ? sizeof(state->settings.old_pw) : sizeof(state->settings.new_pw);
+                if (keycode == KEY_BACKSPACE) {
+                    size_t len = strlen(buf);
+                    if (len > 0) buf[len - 1] = '\0';
+                    return;
+                }
+                if (keycode == KEY_ENTER) {
+                    if (users_change_password(users_current_username(),
+                                              state->settings.old_pw,
+                                              state->settings.new_pw) == 0) {
+                        strcpy(state->settings.msg, "Password updated & saved.");
+                        state->settings.msg_ok = true;
+                        state->settings.old_pw[0] = '\0';
+                        state->settings.new_pw[0] = '\0';
+                        state->settings.user_field = 0;
+                    } else {
+                        strcpy(state->settings.msg, "Incorrect current password.");
+                        state->settings.msg_ok = false;
+                    }
+                    return;
+                }
+                if (ascii >= 32 && ascii <= 126) {
+                    size_t len = strlen(buf);
+                    if (len + 1 < cap) {
+                        buf[len] = ascii;
+                        buf[len + 1] = '\0';
+                    }
+                }
+            }
+        } else if (state->type == APP_CALCULATOR) {
+            CalculatorState *calc = &state->calc;
+            if (ascii >= '0' && ascii <= '9') {
+                calc_press_digit(calc, ascii);
+            } else if (ascii == '+' || ascii == '-' || ascii == '*' || ascii == '/') {
+                calc_press_op(calc, ascii);
+            } else if (ascii == '=' || keycode == KEY_ENTER) {
+                calc_press_eq(calc);
+            } else if (ascii == 'c' || ascii == 'C' || keycode == KEY_ESCAPE) {
+                calc_reset(calc);
+            } else if (keycode == KEY_BACKSPACE) {
+                size_t len = strlen(calc->display);
+                if (len > 1 && !calc->clear_next && !calc->has_error) {
+                    calc->display[len - 1] = '\0';
+                } else {
+                    strcpy(calc->display, "0");
+                    calc->clear_next = true;
+                }
+            }
         }
     }
 }
@@ -4603,9 +5665,280 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
     }
 
     if (down) {
-        if (y <= MENU_BAR_HEIGHT && x >= (int)comp_width - 140) {
-            overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
-            return;
+        if (login_screen_visible()) {
+            bool create_mode = login_create_mode || (users_count() == 0);
+            if (create_mode) {
+                int cw = 440;
+                int ch = 340;
+                int cx = ((int)comp_width - cw) / 2;
+                int cy = ((int)comp_height - ch) / 2;
+                for (int f = 0; f < 4; f++) {
+                    int fy = cy + 74 + f * 40;
+                    int bx = cx + 132;
+                    int bw = cw - 160;
+                    if (x >= bx && x <= bx + bw && y >= fy && y <= fy + 26) {
+                        login_active_field = f;
+                        return;
+                    }
+                }
+                int btn_y = cy + ch - 46;
+                int btn_w = (users_count() > 0) ? 230 : (cw - 56);
+                if (x >= cx + 28 && x <= cx + 28 + btn_w && y >= btn_y && y <= btn_y + 30) {
+                    compositor_handle_key(KEY_ENTER, 0, 0);
+                    return;
+                }
+                if (users_count() > 0) {
+                    int cancel_x = cx + 28 + btn_w + 12;
+                    int cancel_w = cw - 56 - btn_w - 12;
+                    if (x >= cancel_x && x <= cancel_x + cancel_w && y >= btn_y && y <= btn_y + 30) {
+                        login_create_mode = false;
+                        login_status[0] = '\0';
+                        return;
+                    }
+                }
+                return;
+            } else {
+                int cw = 360;
+                int ch = 280;
+                int cx = ((int)comp_width - cw) / 2;
+                int cy = ((int)comp_height - ch) / 2;
+                int pw_x = cx + 36;
+                int pw_w = cw - 72;
+                int sign_y = cy + 190;
+                if (x >= pw_x && x <= pw_x + pw_w && y >= sign_y && y <= sign_y + 28) {
+                    compositor_handle_key(KEY_ENTER, 0, 0);
+                    return;
+                }
+                int bot_y = cy + ch - 42;
+                int half_w = (pw_w - 10) / 2;
+                if (x >= pw_x && x <= pw_x + half_w && y >= bot_y && y <= bot_y + 24) {
+                    int n = users_count();
+                    if (n > 0) {
+                        login_selected_user = (login_selected_user + 1) % n;
+                        login_password[0] = '\0';
+                        login_status[0] = '\0';
+                    }
+                    return;
+                }
+                if (x >= pw_x + half_w + 10 && x <= pw_x + half_w + 10 + half_w &&
+                    y >= bot_y && y <= bot_y + 24) {
+                    login_create_mode = true;
+                    login_active_field = 0;
+                    login_full_name[0] = '\0';
+                    login_username[0] = '\0';
+                    login_password[0] = '\0';
+                    login_confirm[0] = '\0';
+                    login_status[0] = '\0';
+                    return;
+                }
+                return;
+            }
+        }
+
+        if (ctx_menu_open) {
+            int count = 7;
+            int w = 216;
+            int h = count * 22 + 12;
+            int mx = ctx_menu_x;
+            int my = ctx_menu_y;
+            if (mx + w > (int)comp_width - 8) mx = (int)comp_width - w - 8;
+            if (my + h > (int)comp_height - 8) my = (int)comp_height - h - 8;
+            ctx_menu_open = false;
+            if (x >= mx && x <= mx + w && y >= my + 6 && y < my + 6 + count * 22) {
+                int item = (y - (my + 6)) / 22;
+                if (item == 0) {
+                    char fpath[160];
+                    users_make_home_path(fpath, sizeof(fpath), "Desktop/New Folder");
+                    if (vfs_exists(fpath)) {
+                        users_make_home_path(fpath, sizeof(fpath), "Desktop/New Folder 2");
+                    }
+                    vfs_mkdir(fpath);
+                    desktop_reload();
+                } else if (item == 1) {
+                    char npath[160];
+                    users_make_home_path(npath, sizeof(npath), "Desktop/Note.txt");
+                    if (!vfs_exists(npath)) {
+                        VfsFile *f = vfs_open(npath, VFS_O_CREATE | VFS_O_WRITE);
+                        if (f) {
+                            const char *txt = "New desktop note\n";
+                            vfs_write(f, txt, strlen(txt));
+                            vfs_close(f);
+                        }
+                    }
+                    desktop_reload();
+                    app_open_window(APP_TEXTEDIT, "TextEdit");
+                    if (app_window_index[APP_TEXTEDIT] >= 0) {
+                        textedit_load_file(&app_states[app_window_index[APP_TEXTEDIT]].textedit, npath);
+                    }
+                } else if (item == 2) {
+                    app_open_window(APP_FINDER, "Finder");
+                    if (app_window_index[APP_FINDER] >= 0) {
+                        finder_set_path(&app_states[app_window_index[APP_FINDER]].finder, users_current_home());
+                    }
+                } else if (item == 3) {
+                    app_open_window(APP_TERMINAL, "Terminal");
+                } else if (item == 4) {
+                    app_open_window(APP_CALCULATOR, "Calculator");
+                } else if (item == 5) {
+                    settings_toggle_dark_mode();
+                    compositor_set_dark_mode(settings_get()->dark_mode);
+                    compositor_set_wallpaper(settings_get()->dark_mode
+                        ? "/System/Wallpapers/Tahoe Dark.raw"
+                        : "/System/Wallpapers/Tahoe Light.raw");
+                } else if (item == 6) {
+                    users_lock_session();
+                    login_password[0] = '\0';
+                    login_status[0] = '\0';
+                }
+                return;
+            }
+        }
+
+        if (active_menu > 0) {
+            int mx = (active_menu == 1) ? 6 :
+                     (active_menu == 2) ? 136 :
+                     (active_menu == 3) ? 180 :
+                     (active_menu == 4) ? 224 : 268;
+            int mw = 210;
+            int mcount = (active_menu == 1) ? 7 : (active_menu == 2) ? 5 : 4;
+            int my = MENU_BAR_HEIGHT + 4;
+            if (x >= mx && x <= mx + mw && y >= my + 6 && y < my + 6 + mcount * 22) {
+                int item = (y - (my + 6)) / 22;
+                int menu = active_menu;
+                active_menu = 0;
+                if (menu == 1) {
+                    if (item == 0) app_open_window(APP_ABOUT, "About ojjyOS");
+                    else if (item == 1) app_open_window(APP_SETTINGS, "Settings");
+                    else if (item == 2) app_open_window(APP_MONITOR, "Activity Monitor");
+                    else if (item == 3) {
+                        users_lock_session();
+                        login_password[0] = '\0';
+                        login_status[0] = '\0';
+                    } else if (item == 4) {
+                        users_logout();
+                        login_password[0] = '\0';
+                        login_status[0] = '\0';
+                    } else if (item == 5) {
+                        system_request_restart();
+                    } else if (item == 6) {
+                        system_request_shutdown();
+                    }
+                } else if (menu == 2) {
+                    if (item == 0) app_open_window(APP_FINDER, "Finder");
+                    else if (item == 1) app_open_window(APP_TEXTEDIT, "TextEdit");
+                    else if (item == 2) {
+                        app_open_window(APP_FINDER, "Finder");
+                        if (app_window_index[APP_FINDER] >= 0) {
+                            finder_set_path(&app_states[app_window_index[APP_FINDER]].finder,
+                                            users_current_home());
+                        }
+                    } else if (item == 3) {
+                        if (active_window_index >= 0 && active_window_index < window_count) {
+                            AppWindowState *st = &app_states[active_window_index];
+                            if (st->type == APP_TEXTEDIT) textedit_save(&st->textedit);
+                            else if (st->type == APP_NOTES) textedit_save(&st->notes);
+                        }
+                    } else if (item == 4) {
+                        compositor_handle_key(KEY_Q, 0, INPUT_MOD_SUPER);
+                    }
+                } else if (menu == 3) {
+                    if (item == 0) compositor_handle_key(KEY_C, 0, INPUT_MOD_SUPER);
+                    else if (item == 1) compositor_handle_key(KEY_X, 0, INPUT_MOD_SUPER);
+                    else if (item == 2) compositor_handle_key(KEY_V, 0, INPUT_MOD_SUPER);
+                    else if (item == 3 && active_window_index >= 0 && active_window_index < window_count) {
+                        AppWindowState *st = &app_states[active_window_index];
+                        if (st->type == APP_TEXTEDIT) textedit_clear_selection(&st->textedit);
+                        else if (st->type == APP_NOTES) textedit_clear_selection(&st->notes);
+                    }
+                } else if (menu == 4) {
+                    if (item == 0) {
+                        settings_toggle_dark_mode();
+                        compositor_set_dark_mode(settings_get()->dark_mode);
+                        compositor_set_wallpaper(settings_get()->dark_mode
+                            ? "/System/Wallpapers/Tahoe Dark.raw"
+                            : "/System/Wallpapers/Tahoe Light.raw");
+                    } else if (item == 1) {
+                        settings_toggle_reduced_transparency();
+                    } else if (item == 2) {
+                        overlay_set(OVERLAY_MISSION_CONTROL);
+                    } else if (item == 3) {
+                        overlay_set(OVERLAY_LAUNCHPAD);
+                    }
+                } else if (menu == 5) {
+                    if (item == 0 && active_window_index >= 0 && active_window_index < window_count) {
+                        windows[active_window_index].minimized = true;
+                    } else if (item == 1 && active_window_index >= 0 && active_window_index < window_count) {
+                        CompositorWindow *win = &windows[active_window_index];
+                        if (win->maximized) {
+                            win->x = win->saved_x;
+                            win->y = win->saved_y;
+                            win->w = win->saved_w;
+                            win->h = win->saved_h;
+                            win->maximized = false;
+                        } else {
+                            win->saved_x = win->x;
+                            win->saved_y = win->y;
+                            win->saved_w = win->w;
+                            win->saved_h = win->h;
+                            win->x = 12;
+                            win->y = MENU_BAR_HEIGHT + 8;
+                            win->w = (int)comp_width - 24;
+                            win->h = (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 36;
+                            win->maximized = true;
+                        }
+                    } else if (item == 2) {
+                        app_open_window(APP_CALCULATOR, "Calculator");
+                    } else if (item == 3) {
+                        app_open_window(APP_MONITOR, "Activity Monitor");
+                    }
+                }
+                return;
+            }
+            if (y > MENU_BAR_HEIGHT) {
+                active_menu = 0;
+            }
+        }
+
+        if (y <= MENU_BAR_HEIGHT) {
+            if (x >= 4 && x < 52) {
+                active_menu = (active_menu == 1) ? 0 : 1;
+                overlay_set(OVERLAY_NONE);
+                return;
+            }
+            if (x >= 135 && x < 179) {
+                active_menu = (active_menu == 2) ? 0 : 2;
+                overlay_set(OVERLAY_NONE);
+                return;
+            }
+            if (x >= 179 && x < 223) {
+                active_menu = (active_menu == 3) ? 0 : 3;
+                overlay_set(OVERLAY_NONE);
+                return;
+            }
+            if (x >= 223 && x < 267) {
+                active_menu = (active_menu == 4) ? 0 : 4;
+                overlay_set(OVERLAY_NONE);
+                return;
+            }
+            if (x >= 267 && x < 330) {
+                active_menu = (active_menu == 5) ? 0 : 5;
+                overlay_set(OVERLAY_NONE);
+                return;
+            }
+            if (x >= (int)comp_width - 230 && x < (int)comp_width - 140) {
+                active_menu = 0;
+                overlay_set(OVERLAY_NONE);
+                app_open_window(APP_SETTINGS, "Settings");
+                if (app_window_index[APP_SETTINGS] >= 0) {
+                    app_states[app_window_index[APP_SETTINGS]].settings.page = SETTINGS_PAGE_USERS;
+                }
+                return;
+            }
+            if (x >= (int)comp_width - 140) {
+                active_menu = 0;
+                overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
+                return;
+            }
         }
 
         if (overlay == OVERLAY_SPOTLIGHT) {
@@ -4871,6 +6204,12 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             finder_set_path(&state->finder, "/System");
                         } else if (rel_y >= 72 && rel_y < 92) {
                             finder_set_path(&state->finder, "/Users");
+                        } else if (rel_y >= 92 && rel_y < 112) {
+                            finder_set_path(&state->finder, users_current_home());
+                        } else if (rel_y >= 112 && rel_y < 132) {
+                            char dpath[160];
+                            users_make_home_path(dpath, sizeof(dpath), "Desktop");
+                            finder_set_path(&state->finder, dpath);
                         }
                     } else {
                         int main_x = content_x + sidebar_w + 10;
@@ -4965,12 +6304,14 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 } else if (state->type == APP_SETTINGS) {
                     int content_x = win->x + 12;
                     int content_y = win->y + 40;
+                    int content_h = win->h - 52;
                     int sidebar_w = 160;
                     if (x >= content_x && x <= content_x + sidebar_w) {
                         int rel_y = y - (content_y + 16);
                         int idx = rel_y / 20;
                         if (idx >= 0 && idx < SETTINGS_PAGE_COUNT) {
                             state->settings.page = (SettingsPage)idx;
+                            state->settings.user_field = 0;
                         }
                     } else {
                         int main_x = content_x + sidebar_w + 10;
@@ -4993,6 +6334,49 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
                             x >= main_x + 230 && x <= main_x + 270 && y >= content_y + 110 && y <= content_y + 124) {
                             settings_toggle_reduced_motion();
+                        }
+                        if (state->settings.page == SETTINGS_PAGE_USERS) {
+                            if (x >= main_x + 92 && x <= main_x + 242 &&
+                                y >= content_y + 118 && y <= content_y + 138) {
+                                state->settings.user_field = 1;
+                            } else if (x >= main_x + 92 && x <= main_x + 242 &&
+                                       y >= content_y + 144 && y <= content_y + 164) {
+                                state->settings.user_field = 2;
+                            } else if (x >= main_x + 250 && x <= main_x + 336 &&
+                                       y >= content_y + 130 && y <= content_y + 154) {
+                                if (users_change_password(users_current_username(),
+                                                          state->settings.old_pw,
+                                                          state->settings.new_pw) == 0) {
+                                    strcpy(state->settings.msg, "Password updated & saved.");
+                                    state->settings.msg_ok = true;
+                                    state->settings.old_pw[0] = '\0';
+                                    state->settings.new_pw[0] = '\0';
+                                    state->settings.user_field = 0;
+                                } else {
+                                    strcpy(state->settings.msg, "Incorrect current password.");
+                                    state->settings.msg_ok = false;
+                                }
+                            }
+                            int by = content_y + content_h - 36;
+                            if (y >= by && y <= by + 24) {
+                                if (x >= main_x + 16 && x <= main_x + 128) {
+                                    login_create_mode = true;
+                                    login_active_field = 0;
+                                    login_full_name[0] = '\0';
+                                    login_username[0] = '\0';
+                                    login_password[0] = '\0';
+                                    login_confirm[0] = '\0';
+                                    login_status[0] = '\0';
+                                } else if (x >= main_x + 136 && x <= main_x + 232) {
+                                    users_lock_session();
+                                    login_password[0] = '\0';
+                                    login_status[0] = '\0';
+                                } else if (x >= main_x + 240 && x <= main_x + 338) {
+                                    users_logout();
+                                    login_password[0] = '\0';
+                                    login_status[0] = '\0';
+                                }
+                            }
                         }
                         if (state->settings.page == SETTINGS_PAGE_WALLPAPER) {
                             if (x >= main_x + 16 && x <= main_x + 96 && y >= content_y + 48 && y <= content_y + 98) {
@@ -5031,6 +6415,60 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                                 settings_get()->mouse_speed++;
                                 if (settings_get()->mouse_speed > 4) settings_get()->mouse_speed = 1;
                                 settings_save();
+                            }
+                        }
+                    }
+                } else if (state->type == APP_CALCULATOR) {
+                    CalculatorState *calc = &state->calc;
+                    int content_x = win->x + 12;
+                    int content_y = win->y + 40;
+                    int content_w = win->w - 24;
+                    int content_h = win->h - 52;
+                    int lcd_x = content_x + 12;
+                    int lcd_y = content_y + 10;
+                    int lcd_h = 44;
+                    int grid_y = lcd_y + lcd_h + 10;
+                    int grid_h = content_h - (lcd_h + 28);
+                    int cell_w = (content_w - 24 - 3 * 6) / 4;
+                    int cell_h = (grid_h - 4 * 6) / 5;
+                    if (cell_h < 22) cell_h = 22;
+
+                    for (int r = 0; r < 5; r++) {
+                        for (int c = 0; c < 4; c++) {
+                            int bx = lcd_x + c * (cell_w + 6);
+                            int by = grid_y + r * (cell_h + 6);
+                            if (x >= bx && x <= bx + cell_w && y >= by && y <= by + cell_h) {
+                                if (r == 0 && c == 0) calc_reset(calc);
+                                else if (r == 0 && c == 1) calc_press_neg(calc);
+                                else if (r == 0 && c == 2) {
+                                    int64_t v = calc_parse_display(calc) / 100;
+                                    calc_format_int64(v, calc->display, sizeof(calc->display));
+                                } else if (r == 0 && c == 3) calc_press_op(calc, '/');
+                                else if (r == 1 && c == 0) calc_press_digit(calc, '7');
+                                else if (r == 1 && c == 1) calc_press_digit(calc, '8');
+                                else if (r == 1 && c == 2) calc_press_digit(calc, '9');
+                                else if (r == 1 && c == 3) calc_press_op(calc, '*');
+                                else if (r == 2 && c == 0) calc_press_digit(calc, '4');
+                                else if (r == 2 && c == 1) calc_press_digit(calc, '5');
+                                else if (r == 2 && c == 2) calc_press_digit(calc, '6');
+                                else if (r == 2 && c == 3) calc_press_op(calc, '-');
+                                else if (r == 3 && c == 0) calc_press_digit(calc, '1');
+                                else if (r == 3 && c == 1) calc_press_digit(calc, '2');
+                                else if (r == 3 && c == 2) calc_press_digit(calc, '3');
+                                else if (r == 3 && c == 3) calc_press_op(calc, '+');
+                                else if (r == 4 && c == 0) calc_press_digit(calc, '0');
+                                else if (r == 4 && c == 1) {
+                                    calc_press_digit(calc, '0');
+                                    calc_press_digit(calc, '0');
+                                } else if (r == 4 && c == 2) {
+                                    size_t len = strlen(calc->display);
+                                    if (len > 1 && !calc->clear_next && !calc->has_error) {
+                                        calc->display[len - 1] = '\0';
+                                    } else {
+                                        strcpy(calc->display, "0");
+                                        calc->clear_next = true;
+                                    }
+                                } else if (r == 4 && c == 3) calc_press_eq(calc);
                             }
                         }
                     }
@@ -5394,6 +6832,22 @@ static void update_animations(void)
     if (anim_app_switcher > target_switcher) anim_app_switcher = MAX(0, anim_app_switcher - step);
 }
 
+void compositor_handle_right_click(int x, int y)
+{
+    cursor_x = x;
+    cursor_y = y;
+
+    if (login_screen_visible()) {
+        return;
+    }
+
+    active_menu = 0;
+    overlay_set(OVERLAY_NONE);
+    ctx_menu_open = true;
+    ctx_menu_x = x;
+    ctx_menu_y = y;
+}
+
 void compositor_tick(uint64_t now_ms)
 {
     if (now_ms - last_frame_ms < 33) {
@@ -5404,6 +6858,13 @@ void compositor_tick(uint64_t now_ms)
     update_animations();
 
     draw_wallpaper();
+
+    if (login_screen_visible()) {
+        draw_login_screen();
+        draw_cursor(cursor_x, cursor_y);
+        return;
+    }
+
     draw_desktop_icons();  /* Desktop sits under windows */
 
     if (anim_launchpad > 0) {
@@ -5438,6 +6899,9 @@ void compositor_tick(uint64_t now_ms)
     if (anim_app_switcher > 0) {
         draw_app_switcher(anim_app_switcher);
     }
+
+    draw_menu_dropdown();
+    draw_context_menu();
 
     draw_cursor(cursor_x, cursor_y);
 }

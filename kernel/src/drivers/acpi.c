@@ -88,7 +88,7 @@ static const void *find_fadt(void)
         uint32_t rsdt_addr = read32(rsdp + 16);
         if (!rsdt_addr) return NULL;
 
-        const uint8_t *rsdt = (const uint8_t *)rsdt_addr;
+        const uint8_t *rsdt = (const uint8_t *)(uintptr_t)rsdt_addr;
         uint32_t len = read32(rsdt + 4);
         if (!checksum_ok(rsdt, len)) return NULL;
 

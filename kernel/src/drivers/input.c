@@ -198,7 +198,7 @@ bool input_poll_event(InputEvent *event)
 bool input_wait_event(InputEvent *event)
 {
     while (!input_has_event()) {
-        __asm__ volatile("hlt");
+        hlt();
     }
 
     return input_poll_event(event);

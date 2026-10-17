@@ -13,7 +13,11 @@
 /*
  * Draw panic screen
  */
-static void draw_panic_screen(const char *message, InterruptFrame *frame)
+static void draw_panic_screen(const char *message
+#ifdef __x86_64__
+    , InterruptFrame *frame
+#endif
+)
 {
     uint32_t width = fb_get_width();
     uint32_t height = fb_get_height();
@@ -34,6 +38,7 @@ static void draw_panic_screen(const char *message, InterruptFrame *frame)
     fb_draw_string(60, y, "Error: ", COLOR_PANIC_TEXT, COLOR_PANIC_BG);
     fb_draw_string(60 + 7 * 8, y, message, COLOR_WHITE, COLOR_PANIC_BG);
 
+#ifdef __x86_64__
     /* Draw register dump if available */
     if (frame) {
         y += 40;
@@ -94,6 +99,7 @@ static void draw_panic_screen(const char *message, InterruptFrame *frame)
         fb_draw_string(460, y, "INT: ", COLOR_PANIC_TEXT, COLOR_PANIC_BG);
         fb_draw_string(460 + 5 * 8, y, buf, COLOR_WHITE, COLOR_PANIC_BG);
     }
+#endif
 
     /* Draw footer */
     y = height - 80;
@@ -123,7 +129,11 @@ void panic(const char *message)
     serial_printf("========================================\n");
 
     /* Draw panic screen */
+#ifdef __x86_64__
     draw_panic_screen(message, NULL);
+#else
+    draw_panic_screen(message);
+#endif
 
     /* Halt forever */
     while (1) {
@@ -131,6 +141,7 @@ void panic(const char *message)
     }
 }
 
+#ifdef __x86_64__
 /*
  * Panic with interrupt frame
  */
@@ -162,3 +173,4 @@ void panic_with_frame(const char *message, InterruptFrame *frame)
         hlt();
     }
 }
+#endif

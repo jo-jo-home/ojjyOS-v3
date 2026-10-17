@@ -3,6 +3,9 @@
 # ojjyOS v3 Build Script
 #
 # Builds the bootloader and kernel, creates a bootable disk image.
+# Supports both x86_64 and aarch64:
+#   ARCH=x86_64  bash scripts/build.sh
+#   ARCH=aarch64 bash scripts/build.sh
 #
 
 set -e
@@ -14,6 +17,20 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Detect or accept ARCH
+HOST_ARCH="$(uname -m)"
+if [ "$HOST_ARCH" = "arm64" ]; then
+    HOST_ARCH="aarch64"
+fi
+ARCH="${ARCH:-${1:-$HOST_ARCH}}"
+
+if [ "$ARCH" = "aarch64" ]; then
+    EFI_NAME="BOOTAA64.EFI"
+else
+    ARCH="x86_64"
+    EFI_NAME="BOOTX64.EFI"
+fi
+
 # Directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -22,12 +39,12 @@ BOOT_DIR="$ROOT_DIR/boot"
 KERNEL_DIR="$ROOT_DIR/kernel"
 
 # Output files
-BOOTLOADER="$BUILD_DIR/BOOTX64.EFI"
+BOOTLOADER="$BUILD_DIR/$EFI_NAME"
 KERNEL="$BUILD_DIR/kernel.bin"
 IMAGE="$BUILD_DIR/ojjyos3.img"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  ojjyOS v3 Build System${NC}"
+echo -e "${BLUE}  ojjyOS v3 Build System ($ARCH)${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo
 
@@ -35,16 +52,20 @@ echo
 mkdir -p "$BUILD_DIR"
 
 # Step 1: Build bootloader
-echo -e "${YELLOW}[1/5] Building bootloader...${NC}"
+echo -e "${YELLOW}[1/5] Building bootloader ($ARCH)...${NC}"
 if [ ! -f "/usr/include/efi/efi.h" ]; then
     echo -e "${RED}Error: gnu-efi headers not found (/usr/include/efi/efi.h)${NC}"
-    echo "Install with: sudo apt install -y gnu-efi"
+    echo "Install on Debian/Ubuntu with: sudo apt install -y gnu-efi"
     exit 1
 fi
 cd "$BOOT_DIR"
 make clean 2>/dev/null || true
-make
+make ARCH="$ARCH"
 cp ojjy-boot.efi "$BOOTLOADER"
+# For backwards compatibility with scripts expecting BOOTX64.EFI when ARCH=x86_64
+if [ "$ARCH" = "x86_64" ]; then
+    cp ojjy-boot.efi "$BUILD_DIR/BOOTX64.EFI"
+fi
 echo -e "${GREEN}      Bootloader built: $BOOTLOADER${NC}"
 
 # Step 2: Build filesystem image
@@ -53,23 +74,23 @@ cd "$ROOT_DIR"
 bash scripts/mkfs.sh
 
 # Step 3: Build kernel
-echo -e "${YELLOW}[3/5] Building kernel...${NC}"
+echo -e "${YELLOW}[3/5] Building kernel ($ARCH)...${NC}"
 cd "$KERNEL_DIR"
 make clean 2>/dev/null || true
-make
+make ARCH="$ARCH"
 cp kernel.bin "$KERNEL"
 echo -e "${GREEN}      Kernel built: $KERNEL${NC}"
 
 # Step 4: Create disk image
 echo -e "${YELLOW}[4/5] Creating disk image...${NC}"
 cd "$ROOT_DIR"
-bash scripts/mkimg.sh
+ARCH="$ARCH" bash scripts/mkimg.sh
 echo -e "${GREEN}      Disk image created: $IMAGE${NC}"
 
 # Step 5: Done
 echo
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}  Build complete!${NC}"
+echo -e "${GREEN}  Build complete ($ARCH)!${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo
 echo -e "Output files:"
@@ -77,6 +98,8 @@ echo -e "  Bootloader: ${BLUE}$BOOTLOADER${NC}"
 echo -e "  Kernel:     ${BLUE}$KERNEL${NC}"
 echo -e "  Disk Image: ${BLUE}$IMAGE${NC}"
 echo
-echo -e "To run in VirtualBox:"
+echo -e "To run in QEMU (Apple Silicon / aarch64 or x86_64):"
+echo -e "  ${YELLOW}bash scripts/run-qemu.sh $ARCH${NC}"
+echo -e "To run in VirtualBox (x86_64):"
 echo -e "  ${YELLOW}bash scripts/run.sh${NC}"
 echo

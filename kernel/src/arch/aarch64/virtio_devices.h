@@ -10,7 +10,7 @@
 #ifndef _OJJY_ARCH_VIRTIO_DEVICES_H
 #define _OJJY_ARCH_VIRTIO_DEVICES_H
 
-#include "../types.h"
+#include "types.h"
 
 /* Device attach hooks called by the transport during bus scan.
  * Return 0 on success. */

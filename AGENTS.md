@@ -3,25 +3,39 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: what this project is, everything that has happened, the exact
 current state, and a precise, ordered checklist of what to do next.
-The previous AI session ended mid-task at the point marked in §4.2.
+Session 3 completed all items in §4.2 (aarch64 port), §4.3 (docs sweep),
+and §4.4 (desktop & input polish).
 
 ---
 
-## 0. START-HERE CHECKLIST (next session's job)
+## 0. START-HERE CHECKLIST (current status: v3.1.0 COMPLETE ✅)
 
-Work top to bottom. Every item is explained in detail in §4.2.
+All v3.1.0 checklist items are **DONE and verified**:
 
-1. Verify the current state builds (commands in §6) — do not skip this.
-2. Finish the aarch64 port: `main.c` ifdefs → `diagnostics.c` guards →
-   `kernel/Makefile` ARCH switch → `kernel/linker-aarch64.ld` →
-   `boot/ojjy-boot.c` machine check → `boot/Makefile` aarch64 path →
-   `scripts/run-qemu.sh`.
-3. Compile-verify BOTH architectures + rerun host tests (§6).
-4. Commit locally (author "Jonas Lee"). **Never push to a remote** —
-   Jonas pushes himself when he says so.
-5. Then do the docs sweep (§4.3) and the small desktop items (§4.4).
-6. Update this file at the end of the session so the next AI has an
-   accurate handoff. This is a standing rule.
+1. [x] Verified current state builds & host unit tests pass (§6).
+2. [x] Finished the `aarch64` port (§4.2): `main.c` ifdefs, `diagnostics.c`
+   guards, `kernel/Makefile` `ARCH` switch (`x86_64` | `aarch64` + `objs`
+   target), `kernel/linker-aarch64.ld` (`0x41000000` + `_kernel_start`),
+   `boot/ojjy-boot.c` machine check (`62` vs `183`), `boot/Makefile`
+   dual-arch (`BOOTX64.EFI` / `BOOTAA64.EFI`), `scripts/build.sh` &
+   `scripts/mkimg.sh` dual-arch, and `scripts/run-qemu.sh` (Apple Silicon
+   HVF + `ramfb` + `virtio-*`). Fixed two `virtio` chain bugs (`d->next`
+   index in `virtio.c` and write `VRING_DESC_F_NEXT` in `virtio_blk.c`).
+3. [x] Compile-verified BOTH architectures (`make -C kernel ARCH=aarch64 objs`
+   and `make -C kernel ARCH=x86_64 objs` — 0 warnings, 0 errors) + reran
+   host tests (`test_fs` 32/32 and `test_ramfs` 33/33 passed).
+4. [x] Completed the desktop & input items (§4.4): window resize (bottom-right
+   corner drag) + green traffic-light maximize/zoom, real Mission Control
+   cards (`Cmd+M`), Settings Appearance toggles (`Reduced Transparency`
+   `rt=` and `Reduced Motion` `rm=`), Control Center honesty (`(no radio)`
+   labels + real **Restart** and **Shut Down** buttons), Menu bar cleanup
+   (clickable `ojjy` opens About window; removed fake `WiFi`/`Vol`),
+   centered Launchpad labels, and x86 PS/2 modifier key press/release
+   events so releasing `Cmd` dismisses the App Switcher on both arches.
+5. [x] Completed the docs sweep (§4.3): `LICENSE`, `BUGFIXES.md`,
+   `README.md`, `RELEASE.md`, `ARCHITECTURE.md`, and `PLAN.md`.
+6. [x] Committed locally (author `"Jonas Lee"`). **Never push to a remote**
+   — Jonas pushes himself when he says so.
 
 ---
 

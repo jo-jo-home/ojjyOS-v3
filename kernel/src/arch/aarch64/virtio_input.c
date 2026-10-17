@@ -18,9 +18,9 @@
 
 #include "virtio.h"
 #include "virtio_devices.h"
-#include "../drivers/input.h"
-#include "../serial.h"
-#include "../string.h"
+#include "drivers/input.h"
+#include "serial.h"
+#include "string.h"
 
 /* virtio-input config selectors */
 #define VIRTIO_INPUT_CFG_ABS_INFO    6

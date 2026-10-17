@@ -13,8 +13,8 @@
  */
 
 #include "arch_power.h"
-#include "../types.h"
-#include "../serial.h"
+#include "types.h"
+#include "serial.h"
 
 #define PSCI_SYSTEM_OFF     0x84000008UL
 #define PSCI_SYSTEM_RESET   0x84000009UL

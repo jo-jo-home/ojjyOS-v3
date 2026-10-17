@@ -54,6 +54,12 @@ static bool dragging = false;
 static int drag_index = -1;
 static int drag_dx = 0;
 static int drag_dy = 0;
+static bool resizing = false;
+static int resize_index = -1;
+static int resize_start_x = 0;
+static int resize_start_y = 0;
+static int resize_orig_w = 0;
+static int resize_orig_h = 0;
 static int cursor_x = 0;
 static int cursor_y = 0;
 
@@ -669,12 +675,25 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
     if (state->page == SETTINGS_PAGE_APPEARANCE) {
         fb_draw_string(main_x + 16, content_y + 16, "Appearance", theme->text, theme->dock_tint);
         fb_draw_string(main_x + 16, content_y + 42,
-                       settings->dark_mode ? "Dark" : "Light", theme->text_muted, theme->dock_tint);
-        fb_fill_rect(main_x + 100, content_y + 38, 40, 14, settings->dark_mode ? theme->accent : theme->accent_soft);
-        fb_draw_string(main_x + 16, content_y + 64,
-                       settings->time_24h ? "Time: 24-hour" : "Time: 12-hour",
+                       settings->dark_mode ? "Theme: Dark" : "Theme: Light", theme->text_muted, theme->dock_tint);
+        fb_fill_rect(main_x + 210, content_y + 38, 40, 14, settings->dark_mode ? theme->accent : theme->accent_soft);
+
+        fb_draw_string(main_x + 16, content_y + 66,
+                       settings->time_24h ? "Clock: 24-hour" : "Clock: 12-hour",
                        theme->text_muted, theme->dock_tint);
-        fb_fill_rect(main_x + 140, content_y + 60, 40, 14, settings->time_24h ? theme->accent : theme->accent_soft);
+        fb_fill_rect(main_x + 210, content_y + 62, 40, 14, settings->time_24h ? theme->accent : theme->accent_soft);
+
+        fb_draw_string(main_x + 16, content_y + 90,
+                       settings->reduced_transparency ? "Reduced Transparency: On" : "Reduced Transparency: Off",
+                       theme->text_muted, theme->dock_tint);
+        fb_fill_rect(main_x + 230, content_y + 86, 40, 14,
+                     settings->reduced_transparency ? theme->accent : theme->accent_soft);
+
+        fb_draw_string(main_x + 16, content_y + 114,
+                       settings->reduced_motion ? "Reduced Motion: On" : "Reduced Motion: Off",
+                       theme->text_muted, theme->dock_tint);
+        fb_fill_rect(main_x + 230, content_y + 110, 40, 14,
+                     settings->reduced_motion ? theme->accent : theme->accent_soft);
     } else if (state->page == SETTINGS_PAGE_WALLPAPER) {
         fb_draw_string(main_x + 16, content_y + 16, "Wallpaper", theme->text, theme->dock_tint);
         fb_fill_rect(main_x + 16, content_y + 48, 80, 50, theme->accent_soft);
@@ -1327,19 +1346,24 @@ static void draw_window(int idx)
 
     draw_shadow(draw_x, draw_y, draw_w, draw_h, r);
 
-    for (int py = draw_y; py < draw_y + draw_h; py++) {
-        for (int px = draw_x; px < draw_x + draw_w; px++) {
-            if (!point_in_rounded_rect(px, py, draw_x, draw_y, draw_w, draw_h, r)) {
-                continue;
+    if (settings_get()->reduced_transparency) {
+        Color solid = blend(theme->dock_tint, theme->glass_aqua, 215);
+        draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, solid, 255);
+    } else {
+        for (int py = draw_y; py < draw_y + draw_h; py++) {
+            for (int px = draw_x; px < draw_x + draw_w; px++) {
+                if (!point_in_rounded_rect(px, py, draw_x, draw_y, draw_w, draw_h, r)) {
+                    continue;
+                }
+                Color blurred = blur_sample(px, py, blur_px);
+                Color glass = blend(blurred, theme->glass_aqua, opacity);
+                fb_put_pixel(px, py, glass);
             }
-            Color blurred = blur_sample(px, py, blur_px);
-            Color glass = blend(blurred, theme->glass_aqua, opacity);
-            fb_put_pixel(px, py, glass);
         }
     }
 
     draw_rounded_rect_blend(draw_x, draw_y, draw_w, 32, r, theme->accent_soft, highlight);
-    fb_draw_string(draw_x + 16, draw_y + 10, win->title,
+    fb_draw_string(draw_x + 52, draw_y + 10, win->title,
                    theme->text, blend(theme->accent_soft, theme->glass_aqua, 24));
 
     fb_fill_rect(draw_x + 10, draw_y + 10, 8, 8, RGB(235, 92, 86));
@@ -1402,6 +1426,18 @@ static void draw_window(int idx)
             fb_fill_rect(dot_x, dot_y, 10, 10, theme->accent);
         }
     }
+
+    /* Bottom-right resize grip indicator when not maximized */
+    if (!win->maximized) {
+        int gx = draw_x + draw_w - 14;
+        int gy = draw_y + draw_h - 14;
+        for (int k = 0; k < 8; k++) {
+            fb_put_pixel(gx + 7 - k, gy + k, theme->text_muted);
+            if (k < 5) {
+                fb_put_pixel(gx + 7 - k, gy + 3 + k, theme->text_muted);
+            }
+        }
+    }
 }
 
 static void draw_wallpaper(void)
@@ -1445,9 +1481,8 @@ static void draw_menu_bar(void)
     str_append(time_buf, sizeof(time_buf), num);
     str_append(time_buf, sizeof(time_buf), suffix);
 
-    const char *status = "WiFi  Vol";
-    int status_x = (int)comp_width - 120;
-    fb_draw_string(status_x, 8, status, theme->text_muted, theme->dock_tint);
+    int status_x = (int)comp_width - 136;
+    fb_draw_string(status_x, 8, "Control", theme->text_muted, theme->dock_tint);
     fb_draw_string((int)comp_width - 70, 8, time_buf, theme->text, theme->dock_tint);
 }
 
@@ -1796,13 +1831,18 @@ static void draw_spotlight(int anim)
 
 static void draw_launchpad(int anim)
 {
-    int blur_radius = theme->glass.blur_px[2];
-    for (uint32_t y = 0; y < comp_height; y++) {
-        for (uint32_t x = 0; x < comp_width; x++) {
-            Color blurred = blur_sample((int)x, (int)y, blur_radius);
-            Color blended = blend(blurred, theme->dock_tint, 80);
-            Color base = fb_get_pixel((int)x, (int)y);
-            fb_put_pixel((int)x, (int)y, blend(base, blended, overlay_alpha(220, anim)));
+    if (settings_get()->reduced_transparency) {
+        draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0,
+                                theme->dock_tint, overlay_alpha(230, anim));
+    } else {
+        int blur_radius = theme->glass.blur_px[2];
+        for (uint32_t y = 0; y < comp_height; y++) {
+            for (uint32_t x = 0; x < comp_width; x++) {
+                Color blurred = blur_sample((int)x, (int)y, blur_radius);
+                Color blended = blend(blurred, theme->dock_tint, 80);
+                Color base = fb_get_pixel((int)x, (int)y);
+                fb_put_pixel((int)x, (int)y, blend(base, blended, overlay_alpha(220, anim)));
+            }
         }
     }
 
@@ -1840,35 +1880,125 @@ static void draw_control_center(int anim)
 
     draw_shadow(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r);
     draw_rounded_rect_blend(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r,
-                            theme->dock_tint, overlay_alpha(140, anim));
+                            theme->dock_tint, overlay_alpha(165, anim));
 
     SettingsState *settings = settings_get();
 
     fb_draw_string(x + 16, y + 12, "Control Center", theme->text, theme->dock_tint);
 
-    int toggle_y = y + 44;
-    fb_draw_string(x + 16, toggle_y, settings->wifi_enabled ? "Wi-Fi: On" : "Wi-Fi: Off",
-                   theme->text, theme->dock_tint);
+    int toggle_y = y + 40;
+    fb_draw_string(x + 16, toggle_y,
+                   settings->wifi_enabled ? "Wi-Fi: On (no radio)" : "Wi-Fi: Off (no radio)",
+                   theme->text_muted, theme->dock_tint);
     fb_draw_string(x + 16, toggle_y + 22,
-                   settings->bluetooth_enabled ? "Bluetooth: On" : "Bluetooth: Off",
-                   theme->text, theme->dock_tint);
+                   settings->bluetooth_enabled ? "Bluetooth: On (no radio)" : "Bluetooth: Off (no radio)",
+                   theme->text_muted, theme->dock_tint);
     fb_draw_string(x + 16, toggle_y + 44,
                    settings->dark_mode ? "Appearance: Dark" : "Appearance: Light",
                    theme->text, theme->dock_tint);
+    fb_draw_string(x + 16, toggle_y + 66,
+                   settings->reduced_transparency ? "Transparency: Reduced" : "Transparency: Glass",
+                   theme->text, theme->dock_tint);
 
-    fb_draw_string(x + 16, toggle_y + 76, "Volume", theme->text_muted, theme->dock_tint);
-    fb_fill_rect(x + 16, toggle_y + 92, settings->volume, 6, theme->accent);
+    /* Real power controls: Restart and Shut Down */
+    int btn_y = y + CONTROL_CENTER_HEIGHT - 44;
+    int btn_w = (CONTROL_CENTER_WIDTH - 40) / 2;
+    int btn_h = 28;
+    draw_rounded_rect_blend(x + 16, btn_y, btn_w, btn_h, 8, theme->accent_soft, overlay_alpha(180, anim));
+    fb_draw_string(x + 16 + (btn_w - 7 * 8) / 2, btn_y + 8, "Restart", theme->text, theme->accent_soft);
 
-    fb_draw_string(x + 16, toggle_y + 112, "Brightness", theme->text_muted, theme->dock_tint);
-    fb_fill_rect(x + 16, toggle_y + 128, settings->brightness, 6, theme->accent_soft);
+    draw_rounded_rect_blend(x + 24 + btn_w, btn_y, btn_w, btn_h, 8, RGB(215, 76, 70), overlay_alpha(190, anim));
+    fb_draw_string(x + 24 + btn_w + (btn_w - 9 * 8) / 2, btn_y + 8, "Shut Down", COLOR_WHITE, RGB(215, 76, 70));
+}
+
+static void mission_control_card_rect(int idx, int total, int *cx, int *cy, int *cw, int *ch)
+{
+    int cols = (total <= 4) ? total : 4;
+    if (cols < 1) cols = 1;
+    int rows = (total + cols - 1) / cols;
+    int card_w = 210;
+    int card_h = 132;
+    int gap_x = 24;
+    int gap_y = 24;
+
+    int row = idx / cols;
+    int col = idx % cols;
+    int cols_in_row = (row == rows - 1 && (total % cols) != 0) ? (total % cols) : cols;
+
+    int row_w = cols_in_row * card_w + (cols_in_row - 1) * gap_x;
+    int total_h = rows * card_h + (rows - 1) * gap_y;
+
+    int start_x = ((int)comp_width - row_w) / 2;
+    int start_y = ((int)comp_height - total_h) / 2;
+
+    *cx = start_x + col * (card_w + gap_x);
+    *cy = start_y + row * (card_h + gap_y);
+    *cw = card_w;
+    *ch = card_h;
 }
 
 static void draw_mission_control(int anim)
 {
     draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0,
-                            theme->dock_tint, overlay_alpha(140, anim));
-    fb_draw_string(((int)comp_width - 220) / 2, 120,
-                   "Mission Control (Phase 2)", theme->text, theme->dock_tint);
+                            theme->dock_tint, overlay_alpha(160, anim));
+
+    const char *header = "Mission Control";
+    fb_draw_string(((int)comp_width - (int)strlen(header) * 8) / 2, 64,
+                   header, theme->text, theme->dock_tint);
+
+    if (window_count == 0) {
+        const char *empty = "No open windows — click anywhere or press Esc to return";
+        fb_draw_string(((int)comp_width - (int)strlen(empty) * 8) / 2, (int)comp_height / 2,
+                       empty, theme->text_muted, theme->dock_tint);
+        return;
+    }
+
+    for (int i = 0; i < window_count; i++) {
+        int cx, cy, cw, ch;
+        mission_control_card_rect(i, window_count, &cx, &cy, &cw, &ch);
+        cy -= overlay_offset(anim, 16);
+
+        CompositorWindow *win = &windows[i];
+        AppWindowState *state = &app_states[i];
+
+        draw_shadow(cx, cy, cw, ch, 14);
+        Color card_bg = (i == active_window_index)
+            ? blend(theme->glass_aqua, theme->accent, 65)
+            : theme->glass_aqua;
+        draw_rounded_rect_blend(cx, cy, cw, ch, 14, card_bg, overlay_alpha(210, anim));
+
+        /* Header bar inside card */
+        draw_rounded_rect_blend(cx + 8, cy + 8, cw - 16, 24, 8,
+                                theme->accent_soft, overlay_alpha(140, anim));
+
+        /* App icon */
+        int aidx = app_registry_find_by_name(win->title);
+        AppInfo *app = app_registry_get(aidx);
+        if (app && app->icon.valid) {
+            draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, cx + 16, cy + 42, 40);
+        } else {
+            fb_fill_rect(cx + 16, cy + 42, 40, 40, theme->accent);
+        }
+
+        fb_draw_string(cx + 16, cy + 14, win->title, theme->text, theme->accent_soft);
+
+        const char *status_label = win->minimized ? "Minimized" :
+                                   (i == active_window_index ? "Active Window" : "Open Window");
+        fb_draw_string(cx + 68, cy + 52, status_label, theme->text, card_bg);
+
+        char dim_buf[32];
+        char num[12];
+        dim_buf[0] = '\0';
+        utoa((uint32_t)win->w, num, 10);
+        str_append(dim_buf, sizeof(dim_buf), num);
+        str_append(dim_buf, sizeof(dim_buf), "x");
+        utoa((uint32_t)win->h, num, 10);
+        str_append(dim_buf, sizeof(dim_buf), num);
+        fb_draw_string(cx + 68, cy + 72, dim_buf, theme->text_muted, card_bg);
+
+        fb_draw_string(cx + 16, cy + ch - 22, "Click to focus", theme->text_muted, card_bg);
+        (void)state;
+    }
 }
 
 static void draw_app_switcher(int anim)
@@ -2524,6 +2654,9 @@ static void raise_window_to_top(int idx)
     if (drag_index == idx) drag_index = window_count - 1;
     else if (drag_index > idx) drag_index--;
 
+    if (resize_index == idx) resize_index = window_count - 1;
+    else if (resize_index > idx) resize_index--;
+
     active_window_index = window_count - 1;
     rebuild_app_window_index();
 
@@ -2567,6 +2700,12 @@ static int destroy_window_internal(int id)
         drag_index = -1;
     } else if (drag_index > idx) {
         drag_index--;
+    }
+    if (resize_index == idx) {
+        resizing = false;
+        resize_index = -1;
+    } else if (resize_index > idx) {
+        resize_index--;
     }
     if (active_window_index == idx) {
         active_window_index = window_count - 1;
@@ -3746,6 +3885,8 @@ void compositor_init(uint32_t width, uint32_t height)
     wallpaper_loaded = false;
     dragging = false;
     drag_index = -1;
+    resizing = false;
+    resize_index = -1;
     cursor_x = (int)width / 2;
     cursor_y = (int)height / 2;
     active_app_name[0] = 'F';
@@ -4519,26 +4660,30 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
             int panel_y = MENU_BAR_HEIGHT + 10;
             if (x >= panel_x && x <= panel_x + CONTROL_CENTER_WIDTH &&
                 y >= panel_y && y <= panel_y + CONTROL_CENTER_HEIGHT) {
-                if (y >= panel_y + 44 && y < panel_y + 66) {
+                int toggle_y = panel_y + 40;
+                int btn_y = panel_y + CONTROL_CENTER_HEIGHT - 44;
+                int btn_w = (CONTROL_CENTER_WIDTH - 40) / 2;
+                int btn_h = 28;
+                if (y >= toggle_y && y < toggle_y + 20) {
                     settings_toggle_wifi();
-                } else if (y >= panel_y + 66 && y < panel_y + 88) {
+                } else if (y >= toggle_y + 22 && y < toggle_y + 42) {
                     settings_toggle_bluetooth();
-                } else if (y >= panel_y + 88 && y < panel_y + 110) {
+                } else if (y >= toggle_y + 44 && y < toggle_y + 64) {
                     settings_toggle_dark_mode();
                     compositor_set_dark_mode(settings_get()->dark_mode);
                     compositor_set_wallpaper(settings_get()->dark_mode
                         ? "/System/Wallpapers/Tahoe Dark.raw"
                         : "/System/Wallpapers/Tahoe Light.raw");
-                } else if (y >= panel_y + 136 && y < panel_y + 146) {
-                    int value = x - (panel_x + 16);
-                    if (value < 0) value = 0;
-                    if (value > 100) value = 100;
-                    settings_set_volume((uint8_t)value);
-                } else if (y >= panel_y + 172 && y < panel_y + 182) {
-                    int value = x - (panel_x + 16);
-                    if (value < 0) value = 0;
-                    if (value > 100) value = 100;
-                    settings_set_brightness((uint8_t)value);
+                } else if (y >= toggle_y + 66 && y < toggle_y + 86) {
+                    settings_toggle_reduced_transparency();
+                } else if (y >= btn_y && y <= btn_y + btn_h) {
+                    if (x >= panel_x + 16 && x <= panel_x + 16 + btn_w) {
+                        overlay_set(OVERLAY_NONE);
+                        system_request_restart();
+                    } else if (x >= panel_x + 24 + btn_w && x <= panel_x + 24 + 2 * btn_w) {
+                        overlay_set(OVERLAY_NONE);
+                        system_request_shutdown();
+                    }
                 }
                 return;
             }
@@ -4547,6 +4692,19 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
         }
 
         if (overlay == OVERLAY_MISSION_CONTROL) {
+            for (int i = 0; i < window_count; i++) {
+                int cx, cy, cw, ch;
+                mission_control_card_rect(i, window_count, &cx, &cy, &cw, &ch);
+                if (x >= cx && x <= cx + cw && y >= cy && y <= cy + ch) {
+                    windows[i].minimized = false;
+                    strncpy(active_app_name, app_name_from_type(app_states[i].type),
+                            sizeof(active_app_name) - 1);
+                    active_app_name[sizeof(active_app_name) - 1] = '\0';
+                    raise_window_to_top(i);
+                    overlay_set(OVERLAY_NONE);
+                    return;
+                }
+            }
             overlay_set(OVERLAY_NONE);
             return;
         }
@@ -4625,8 +4783,20 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         wm_hooks.on_focus(win->id);
                     }
 
-                if (y < win->y + 32) {
-                    /* Traffic lights: close (red), minimize (yellow) */
+                if (!win->maximized &&
+                    x >= win->x + win->w - 18 && y >= win->y + win->h - 18) {
+                    resizing = true;
+                    resize_index = i;
+                    resize_start_x = x;
+                    resize_start_y = y;
+                    resize_orig_w = win->w;
+                    resize_orig_h = win->h;
+                    if (i != window_count - 1) {
+                        raise_window_to_top(i);
+                    }
+                    break;
+                } else if (y < win->y + 32) {
+                    /* Traffic lights: close (red), minimize (yellow), maximize/zoom (green) */
                     if (x >= win->x + 10 && x <= win->x + 18 && y >= win->y + 10 && y <= win->y + 18) {
                         AppType closing = state->type;
                         destroy_window_internal(win->id);
@@ -4643,12 +4813,36 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     } else if (x >= win->x + 22 && x <= win->x + 30 && y >= win->y + 10 && y <= win->y + 18) {
                         win->minimized = true;
                         return;
+                    } else if (x >= win->x + 34 && x <= win->x + 42 && y >= win->y + 10 && y <= win->y + 18) {
+                        if (win->maximized) {
+                            win->x = win->saved_x;
+                            win->y = win->saved_y;
+                            win->w = win->saved_w;
+                            win->h = win->saved_h;
+                            win->maximized = false;
+                        } else {
+                            win->saved_x = win->x;
+                            win->saved_y = win->y;
+                            win->saved_w = win->w;
+                            win->saved_h = win->h;
+                            win->x = 12;
+                            win->y = MENU_BAR_HEIGHT + 8;
+                            win->w = (int)comp_width - 24;
+                            win->h = (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 36;
+                            win->maximized = true;
+                        }
+                        if (i != window_count - 1) {
+                            raise_window_to_top(i);
+                        }
+                        return;
                     }
 
-                    dragging = true;
-                    drag_index = i;
-                    drag_dx = x - win->x;
-                    drag_dy = y - win->y;
+                    if (!win->maximized) {
+                        dragging = true;
+                        drag_index = i;
+                        drag_dx = x - win->x;
+                        drag_dy = y - win->y;
+                    }
                 } else if (state->type == APP_FINDER) {
                     int content_x = win->x + 12;
                     int content_y = win->y + 40;
@@ -4781,7 +4975,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     } else {
                         int main_x = content_x + sidebar_w + 10;
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
-                            x >= main_x + 100 && x <= main_x + 140 && y >= content_y + 38 && y <= content_y + 52) {
+                            x >= main_x + 210 && x <= main_x + 250 && y >= content_y + 38 && y <= content_y + 52) {
                             settings_toggle_dark_mode();
                             compositor_set_dark_mode(settings_get()->dark_mode);
                             compositor_set_wallpaper(settings_get()->dark_mode
@@ -4789,8 +4983,16 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                                 : "/System/Wallpapers/Tahoe Light.raw");
                         }
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
-                            x >= main_x + 140 && x <= main_x + 180 && y >= content_y + 60 && y <= content_y + 74) {
+                            x >= main_x + 210 && x <= main_x + 250 && y >= content_y + 62 && y <= content_y + 76) {
                             settings_toggle_time_format();
+                        }
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
+                            x >= main_x + 230 && x <= main_x + 270 && y >= content_y + 86 && y <= content_y + 100) {
+                            settings_toggle_reduced_transparency();
+                        }
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
+                            x >= main_x + 230 && x <= main_x + 270 && y >= content_y + 110 && y <= content_y + 124) {
+                            settings_toggle_reduced_motion();
                         }
                         if (state->settings.page == SETTINGS_PAGE_WALLPAPER) {
                             if (x >= main_x + 16 && x <= main_x + 96 && y >= content_y + 48 && y <= content_y + 98) {
@@ -4998,11 +5200,30 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
     if (up) {
         dragging = false;
         drag_index = -1;
+        resizing = false;
+        resize_index = -1;
     }
 
     if (dragging && drag_index >= 0 && drag_index < window_count) {
         windows[drag_index].x = x - drag_dx;
         windows[drag_index].y = y - drag_dy;
+    }
+
+    if (resizing && resize_index >= 0 && resize_index < window_count) {
+        CompositorWindow *win = &windows[resize_index];
+        int nw = resize_orig_w + (x - resize_start_x);
+        int nh = resize_orig_h + (y - resize_start_y);
+        int max_w = (int)comp_width - win->x - 8;
+        int max_h = (int)comp_height - DOCK_HEIGHT - 24 - win->y;
+        if (nw < 360) nw = 360;
+        if (nh < 220) nh = 220;
+        if (nw > max_w && max_w >= 360) nw = max_w;
+        if (nh > max_h && max_h >= 220) nh = max_h;
+        win->w = nw;
+        win->h = nh;
+        if (wm_hooks.on_resize) {
+            wm_hooks.on_resize(win->id, nw, nh);
+        }
     }
 }
 
@@ -5023,6 +5244,23 @@ void compositor_handle_mouse_move(int32_t dx, int32_t dy)
     if (dragging && drag_index >= 0 && drag_index < window_count) {
         windows[drag_index].x = cursor_x - drag_dx;
         windows[drag_index].y = cursor_y - drag_dy;
+    }
+
+    if (resizing && resize_index >= 0 && resize_index < window_count) {
+        CompositorWindow *win = &windows[resize_index];
+        int nw = resize_orig_w + (cursor_x - resize_start_x);
+        int nh = resize_orig_h + (cursor_y - resize_start_y);
+        int max_w = (int)comp_width - win->x - 8;
+        int max_h = (int)comp_height - DOCK_HEIGHT - 24 - win->y;
+        if (nw < 360) nw = 360;
+        if (nh < 220) nh = 220;
+        if (nw > max_w && max_w >= 360) nw = max_w;
+        if (nh > max_h && max_h >= 220) nh = max_h;
+        win->w = nw;
+        win->h = nh;
+        if (wm_hooks.on_resize) {
+            wm_hooks.on_resize(win->id, nw, nh);
+        }
     }
 }
 
@@ -5115,18 +5353,25 @@ void compositor_handle_key_release(KeyCode keycode, uint8_t modifiers)
 
 static void update_animations(void)
 {
+    bool no_motion = settings_get()->reduced_motion;
+
     for (int i = 0; i < window_count; i++) {
         CompositorWindow *win = &windows[i];
         if (win->animating) {
-            win->anim_open += 40;
-            if (win->anim_open >= 1000) {
+            if (no_motion) {
                 win->anim_open = 1000;
                 win->animating = false;
+            } else {
+                win->anim_open += 40;
+                if (win->anim_open >= 1000) {
+                    win->anim_open = 1000;
+                    win->animating = false;
+                }
             }
         }
     }
 
-    int step = 120;
+    int step = no_motion ? 1000 : 120;
     int target_spotlight = (overlay == OVERLAY_SPOTLIGHT) ? 1000 : 0;
     int target_launchpad = (overlay == OVERLAY_LAUNCHPAD) ? 1000 : 0;
     int target_control = (overlay == OVERLAY_CONTROL_CENTER) ? 1000 : 0;

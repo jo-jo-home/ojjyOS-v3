@@ -1,8 +1,56 @@
-# ojjyOS v3 Release Guide (Debian 13 + VirtualBox)
+# ojjyOS v3.1.0 Release & Run Guide (Apple Silicon QEMU + Debian / VirtualBox)
 
-This guide makes the project buildable on Debian 13 and bootable in VirtualBox on macOS.
+**Created by Jonas Lee**
 
-## 1) Debian 13 Environment Setup (copy/paste)
+This guide covers building and running **ojjyOS v3.1.0** both **natively on Apple Silicon (`aarch64`) via QEMU + HVF** and on **`x86_64` via QEMU or VirtualBox**.
+
+---
+
+## 1) Native Apple Silicon (`aarch64`) on macOS via QEMU
+
+Because VirtualBox on Apple Silicon cannot run `x86_64` VMs and ojjyOS v3.1.0 supports `aarch64` natively, the recommended way to run ojjyOS on an M1/M2/M3/M4 Mac is with `qemu-system-aarch64` and macOS Hypervisor.framework (`-accel hvf`).
+
+### A) Install macOS Host Prerequisites
+```bash
+brew install qemu nasm
+```
+
+### B) Verify Kernel Compilation Locally on macOS
+Apple's built-in `clang` cross-compiles both `aarch64` and `x86_64` kernel objects out of the box:
+```bash
+./scripts/mkfs.sh
+make -C kernel clean && make -C kernel ARCH=aarch64 objs
+make -C kernel clean && make -C kernel ARCH=x86_64 objs
+```
+
+### C) Build Full Disk Image (`build/ojjyos3.img`)
+Full ELF linking (`ld.lld`) and UEFI bootloader building (`gnu-efi`, `mtools`, `dosfstools`, `gdisk`) run on Debian Linux (e.g., a lightweight Debian ARM64 VM or container on your Mac):
+```bash
+sudo apt update
+sudo apt install -y build-essential clang lld nasm gnu-efi mtools dosfstools gdisk
+chmod +x scripts/*.sh
+ARCH=aarch64 ./scripts/build.sh
+```
+This produces:
+- `build/BOOTAA64.EFI` — ARM64 UEFI bootloader
+- `build/kernel.bin` — ARM64 ELF64 kernel linked at `0x41000000`
+- `build/ojjyos3.img` — 128 MB GPT disk image (32 MB EFI System Partition + 64 MB `ojjyOS Data` persistence partition)
+
+### D) Boot on macOS with HVF Acceleration
+```bash
+./scripts/run-qemu.sh aarch64
+```
+What `scripts/run-qemu.sh` configures automatically:
+- `-M virt,gic-version=2 -cpu host -accel hvf -m 2048` (falls back to `-cpu cortex-a72 -accel tcg` on non-Apple-Silicon hosts)
+- UEFI firmware (`edk2-aarch64-code.fd` from Homebrew `/opt/homebrew/share/qemu/`)
+- `-device ramfb` (UEFI GOP framebuffer at 1024x768x32)
+- `-device virtio-keyboard-device` and `-device virtio-tablet-device`
+- `-device virtio-blk-device` backed by `build/ojjyos3.img`
+- `-serial file:/tmp/ojjyos-serial.log`
+
+---
+
+## 2) Debian 13 (`x86_64` or `aarch64`) Build Setup
 
 ```bash
 sudo apt update
@@ -15,136 +63,61 @@ sudo apt install -y \
   mtools \
   dosfstools \
   gdisk \
-  vim-common \
   git
 
-git clone <YOUR_REPO_URL>
-cd ojjyos-v3
 chmod +x scripts/*.sh
 
+# Build for the host architecture (or pass ARCH=aarch64 / ARCH=x86_64 explicitly):
 ./scripts/build.sh
 ```
 
-Toolchain choice:
-- Bootloader: GCC + gnu-efi
-- Kernel: clang + lld
+Artifacts produced in `build/`:
+- `build/BOOTAA64.EFI` (when `ARCH=aarch64`) or `build/BOOTX64.EFI` (when `ARCH=x86_64`)
+- `build/kernel.bin` — ELF64 kernel binary
+- `build/ojjyos3.img` — 128 MB bootable GPT disk image
+- `kernel/src/fs/system_fs.h` — embedded OJFS system image header
 
-## 2) Build Scripts + Artifacts
+---
 
-Primary build:
-```bash
-./scripts/build.sh
-```
+## 3) VirtualBox (`x86_64` Host) — Step-by-Step
 
-Artifacts:
-- `build/BOOTX64.EFI` — UEFI bootloader
-- `build/kernel.bin` — kernel binary
-- `build/ojjyos3.img` — VirtualBox‑bootable disk image
-- `kernel/src/fs/system_fs.h` — embedded OJFS image header
+1. Run `ARCH=x86_64 ./scripts/build.sh` and `./scripts/run.sh`, or configure manually:
+2. **System → MotherBoard:** Enable **EFI**, RAM **2048 MB**
+3. **Display → Screen:** Video Memory **128 MB**, Graphics Controller **VMSVGA**
+4. **Storage:** Add **IDE (PIIX4)** controller and attach `build/ojjyos3.img` (or `build/ojjyos3.vdi`) as **IDE Primary Master**
+5. **Serial Ports:** Port 1 **COM1**, Mode **Raw File** $\rightarrow$ `/tmp/ojjyos-serial.log`
 
-If build fails with `efi.h` missing:
-```bash
-sudo apt install -y gnu-efi
-```
+---
 
-## 3) VirtualBox (macOS host) — Click‑by‑Click (Beginner)
+## 4) Debugging & Serial Log
 
-### A) Create the VM
-1) Open **VirtualBox**
-2) Click **New**
-3) Name: `ojjyOS-v3`
-4) Type: **Other**
-5) Version: **Other/Unknown (64‑bit)**
-6) Click **Next**
-7) Memory: **2048 MB** → **Next**
-8) Select **Use an existing virtual hard disk file**
-9) Click the folder icon → choose `build/ojjyos3.img` (or `build/ojjyos3.vdi`)
-10) Click **Create**
-
-### B) Set the correct VM options
-1) Select `ojjyOS-v3` → click **Settings**
-2) **System** → check **Enable EFI**
-3) **System** → **Processor** → set **2 CPUs**
-4) **Display** → **Video Memory** → **128 MB**
-5) **Display** → **Graphics Controller** → **VMSVGA**
-
-### C) Attach disk to IDE (required)
-1) **Storage** → click **Controller: SATA** (if present)
-2) Click **Add Controller** → choose **IDE (PIIX4)**
-3) Under IDE controller, click **Add Hard Disk**
-4) Choose **Existing Disk** → select `build/ojjyos3.img` (or `.vdi`)
-5) Ensure it shows as **IDE Primary Master**
-6) Click **OK**
-
-### D) Boot
-1) Select the VM → click **Start**
-2) Expect: splash screen → console prompt
-3) Type `ui` to enter the Tahoe UI
-
-First boot expectations:
-- Boot splash
-- Console prompt
-- `ui` command launches Tahoe UI
-
-## 4) Debug Guide
-
-Serial logging (VirtualBox):
-1) VM Settings → **Serial Ports**
-2) Enable **Port 1**
-3) Port: **COM1** (0x3F8 / IRQ 4)
-4) Mode: **Raw File** → `/tmp/ojjyos-serial.log`
-
-View logs:
+Watch real-time kernel and compositor logs:
 ```bash
 tail -f /tmp/ojjyos-serial.log
 ```
 
-Interpreting boot failures:
-- **No splash** → UEFI bootloader not found (check disk + EFI)
-- **Serial stops after VFS init** → filesystem image missing (re‑run `./scripts/build.sh`)
-- **No disk detected** → IDE controller missing (use PIIX4 IDE)
+Common troubleshooting:
+- **`UEFI firmware not found` when running `run-qemu.sh`**: Run `brew install qemu` on macOS or `sudo apt install qemu-efi-aarch64 ovmf` on Debian.
+- **`Architecture mismatch` in bootloader**: Ensure `build/ojjyos3.img` was built with matching `ARCH=aarch64` or `ARCH=x86_64`.
+- **Disk persistence**: Writable changes in `/Users` and `/Library` are automatically saved to the `ojjyOS Data` GPT partition every 30 seconds when dirty, on `sync`, and when clicking **Restart** or **Shut Down** in Control Center.
 
-Safe mode:
-- Not implemented. If UI fails, reboot and stay in console mode (don’t run `ui`).
+---
 
-Known issues:
-- Full‑frame blur can be heavy in VirtualBox.
-- RAMFS is in‑memory only (no persistence across reboots).
+## 5) End-User Guide (macOS Tahoe Blue Glass Desktop)
 
-## 5) End‑User Guide (Tahoe‑like)
-
-Desktop tour:
-- Top menu bar shows active app + time
-- Dock at bottom with magnification
-- Spotlight, Launchpad, Control Center overlays
-
-Shortcuts:
-- **Super+Space** → Spotlight
-- **Super+L** → Launchpad
-- **Super+C** → Control Center
-- **Super+Tab** → App switcher
-
-Finder:
-- Open Finder from Dock
-- Browse `/Users`, `/Applications`, `/System`
-- Rename: select item → `R`
-- Delete: select item → Delete
-
-Wallpaper:
-- Open **Settings** → Wallpaper → Tahoe Light/Dark
-- Or open **Preview** and click the thumbnail
-
-Shutdown/Restart:
-- Not implemented. Close VM window → Power Off (VirtualBox).
-
-## 6) Acceptance Checklist (one‑page)
-
-Done when you see:
-- VM boots to splash + console prompt
-- `ui` shows glass window + dock + menu bar
-- Spotlight opens with Super+Space
-- Launchpad opens with Super+L
-- Finder opens, list shows Name/Type/Size
-- TextEdit opens a file from Finder
-- Calendar shows month grid + agenda
-- Settings toggles 12/24‑hour clock
+- **Boot Splash & Console:** Boots with an ASCII-art `ojjyOS` splash screen and staged progress bar into the interactive console (`help`, `ls`, `cat`, `diag`, `sync`, `shutdown`, `reboot`, `ui`).
+- **Launching the Desktop:** Type `ui` (or `ui dark`) at the console prompt.
+- **Window Controls:**
+  - **Red traffic light** or `Cmd+Q`: Close window
+  - **Yellow traffic light**: Minimize window to Dock (click its Dock icon or Mission Control card to restore)
+  - **Green traffic light**: Maximize / Zoom window to fill desktop (click again to restore previous bounds)
+  - **Bottom-right corner grip**: Drag to resize window (`360x220` minimum)
+- **Menu Bar:**
+  - Click **`ojjy`** on the far left to open **About ojjyOS** ("Created by Jonas Lee")
+  - Click the **right status/clock cluster** to open **Control Center** (toggle Wi-Fi, Bluetooth, Dark/Light appearance, Reduced Transparency, or trigger **Restart** / **Shut Down**)
+- **Overlays:**
+  - `Cmd+Space` — Spotlight search
+  - `Cmd+L` — Launchpad (full centered app names)
+  - `Cmd+C` — Control Center
+  - `Cmd+M` — Mission Control (shows cards for all open windows; click any card to focus/restore)
+  - `Cmd+Tab` — App Switcher (release `Cmd` or click an icon to switch)

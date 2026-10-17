@@ -22,8 +22,8 @@
 #ifndef _OJJY_ARCH_AARCH64_H
 #define _OJJY_ARCH_AARCH64_H
 
-#include "../types.h"
-#include "../boot_info.h"
+#include "types.h"
+#include "boot_info.h"
 
 /*
  * Initialize the platform: GIC interrupt controller, virtio devices.
@@ -48,4 +48,15 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr);
  */
 void a64_poll_input(void);
 
+static inline void interrupts_enable(void)
+{
+    sti();
+}
+
+static inline void interrupts_disable(void)
+{
+    cli();
+}
+
 #endif /* _OJJY_ARCH_AARCH64_H */
+

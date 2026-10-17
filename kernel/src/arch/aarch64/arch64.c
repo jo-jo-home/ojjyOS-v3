@@ -8,10 +8,12 @@
 #include "gicv2.h"
 #include "virtio.h"
 #include "virtio_devices.h"
-#include "../serial.h"
-#include "../timer.h"
-#include "../drivers/rtc.h"
-#include "../types.h"
+#include "serial.h"
+#include "framebuffer.h"
+#include "console.h"
+#include "timer.h"
+#include "drivers/rtc.h"
+#include "types.h"
 
 /* Implemented in timer_a64.c: re-arms the EL1 physical timer and
  * advances the millisecond tick counter. */
@@ -66,6 +68,24 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
     serial_printf("  ELR_EL1 = 0x%x\n", (unsigned int)elr);
     serial_printf("  SPSR_EL1 = 0x%x\n", (unsigned int)spsr);
     serial_printf("System halted.\n");
+
+    if (fb_get_width() > 0 && fb_get_height() > 0) {
+        fb_clear(RGB(140, 20, 20));
+        console_set_colors(COLOR_WHITE, RGB(140, 20, 20));
+        console_clear();
+        console_printf("\n  ========================================\n");
+        console_printf("       ojjyOS Kernel Panic (aarch64)\n");
+        console_printf("  ========================================\n\n");
+        console_printf("  Synchronous Exception at EL1\n");
+        console_printf("  ESR_EL1:  0x%x (EC=0x%x, ISS=0x%x)\n",
+            (unsigned int)esr,
+            (unsigned int)((esr >> 26) & 0x3F),
+            (unsigned int)(esr & 0x1FFFFFF));
+        console_printf("  ELR_EL1:  0x%x\n", (unsigned int)elr);
+        console_printf("  SPSR_EL1: 0x%x\n\n", (unsigned int)spsr);
+        console_printf("  System halted.\n");
+    }
+
     while (1) {
         __asm__ volatile("wfi");
     }

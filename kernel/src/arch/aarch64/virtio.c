@@ -6,8 +6,8 @@
 
 #include "virtio.h"
 #include "virtio_devices.h"
-#include "../serial.h"
-#include "../string.h"
+#include "serial.h"
+#include "string.h"
 
 static inline volatile uint32_t *vio_reg(uint32_t base, uint32_t off)
 {
@@ -103,7 +103,7 @@ uint16_t virtio_desc_add(VirtQueue *vq, uint64_t addr, uint32_t len, uint16_t fl
     d->addr = addr;
     d->len = len;
     d->flags = flags;
-    d->next = 0;
+    d->next = (flags & VRING_DESC_F_NEXT) ? (uint16_t)(idx + 1) : 0;
 
     if (idx + 1 < VQ_SIZE) {
         vq->free_head = (uint16_t)(idx + 1);

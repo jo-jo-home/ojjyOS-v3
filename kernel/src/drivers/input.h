@@ -160,6 +160,7 @@ bool input_peek_event(InputEvent *event);   /* Look without removing */
 void input_get_mouse_position(int32_t *x, int32_t *y);
 void input_set_mouse_position(int32_t x, int32_t y);
 void input_set_mouse_bounds(int32_t width, int32_t height);
+void input_get_bounds(int32_t *width, int32_t *height);
 bool input_is_mouse_button_down(MouseButton button);
 uint8_t input_get_mouse_buttons(void);      /* Bitmask of pressed buttons */
 

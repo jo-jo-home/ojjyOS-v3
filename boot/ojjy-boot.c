@@ -54,7 +54,16 @@ typedef void (*KernelEntry)(BootInfo *info);
 #define ELFDATA2LSB     1
 #define ET_EXEC         2
 #define EM_X86_64       62
+#define EM_AARCH64      183
 #define PT_LOAD         1
+
+#if defined(__x86_64__)
+  #define OJJY_EXPECTED_MACHINE EM_X86_64
+#elif defined(__aarch64__)
+  #define OJJY_EXPECTED_MACHINE EM_AARCH64
+#else
+  #error "Unsupported boot architecture"
+#endif
 
 typedef struct {
     UINT8   e_ident[16];
@@ -100,7 +109,7 @@ EFIAPI
 efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
-    BootInfo *boot_info;
+    BootInfo *boot_info = NULL;
     UINT64 kernel_entry;
     UINTN map_key;
 
@@ -115,8 +124,13 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     Print(L"ojjyOS v3 Bootloader\n");
     Print(L"====================\n\n");
 
-    /* Setup boot info structure at fixed address */
-    boot_info = (BootInfo *)BOOT_INFO_ADDR;
+    /* Allocate boot info in EfiLoaderData RAM (preserved by kernel PMM).
+     * On aarch64 QEMU virt, 0x500 is pflash0 ROM, so dynamic allocation is
+     * required; fall back to BOOT_INFO_ADDR on x86 if AllocatePool fails. */
+    status = BS->AllocatePool(EfiLoaderData, sizeof(BootInfo), (void **)&boot_info);
+    if (EFI_ERROR(status) || !boot_info) {
+        boot_info = (BootInfo *)BOOT_INFO_ADDR;
+    }
     SetMem(boot_info, sizeof(BootInfo), 0);
 
     /* Step 1: Setup framebuffer via GOP */
@@ -181,7 +195,11 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 
     /* Should never return */
     while (1) {
+#ifdef __aarch64__
+        __asm__ volatile("wfi");
+#else
         __asm__ volatile("hlt");
+#endif
     }
 
 error:
@@ -379,8 +397,8 @@ LoadKernel(EFI_HANDLE ImageHandle, UINT64 *entry_point)
         ehdr.e_ident[EI_CLASS] != ELFCLASS64 ||
         ehdr.e_ident[EI_DATA] != ELFDATA2LSB ||
         ehdr.e_type != ET_EXEC ||
-        ehdr.e_machine != EM_X86_64) {
-        Print(L"[FAIL] kernel.bin is not a static x86_64 ELF executable\n");
+        ehdr.e_machine != OJJY_EXPECTED_MACHINE) {
+        Print(L"[FAIL] kernel.bin is not a static ELF64 executable for this architecture\n");
         kernel_file->Close(kernel_file);
         root->Close(root);
         return EFI_LOAD_ERROR;

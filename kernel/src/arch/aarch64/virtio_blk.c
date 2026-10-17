@@ -12,9 +12,9 @@
 
 #include "virtio.h"
 #include "virtio_devices.h"
-#include "../drivers/blockdev.h"
-#include "../serial.h"
-#include "../string.h"
+#include "drivers/blockdev.h"
+#include "serial.h"
+#include "string.h"
 
 #define VIRTIO_BLK_T_IN    0
 #define VIRTIO_BLK_T_OUT   1
@@ -90,7 +90,7 @@ static int blk_transfer_sector(uint64_t lba, void *buf, bool write)
      * for writes. The status byte is always device-writable. */
     uint16_t d0 = virtio_desc_add(vq, req_addr, sizeof(VirtioBlkReq), VRING_DESC_F_NEXT);
     uint16_t d1 = virtio_desc_add(vq, data_addr, 512,
-        write ? 0 : (VRING_DESC_F_NEXT | VRING_DESC_F_WRITE));
+        write ? VRING_DESC_F_NEXT : (VRING_DESC_F_NEXT | VRING_DESC_F_WRITE));
     uint16_t d2 = virtio_desc_add(vq, status_addr, 1, VRING_DESC_F_WRITE);
     if (d0 == 0xFFFF || d1 == 0xFFFF || d2 == 0xFFFF) {
         return -1;

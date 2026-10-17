@@ -11,7 +11,7 @@
 #ifndef _OJJY_ARCH_VIRTIO_H
 #define _OJJY_ARCH_VIRTIO_H
 
-#include "../types.h"
+#include "types.h"
 
 /* virtio-mmio slot region on the QEMU virt machine */
 #define VIRTIO_MMIO_BASE        0x0A000000UL

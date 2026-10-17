@@ -49,6 +49,8 @@ typedef struct {
     uint8_t mouse_speed;
     bool shortcuts_enabled;
     bool time_24h;
+    bool reduced_transparency;
+    bool reduced_motion;
 } SettingsState;
 
 void app_registry_init(void);
@@ -68,6 +70,8 @@ void settings_toggle_wifi(void);
 void settings_toggle_bluetooth(void);
 void settings_toggle_dark_mode(void);
 void settings_toggle_time_format(void);
+void settings_toggle_reduced_transparency(void);
+void settings_toggle_reduced_motion(void);
 void settings_set_volume(uint8_t value);
 void settings_set_brightness(uint8_t value);
 

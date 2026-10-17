@@ -11,7 +11,7 @@
 #ifndef _OJJY_ARCH_GICV2_H
 #define _OJJY_ARCH_GICV2_H
 
-#include "../types.h"
+#include "types.h"
 
 /* QEMU virt machine GICv2 bases */
 #define GICD_BASE   0x08000000UL     /* Distributor */

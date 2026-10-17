@@ -2,8 +2,8 @@
 
 **Author:** Jonas Lee
 **Created by:** Jonas Lee
-**Version:** 3.0.0-M1
-**Last Updated:** January 2026
+**Version:** 3.1.0 (Dual-Arch: Apple Silicon `aarch64` + `x86_64`)
+**Last Updated:** October 2026
 
 ---
 
@@ -16,15 +16,17 @@
 5. [Component Details](#component-details)
 6. [File Structure](#file-structure)
 7. [Build & Run](#build--run)
+8. [Dual-Architecture Platform Layer (v3.1.0: `aarch64` & `x86_64`)](#dual-architecture-platform-layer-v310-aarch64--x86_64)
+9. [Disk Persistence & Power Management (v3.1.0)](#disk-persistence--power-management-v310)
 
 ---
 
 ## Vision
 
-ojjyOS v3 is a custom operating system built entirely from scratch with the following goals:
+ojjyOS v3 is a custom operating system built entirely from scratch by **Jonas Lee** with the following goals:
 
 - **Not based on Linux, BSD, Windows, or macOS** - A truly custom kernel and userspace
-- **Boots in VirtualBox on x86_64** - Using UEFI with GOP framebuffer
+- **Native Dual-Architecture Support (`aarch64` & `x86_64`)** - Runs natively on Apple Silicon Macs via `qemu-system-aarch64 -M virt,gic-version=2 -accel hvf` as well as on `x86_64` in QEMU and VirtualBox using UEFI GOP
 - **macOS Tahoe-inspired UI** - Blue liquid-glass glassmorphism aesthetic
 - **Educational & Functional** - Clean, well-documented code that actually works
 
@@ -926,16 +928,42 @@ This section documents the upgrade to a writable RAM-backed filesystem and premi
 
 ---
 
-## Next Steps
+## Dual-Architecture Platform Layer (v3.1.0: `aarch64` & `x86_64`)
 
-The M1 prerequisites provide the foundation for M2 (Graphics). Next steps include:
+In v3.1.0, ojjyOS supports both **Apple Silicon / ARM64 (`aarch64`)** and **Intel/AMD (`x86_64`)** from a single unified codebase. All upper layers—`main.c`, `memory.c`, `framebuffer.c`, `console.c`, `fs/*` (VFS, OJFS, RAMFS, bundles, persistence), and `ui/*` (Tahoe compositor, all 8 built-in apps, theme, services)—are 100% architecture-neutral.
 
-1. **Double Buffering** - Eliminate screen tearing
-2. **Gradient Rendering** - For Tahoe backgrounds
-3. **Alpha Blending** - For glassmorphism effects
-4. **Image Loading** - PNG/BMP for icons and wallpapers
-5. **Improved Fonts** - Anti-aliased text rendering
+### Architecture Comparison Table
+
+| Subsystem | `x86_64` (`QEMU -M pc` / VirtualBox) | `aarch64` (`QEMU -M virt,gic-version=2 -accel hvf`) |
+|-----------|--------------------------------------|-----------------------------------------------------|
+| **UEFI Bootloader** | `BOOTX64.EFI` (`EM_X86_64 = 62`) | `BOOTAA64.EFI` (`EM_AARCH64 = 183`) |
+| **Kernel Link Base** | `0x00100000` (`kernel/linker.ld`) | `0x41000000` (`kernel/linker-aarch64.ld`) |
+| **Entry Assembly** | `src/entry.asm` (NASM, 64 KB stack) | `src/arch/aarch64/entry.S` (clang, EL3/EL2$\rightarrow$EL1 drop, 128 KB stack) |
+| **Exception Handling** | 256-entry IDT (`idt.c`) + visual panic screen | `VBAR_EL1` vector table + `a64_exception_handler` visual panic screen (`ESR_EL1`, `ELR_EL1`, `FAR_EL1`) |
+| **Page Tables / MMU** | Custom 4-level page tables (`paging.c`) + on-demand `paging_map()` for high GOP framebuffers | Inherits UEFI's identity-mapped page tables (covering RAM at `0x40000000+` and MMIO below `0x40000000`) |
+| **Interrupt Controller** | Dual 8259 PIC (remapped to vectors `32..47`, auto-unmasking IRQ2 cascade) | ARM GICv2 (`gicv2.c`, GICD `0x08000000`, GICC `0x08010000`) |
+| **System Timer** | 8254 PIT at 1000 Hz (IRQ 0) | ARM Generic Physical Timer (`CNTP_*_EL0`, PPI 30) at 1000 Hz |
+| **Serial Console** | 16550 UART on I/O port `0x3F8` (`serial.c`) | ARM PL011 UART at MMIO `0x09000000` (`pl011.c`) + shared `serial_core.c` |
+| **Real-Time Clock** | CMOS RTC on ports `0x70`/`0x71` (`drivers/rtc.c`) | ARM PL031 RTC at MMIO `0x09010000` (`pl031.c`, UNIX epoch $\rightarrow$ civil calendar) |
+| **Keyboard & Pointer** | IRQ-driven PS/2 keyboard (`0xE0` extended scancodes + Super release) & 3-button scroll mouse | `virtio-mmio` v2 (`0x0A000000`..`+0x3E00`) `virtio-keyboard` & `virtio-tablet` polled each frame via `a64_poll_input()` |
+| **Disk / Block I/O** | PIIX4 ATA PIO (LBA28/LBA48) + 64-entry LRU block cache (`blockdev_x86.c`) | `virtio-blk` over `virtio-mmio` v2 implementing the `block_*` API directly (`virtio_blk.c`) |
+| **Power Management** | ACPI S5 (`\_S5` AML scan + `PM1a_CNT`) & 8042 reset (`drivers/acpi.c`) | ARM PSCI (`hvc #0` with `smc #0` fallback: `SYSTEM_OFF = 0x84000008`, `SYSTEM_RESET = 0x84000009` in `psci.c`) |
 
 ---
 
-*This document is maintained alongside the codebase. For the latest information, see the source code comments.*
+## Disk Persistence & Power Management (v3.1.0)
+
+### 1. GPT Disk Layout (`scripts/mkimg.sh`)
+The 128 MB raw disk image (`build/ojjyos3.img`) contains two GPT partitions:
+1. **Partition 1 (LBA `2048..67583`, 32 MB):** FAT32 EFI System Partition containing `\EFI\BOOT\BOOTAA64.EFI` (or `BOOTX64.EFI`) and `\kernel.bin`.
+2. **Partition 2 (LBA `67584..198655`, 64 MB):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`).
+
+### 2. RAMFS Checkpointing (`kernel/src/fs/persist.c`)
+- Because each `RamFs` instance (`ramfs_users` mounted at `/Users` and `ramfs_library` mounted at `/Library`) uses self-contained flat node and data arrays, `persist_save()` writes a 512-byte header (`magic = "OJJYPERS"`, `version = 1`, sizes, and CRC-32 checksums of both trees) at LBA `67584` followed by the two `RamFs` structs.
+- On boot, `persist_load()` verifies the magic, version, byte sizes, and CRC-32 checksums before restoring `/Users` and `/Library`. If no valid checkpoint exists (first boot), `seed_ramfs()` populates default directories and files and immediately writes an initial checkpoint.
+- Any mutating RAMFS operation sets a `dirty` flag; the kernel main loop auto-flushes dirty state every 30 seconds, and `sync`, `shutdown`, and `reboot` flush immediately.
+
+---
+
+*This document is maintained alongside the codebase. For the latest bug-fix log and handoff details, see `BUGFIXES.md` and `AGENTS.md`.*
+

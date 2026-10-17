@@ -24,6 +24,8 @@ static SettingsState settings_state = {
     .mouse_speed = 2,
     .shortcuts_enabled = true,
     .time_24h = false,
+    .reduced_transparency = false,
+    .reduced_motion = false,
 };
 
 static char latest_notification[128] = "";
@@ -305,7 +307,7 @@ void settings_load(void)
     VfsFile *file = vfs_open("/Library/Preferences/system.conf", VFS_O_READ);
     if (!file) return;
 
-    char buffer[128];
+    char buffer[256];
     ssize_t bytes = vfs_read(file, buffer, sizeof(buffer) - 1);
     vfs_close(file);
     if (bytes <= 0) return;
@@ -321,6 +323,8 @@ void settings_load(void)
     settings_state.mouse_speed = (uint8_t)parse_value(buffer, "mouse", settings_state.mouse_speed);
     settings_state.shortcuts_enabled = (str_find(buffer, "shortcuts=1") != NULL);
     settings_state.time_24h = (str_find(buffer, "time24=1") != NULL);
+    settings_state.reduced_transparency = (str_find(buffer, "rt=1") != NULL);
+    settings_state.reduced_motion = (str_find(buffer, "rm=1") != NULL);
 }
 
 void settings_save(void)
@@ -329,7 +333,7 @@ void settings_save(void)
                              VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
     if (!file) return;
 
-    char buffer[128];
+    char buffer[256];
     buffer[0] = '\0';
     if (settings_state.dark_mode) str_append(buffer, sizeof(buffer), "dark=1\n");
     else str_append(buffer, sizeof(buffer), "dark=0\n");
@@ -388,6 +392,20 @@ void settings_save(void)
         str_append(tmp, sizeof(tmp), num);
         str_append(tmp, sizeof(tmp), "\n");
         str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "rt=");
+        utoa(settings_state.reduced_transparency ? 1 : 0, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "rm=");
+        utoa(settings_state.reduced_motion ? 1 : 0, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
     }
 
     vfs_write(file, buffer, strlen(buffer));
@@ -415,6 +433,18 @@ void settings_toggle_dark_mode(void)
 void settings_toggle_time_format(void)
 {
     settings_state.time_24h = !settings_state.time_24h;
+    settings_save();
+}
+
+void settings_toggle_reduced_transparency(void)
+{
+    settings_state.reduced_transparency = !settings_state.reduced_transparency;
+    settings_save();
+}
+
+void settings_toggle_reduced_motion(void)
+{
+    settings_state.reduced_motion = !settings_state.reduced_motion;
     settings_save();
 }
 

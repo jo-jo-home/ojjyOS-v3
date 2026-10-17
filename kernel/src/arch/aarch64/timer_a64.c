@@ -8,9 +8,9 @@
  * ojjyOS - Created by Jonas Lee
  */
 
-#include "../timer.h"
-#include "../types.h"
-#include "../serial.h"
+#include "timer.h"
+#include "types.h"
+#include "serial.h"
 #include "gicv2.h"
 
 #define TIMER_PPI_INTID     30      /* Non-secure EL1 physical timer */

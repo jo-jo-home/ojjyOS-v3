@@ -10,10 +10,7 @@
 #include "framebuffer.h"
 #include "console.h"
 #include "string.h"
-#include "gdt.h"
-#include "idt.h"
 #include "memory.h"
-#include "paging.h"
 #include "timer.h"
 #include "panic.h"
 #include "font.h"
@@ -21,12 +18,20 @@
 /* Driver subsystem */
 #include "drivers/driver.h"
 #include "drivers/input.h"
+#include "drivers/rtc.h"
+#include "drivers/diagnostics.h"
+
+#ifdef __x86_64__
+#include "gdt.h"
+#include "idt.h"
+#include "paging.h"
 #include "drivers/ps2_keyboard.h"
 #include "drivers/ps2_mouse.h"
 #include "drivers/ata.h"
-#include "drivers/rtc.h"
 #include "drivers/block_cache.h"
-#include "drivers/diagnostics.h"
+#else
+#include "arch/aarch64/arch64.h"
+#endif
 
 /* Filesystem */
 #include "fs/vfs.h"
@@ -480,12 +485,12 @@ static void power_sequence(PowerRequest request)
 
     if (arch_power_off() != 0) {
         /* Firmware refused: halt with the safe-to-power-off message */
-        serial_printf("[POWER] ACPI power-off unavailable; halting\n");
+        serial_printf("[POWER] Firmware power-off unavailable; halting\n");
     }
 
     interrupts_disable();
     while (1) {
-        __asm__ volatile("hlt");
+        hlt();
     }
 }
 
@@ -628,6 +633,7 @@ void kernel_main(BootInfo *boot_info)
     splash_render("Starting ojjyOS...", 3);
 
     /* Core initialization */
+#ifdef __x86_64__
     gdt_init();
     splash_render("Loading CPU tables (GDT/IDT)...", 12);
 
@@ -636,6 +642,13 @@ void kernel_main(BootInfo *boot_info)
 
     pmm_init(boot_info);
     paging_init();
+#else
+    splash_render("Loading EL1 exception vectors...", 12);
+    splash_render("Setting up memory...", 22);
+
+    /* On aarch64, UEFI identity-maps RAM and MMIO; we keep UEFI page tables */
+    pmm_init(boot_info);
+#endif
     timer_init();
     splash_render("Bringing up drivers...", 38);
 
@@ -644,12 +657,17 @@ void kernel_main(BootInfo *boot_info)
     input_init();
     input_set_mouse_bounds(fb_get_width(), fb_get_height());
 
+#ifdef __x86_64__
     ps2_keyboard_init();
     ps2_mouse_init();
     ata_init();
     rtc_init();
     driver_probe_all();
     block_cache_init();
+#else
+    a64_init(boot_info);
+    driver_probe_all();
+#endif
     splash_render("Mounting filesystems...", 55);
 
     /* Initialize filesystem */
@@ -711,7 +729,11 @@ void kernel_main(BootInfo *boot_info)
     console_printf("  Welcome to ojjyOS v%s\n", OJJYOS_VERSION);
     console_printf("  Created by %s\n\n", OJJYOS_AUTHOR);
     console_set_colors(COLOR_TEXT_LIGHT, BOOT_BG);
+#ifdef __x86_64__
     console_printf("  [ OK ] CPU tables loaded (GDT/IDT)\n");
+#else
+    console_printf("  [ OK ] CPU vectors & GICv2 loaded (aarch64 EL1)\n");
+#endif
     console_printf("  [ OK ] Memory: %d MB total, %d MB free\n",
         (int)(pmm_get_total_memory() / (1024 * 1024)),
         (int)(pmm_get_free_memory() / (1024 * 1024)));
@@ -768,6 +790,10 @@ void kernel_main(BootInfo *boot_info)
         if (system_sync_pending()) {
             save_persistent_state();
         }
+
+#ifndef __x86_64__
+        a64_poll_input();
+#endif
 
         /* Process input events */
         while (input_has_event()) {
@@ -858,6 +884,6 @@ void kernel_main(BootInfo *boot_info)
             }
         }
 
-        __asm__ volatile("hlt");
+        hlt();
     }
 }

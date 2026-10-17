@@ -7,9 +7,12 @@
 #include "diagnostics.h"
 #include "driver.h"
 #include "input.h"
-#include "ata.h"
 #include "rtc.h"
+#include "blockdev.h"
+#ifdef __x86_64__
+#include "ata.h"
 #include "block_cache.h"
+#endif
 #include "../console.h"
 #include "../framebuffer.h"
 #include "../timer.h"
@@ -28,6 +31,11 @@ void diagnostics_show(void)
 
     /* System info */
     console_printf("System:\n");
+#ifdef __aarch64__
+    console_printf("  Arch:    aarch64 (ARM64 / Apple Silicon VM)\n");
+#else
+    console_printf("  Arch:    x86_64\n");
+#endif
     console_printf("  Display: %dx%d\n", fb_get_width(), fb_get_height());
     console_printf("  Memory:  %d MB total, %d MB free\n",
         (int)(pmm_get_total_memory() / (1024 * 1024)),
@@ -43,11 +51,20 @@ void diagnostics_show(void)
     /* Driver status */
     driver_print_all();
 
+#ifdef __x86_64__
     /* ATA devices */
     ata_print_devices();
 
     /* Block cache stats */
     block_cache_print_stats();
+#else
+    console_printf("Block Storage (virtio-blk):\n");
+    if (block_available()) {
+        console_printf("  Status:   Online (virtio-mmio)\n\n");
+    } else {
+        console_printf("  Status:   Not attached\n\n");
+    }
+#endif
 
     /* Input status */
     int32_t mx, my;

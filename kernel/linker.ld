@@ -11,6 +11,7 @@ SECTIONS
 {
     /* Kernel starts at 1MB */
     . = 0x100000;
+    _kernel_start = .;
 
     /* Code section */
     .text : ALIGN(4K)

@@ -5,10 +5,7 @@
  */
 
 #include "gicv2.h"
-#include "../serial.h"
-
-static volatile uint32_t *gicd = (volatile uint32_t *)GICD_BASE;
-static volatile uint32_t *gicc = (volatile uint32_t *)GICC_BASE;
+#include "serial.h"
 
 static inline volatile uint32_t *gicd_reg(uint32_t off)
 {

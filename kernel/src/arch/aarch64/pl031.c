@@ -8,11 +8,11 @@
  * ojjyOS - Created by Jonas Lee
  */
 
-#include "../drivers/rtc.h"
-#include "../console.h"
-#include "../serial.h"
-#include "../string.h"
-#include "../types.h"
+#include "drivers/rtc.h"
+#include "console.h"
+#include "serial.h"
+#include "string.h"
+#include "types.h"
 
 #define RTC_BASE        0x09010000UL
 

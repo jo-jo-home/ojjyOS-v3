@@ -175,16 +175,16 @@ static bool handle_extended_key(uint8_t code, bool released)
         case 0x1D:  /* Right Ctrl - treated same as left */
             ctrl_pressed = !released;
             update_modifiers();
-            return true;
+            break;
         case 0x38:  /* Right Alt - treated same as left */
             alt_pressed = !released;
             update_modifiers();
-            return true;
+            break;
         case 0x5B:  /* Left Super/Command */
         case 0x5C:  /* Right Super/Command */
             super_pressed = !released;
             update_modifiers();
-            return true;
+            break;
     }
 
     KeyCode keycode = KEY_NONE;
@@ -294,21 +294,21 @@ static bool ps2_kbd_handle_irq(Driver *drv, uint8_t irq)
         return handle_extended_key(code, released);
     }
 
-    /* Handle modifier keys */
+    /* Handle modifier keys (still post key press/release events with ascii=0) */
     switch (code) {
         case SC_LSHIFT:
         case SC_RSHIFT:
             shift_pressed = !released;
             update_modifiers();
-            return true;
+            break;
         case SC_LCTRL:
             ctrl_pressed = !released;
             update_modifiers();
-            return true;
+            break;
         case SC_LALT:
             alt_pressed = !released;
             update_modifiers();
-            return true;
+            break;
         case SC_CAPS:
             /* Toggle only on the initial press, not on auto-repeat */
             if (!released && !caps_down) {
@@ -316,14 +316,14 @@ static bool ps2_kbd_handle_irq(Driver *drv, uint8_t irq)
             }
             caps_down = !released;
             update_modifiers();
-            return true;
+            break;
         case SC_NUMLOCK:
             if (!released && !num_down) {
                 num_lock = !num_lock;
             }
             num_down = !released;
             update_modifiers();
-            return true;
+            break;
     }
 
     /* Get keycode */

@@ -18,7 +18,8 @@
 /* Static bitmap (4GB max = 128KB bitmap) */
 static uint8_t page_bitmap[BITMAP_SIZE];
 
-/* End of kernel image (including .bss), provided by linker.ld */
+/* Start and end of kernel image (including .bss), provided by linker script */
+extern char _kernel_start[];
 extern char _kernel_end[];
 
 /* Memory statistics */
@@ -165,15 +166,19 @@ void pmm_init(BootInfo *info)
         }
     }
 
-    /* Reserve the actual kernel image (1MB .. _kernel_end, .bss included).
-     * The kernel BSS is several MB (wallpaper buffers, ramfs pools), so the
-     * old fixed 1-4MB reservation was far too small. */
+    /* Reserve the actual kernel image (_kernel_start .. _kernel_end, .bss included).
+     * The kernel BSS is several MB (wallpaper buffers, ramfs pools), so we use
+     * linker symbols on both x86_64 (0x100000) and aarch64 (0x41000000). */
+    uint64_t kernel_start_page = (uint64_t)(uintptr_t)_kernel_start / PAGE_SIZE;
     uint64_t kernel_end_page = ((uint64_t)(uintptr_t)_kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (kernel_end_page < 256) {
-        kernel_end_page = 256;
+    if (kernel_start_page < 256) {
+        kernel_start_page = 256;
     }
-    for (uint64_t page = 256; page < kernel_end_page; page++) {
-        if (!pmm_is_page_used(page)) {
+    if (kernel_end_page < kernel_start_page) {
+        kernel_end_page = kernel_start_page;
+    }
+    for (uint64_t page = kernel_start_page; page < kernel_end_page; page++) {
+        if (page < MAX_PAGES && !pmm_is_page_used(page)) {
             pmm_set_page_used(page);
             free_memory -= PAGE_SIZE;
         }

@@ -163,51 +163,39 @@ freestanding x86_64 toolchain and by host-side unit tests of the filesystem and 
 12. Fix app switcher: mouse support, all running apps shown, releasing Super closes it
     (needs key-release forwarding from main.c).
 
-### Phase E — Verify
-- Freestanding compile of every kernel translation unit (clang, x86_64-unknown-none),
-  assemble `entry.asm` with nasm, link check where the toolchain allows.
-- Host unit tests: OJFS reader against a real `mkojfs`-generated image; ramfs write/grow/
-  unlink/rename cycles; `strncpy`/normalization edge cases.
-- Tools (`mkojfs`, `mkicon`, `mkwallpaper`, `mkarray`) build and run on the host.
-- Document an acceptance checklist the owner can run in VirtualBox.
+### Phase E — Verify (COMPLETED ✅)
+- [x] Freestanding compile of every kernel translation unit (`clang`, both `aarch64-unknown-none-elf` and `x86_64-unknown-none-elf`), assemble `entry.asm` with `nasm` and `entry.S` with `clang`.
+- [x] Host unit tests (`tests/test_fs.c` — 41 assertions; `tests/test_ramfs.c` — 24 assertions): OJFS reader against a real `mkojfs`-generated image; ramfs write/grow/unlink/rename cycles; `strncpy`/normalization edge cases.
+- [x] Tools (`mkojfs`, `mkicon`, `mkwallpaper`, `mkarray`) build and run on the host.
+- [x] Documented acceptance checklist in `README.md` and `RELEASE.md`.
+
+### Phase F — Native Apple Silicon (`aarch64`) Port & Tahoe Desktop Polish (COMPLETED ✅)
+- [x] Full `aarch64` kernel port (`kernel/src/arch/aarch64/`): `entry.S` (EL3/EL2$\rightarrow$EL1, `VBAR_EL1` vectors), `gicv2.c`, `timer_a64.c` (1 kHz ARM Generic Timer), `pl011.c`, `pl031.c`, `virtio.c` (`virtio-mmio` v2 transport), `virtio_input.c` (keyboard + tablet), `virtio_blk.c` (disk), `psci.c` (`SYSTEM_OFF`/`SYSTEM_RESET`), and `linker-aarch64.ld` (`0x41000000`).
+- [x] Dual-architecture build system (`kernel/Makefile`, `boot/Makefile`, `boot/ojjy-boot.c`, `scripts/build.sh`, `scripts/mkimg.sh`, `scripts/run-qemu.sh` with Apple Silicon `-accel hvf`).
+- [x] RAMFS disk persistence (`kernel/src/fs/persist.c`) to the GPT `ojjyOS Data` partition (`LBA 67584`) with CRC-32 validation, 30s dirty autosave, `sync`, and clean power-off/reboot flush.
+- [x] Window resizing (bottom-right drag grip) and green traffic-light Maximize/Zoom toggle.
+- [x] Live Mission Control window cards (`Cmd+M`), Control Center Restart/Shut Down/Reduced Transparency buttons, clickable `ojjy` menu bar item (opens About), centered Launchpad labels, Reduced Transparency & Reduced Motion accessibility settings, and PS/2 modifier key release events for `Cmd+Tab`.
 
 ---
 
-## Part 2 — Plan: macOS-essential features (scoped: works first, not fancy)
+## Part 2 — Plan: macOS-essential features (COMPLETED ✅)
 
-Guided by "make it more like macOS — essentials like browser, finder, etc", but keeping the
+Guided by "make it more like macOS — essentials like browser, finder, etc", keeping the
 focus on function over polish:
 
-1. **Scroll wheel everywhere** (from Phase B) — the single most OS-feeling input feature.
-2. **Working window management** — close/minimize traffic lights, running indicators,
-   minimize-to-dock, proper app quit. Windows without working close buttons don't feel like
-   an OS.
-3. **Desktop icons** — `/Users/guest/Desktop` contents render as icons on the wallpaper
-   with double-click to open (text files open in TextEdit, folders in Finder), plus an
-   "ojjyHD" disk icon that opens Finder at `/`. Selection highlight included.
-4. **Web (offline browser) app** — a real honest gap-filler: without a network stack a
-   full browser is impossible, so ojjyOS gets "Web.app": an address bar, back/forward
-   history, scrollable page rendering, clickable hyperlinks between pages stored under
-   `/System/Web` in a tiny text markup. Ships with a home page, an "About ojjyOS" credits
-   page ( Jonas Lee credit requirement), a release-notes page and a keyboard-shortcuts
-   page. Clearly labeled as offline; the UI is a browser UI.
-5. **About This ojjyOS** — About.app now opens a proper window (not just console text)
-   showing version, author **"Created by Jonas Lee"**, memory, display and driver stats —
-   also serves the credit requirement in-UI.
-6. **Live extras kept small**: menu-bar clock respects 12/24h setting (already true,
-   verified), Spotlight indexes Documents, notifications API already exists for toggles.
-   Anything fancier (Mission Control thumbnails, real menus, resizable windows, network
-   stack) is explicitly deferred to the next milestone — documented in Part 3.
+1. [x] **Scroll wheel everywhere** (from Phase B) — Finder, Terminal, TextEdit, Notes, and Web.
+2. [x] **Working window management** — close (red), minimize (yellow), maximize/zoom (green) traffic lights, bottom-right corner drag resize, running indicators, minimize-to-dock, `Cmd+Q`.
+3. [x] **Desktop icons** — `/Users/guest/Desktop` contents render as icons on the wallpaper with double-click to open (text files open in TextEdit, folders in Finder), plus an "ojjyHD" disk icon that opens Finder at `/`.
+4. [x] **Web (offline browser) app** — `Web.app` with address bar, back/forward history, scrollable page rendering, and clickable hyperlinks between pages stored under `/System/Web/*.page` (`home`, `about`, `release`, `shortcuts`).
+5. [x] **About This ojjyOS** — `About.app` opens a native window (and is reachable by clicking `ojjy` in the top-left menu bar) showing version, author **"Created by Jonas Lee"**, memory, display, and storage status.
+6. [x] **Mission Control, Control Center power controls & Accessibility toggles** — Mission Control cards (`Cmd+M`), Control Center Restart/Shut Down buttons, Reduced Transparency (`rt=0/1`), and Reduced Motion (`rm=0/1`).
 
 ### Deliberately deferred (next milestones, in order)
-1. **M3.1** Real ELF process loading + a userspace (programs in `/Applications` become real
-   ELF executables instead of in-kernel app shells), real window resizing.
-2. **M3.2** AHCI/SATA + NVMe disk support, `ATA` DMA (bus-mastering), disk persistence
-   (OJFS read-write or a new ojjyFS), real bootloader protocol versioning.
-3. **M3.3** Network stack: virtio-net or E1000 driver → ARP/IPv4/UDP/TCP → DHCP → HTTP →
-   then the Web app gains real pages. This is the true path to a real browser.
-4. **M3.4** Menu bar dropdown menus, Mission Control with window thumbnails, resizable
-   windows with live layout, anti-aliased font rendering, sound (Intel HDA), SMP + APIC.
+1. **M3.1** Real ELF process loading + protected userspace (`EL0` on `aarch64` / Ring 3 on `x86_64`) with per-process page tables, syscall ABI, and preemptive scheduler.
+2. **M3.2** AHCI/SATA + NVMe disk support on `x86_64`, `ATA` DMA (bus-mastering).
+3. **M3.3** Network stack: `virtio-net` or E1000 driver $\rightarrow$ ARP/IPv4/UDP/TCP $\rightarrow$ DHCP $\rightarrow$ HTTP $\rightarrow$ live pages in `Web.app`.
+4. **M3.4** Menu bar dropdown menus, anti-aliased font rendering, sound (`virtio-sound` / Intel HDA), SMP + multicore scheduling.
 
-Everything below stays true to the project's identity: custom kernel, blue Tahoe theme,
+Everything stays true to the project's identity: custom kernel, blue Tahoe theme,
 "Created by Jonas Lee" attribution everywhere it matters.
+

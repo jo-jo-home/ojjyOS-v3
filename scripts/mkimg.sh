@@ -3,7 +3,7 @@
 # ojjyOS v3 Disk Image Creator
 #
 # Creates a GPT disk image with EFI System Partition containing
-# the bootloader and kernel.
+# the bootloader (BOOTX64.EFI or BOOTAA64.EFI) and kernel.
 #
 
 set -e
@@ -13,8 +13,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$ROOT_DIR/build"
 
+ARCH="${ARCH:-x86_64}"
+if [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+    ARCH="aarch64"
+    EFI_NAME="BOOTAA64.EFI"
+else
+    ARCH="x86_64"
+    EFI_NAME="BOOTX64.EFI"
+fi
+
 # Files
-BOOTLOADER="$BUILD_DIR/BOOTX64.EFI"
+BOOTLOADER="$BUILD_DIR/$EFI_NAME"
 KERNEL="$BUILD_DIR/kernel.bin"
 IMAGE="$BUILD_DIR/ojjyos3.img"
 ESP_IMG="$BUILD_DIR/esp.img"
@@ -29,23 +38,23 @@ PART_LAST=$((SECTORS - 34))
 ESP_SECTORS=$((32 * 2048))
 DATA_START=$((2048 + ESP_SECTORS))
 
-echo "Creating disk image..."
+echo "Creating disk image ($ARCH)..."
 
 # Check required files
 if [ ! -f "$BOOTLOADER" ]; then
     echo "Error: Bootloader not found: $BOOTLOADER"
-    echo "Run scripts/build.sh first."
+    echo "Run: ARCH=$ARCH bash scripts/build.sh"
     exit 1
 fi
 
 if [ ! -f "$KERNEL" ]; then
     echo "Error: Kernel not found: $KERNEL"
-    echo "Run scripts/build.sh first."
+    echo "Run: ARCH=$ARCH bash scripts/build.sh"
     exit 1
 fi
 
 if ! command -v sgdisk &> /dev/null; then
-    echo "Error: sgdisk not found. Install with: sudo apt install -y gdisk"
+    echo "Error: sgdisk not found. Install with: sudo apt install -y gdisk (or brew install gptfdisk)"
     exit 1
 fi
 
@@ -55,11 +64,11 @@ dd if=/dev/zero of="$ESP_IMG" bs=512 count=$ESP_SECTORS 2>/dev/null
 mkfs.fat -F 32 "$ESP_IMG" >/dev/null
 
 # Create directory structure and copy files
-echo "  Copying files to ESP..."
+echo "  Copying files to ESP (/EFI/BOOT/$EFI_NAME)..."
 mmd -i "$ESP_IMG" ::/EFI
 mmd -i "$ESP_IMG" ::/EFI/BOOT
 mmd -i "$ESP_IMG" ::/EFI/ojjyos
-mcopy -i "$ESP_IMG" "$BOOTLOADER" ::/EFI/BOOT/BOOTX64.EFI
+mcopy -i "$ESP_IMG" "$BOOTLOADER" "::/EFI/BOOT/$EFI_NAME"
 mcopy -i "$ESP_IMG" "$KERNEL" ::/EFI/ojjyos/kernel.bin
 
 # Create the final GPT disk image

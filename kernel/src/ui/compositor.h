@@ -19,12 +19,17 @@ typedef struct {
     int h;
     int base_w;
     int base_h;
+    int saved_x;
+    int saved_y;
+    int saved_w;
+    int saved_h;
     uint8_t glass_level;
     uint8_t blur_level;
     uint8_t corner_level;
     bool active;
     bool demo;
     bool minimized;         /* Yellow traffic light was clicked */
+    bool maximized;         /* Green traffic light was clicked */
     char title[32];
 
     /* Animation state (0-1000) */

@@ -7,8 +7,8 @@
  * ojjyOS - Created by Jonas Lee
  */
 
-#include "../serial.h"
-#include "../types.h"
+#include "serial.h"
+#include "types.h"
 
 #define UART0_BASE      0x09000000UL
 

@@ -3,6 +3,16 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
+## PAUSED: latest handoff (2026-10-17)
+
+Jonas's latest request was: **"pause. and write all context to the project.
+like a new ai can know whats happening"**. Read **[HANDOFF.md](HANDOFF.md)**
+alongside this file before resuming. The reliability pass is committed as
+`bac1dec`. The next protected-app milestone was only being investigated;
+**no protected-app implementation or runtime changes were made afterward**.
+This pause changes documentation only. Do not start the proposed work until
+Jonas asks to resume. Never push without explicit authorization.
+
 ## Current reliability pass (Session 8, 2026-10-17)
 
 **This section supersedes historical claims below.** The old Session-7

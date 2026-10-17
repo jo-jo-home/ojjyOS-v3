@@ -1,23 +1,44 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
-document: what this project is, everything that has happened, the exact
-current state, and a precise, ordered checklist of what to do next.
-Session 3 completed all items in §4.2 (aarch64 port), §4.3 (docs sweep),
-and §4.4 (desktop & input polish). Session 4 completed the multi-user
-account & credential system (`users.c`/`users.h`), First-Boot Setup
-Assistant, macOS Tahoe Lock/Login Screen, `Calculator.app`,
-`Activity Monitor.app`, interactive Menu Bar dropdown menus, Desktop
-right-click context menu, and `Settings → Users & Accounts`.
+document: what this project is, everything that has happened across
+Sessions 1–5, the exact current state, how to build & run every check,
+and the ordered roadmap of what comes next.
+
+- **Session 1:** Rescued the broken codebase (fixed 28+ build/boot/IRQ/VFS/UI
+  bugs, added RAMFS disk persistence, ACPI/PSCI power off, Desktop icons,
+  offline `Web.app`, and `About.app`).
+- **Session 2 & 3:** Completed the native Apple Silicon (`aarch64`) port
+  (`entry.S`, `gicv2`, `timer_a64`, `pl011`, `pl031`, `virtio-mmio` v2
+  `virtio_blk` + `virtio_input`, `psci`, dual-arch Makefiles & scripts,
+  `run-qemu.sh` with `-accel hvf`), window resize + green zoom, Mission
+  Control cards, Reduced Transparency/Motion toggles, Control Center
+  Restart/Shut Down buttons, and full documentation sweep.
+- **Session 4:** Implemented the multi-user Account & Salted FIPS 180-4
+  SHA-256 Credential Engine (`users.c`/`users.h`), First-Boot Setup
+  Assistant, macOS Tahoe Lock/Login Screen (`Ctrl+Cmd+Q`), `Settings →
+  Users & Accounts`, interactive Menu Bar dropdowns (`ojjy`, `File`,
+  `Edit`, `View`, `Window`), Desktop right-click context menu,
+  `Calculator.app`, and `Activity Monitor.app` (11 built-in apps total).
+- **Session 5:** Implemented the 16-byte-aligned coalescing Kernel Heap
+  Allocator (`kmalloc`/`kcalloc`/`krealloc`/`kfree`/`kheap_validate` in
+  `memory.c`) and the Kernel Process Table & Syscall Dispatcher
+  (`proc.c`/`proc.h` with PID/PPID/UID tracking, per-user app ownership,
+  live CPU tick accounting, protected system daemons PID 1–4,
+  `syscall_dispatch` for 13 syscalls, and `ps`/`top`/`kill`/`heap`
+  commands in `Terminal.app`, console, and `Activity Monitor.app`).
 
 ---
 
-## 0. START-HERE CHECKLIST (current status: v3.1.0 + Session 4 COMPLETE ✅)
+## 0. START-HERE CHECKLIST (current status: v3.1.0 + Sessions 4 & 5 COMPLETE ✅)
 
-All v3.1.0 and Session 4 checklist items are **DONE and verified**:
+All checklist items through Session 5 are **DONE and verified**:
 
-1. [x] Verified current state builds & host unit tests pass (§6).
-2. [x] Finished the `aarch64` port (§4.2): `main.c` ifdefs, `diagnostics.c`
+1. [x] Verified current state builds & host unit tests pass (§6):
+   - `aarch64`: **28/28 kernel objects compile with 0 warnings, 0 errors**.
+   - `x86_64`: **30/30 kernel objects compile with 0 warnings, 0 errors**.
+   - Host unit tests: **`test_fs` (37/37) + `test_ramfs` (81/81) = 118/118 passed**.
+2. [x] Finished the `aarch64` port (§4.1): `main.c` ifdefs, `diagnostics.c`
    guards, `kernel/Makefile` `ARCH` switch (`x86_64` | `aarch64` + `objs`
    target), `kernel/linker-aarch64.ld` (`0x41000000` + `_kernel_start`),
    `boot/ojjy-boot.c` machine check (`62` vs `183`), `boot/Makefile`
@@ -25,20 +46,14 @@ All v3.1.0 and Session 4 checklist items are **DONE and verified**:
    `scripts/mkimg.sh` dual-arch, and `scripts/run-qemu.sh` (Apple Silicon
    HVF + `ramfb` + `virtio-*`). Fixed two `virtio` chain bugs (`d->next`
    index in `virtio.c` and write `VRING_DESC_F_NEXT` in `virtio_blk.c`).
-3. [x] Compile-verified BOTH architectures (`make -C kernel ARCH=aarch64 objs`
-   and `make -C kernel ARCH=x86_64 objs` — 0 warnings, 0 errors) + reran
-   host tests (`test_fs` 37/37 and `test_ramfs` 59/59 passed — 96/96 total).
-4. [x] Completed the desktop & input items (§4.4): window resize (bottom-right
+3. [x] Completed desktop & input polish: window resize (bottom-right
    corner drag) + green traffic-light maximize/zoom, real Mission Control
    cards (`Cmd+M`), Settings Appearance toggles (`Reduced Transparency`
    `rt=` and `Reduced Motion` `rm=`), Control Center honesty (`(no radio)`
-   labels + real **Restart** and **Shut Down** buttons), Menu bar cleanup
-   (clickable `ojjy` opens About window; removed fake `WiFi`/`Vol`),
+   labels + real **Restart** and **Shut Down** buttons), Menu bar cleanup,
    centered Launchpad labels, and x86 PS/2 modifier key press/release
    events so releasing `Cmd` dismisses the App Switcher on both arches.
-5. [x] Completed the docs sweep (§4.3): `LICENSE`, `BUGFIXES.md`,
-   `README.md`, `RELEASE.md`, `ARCHITECTURE.md`, and `PLAN.md`.
-6. [x] Completed Session 4 (User Accounts & macOS Tahoe Desktop Expansion):
+4. [x] Completed Session 4 (User Accounts & macOS Tahoe Desktop Expansion):
    - Multi-user account & credential engine (`kernel/src/users.h`,
      `kernel/src/users.c`) with salted FIPS 180-4 SHA-256 password hashing,
      constant-time hash comparison, `/Library/Accounts/users.db` persistence,
@@ -57,7 +72,18 @@ All v3.1.0 and Session 4 checklist items are **DONE and verified**:
      (`APP_MONITOR`), bringing total built-in apps to 11.
    - Shell & Terminal commands (`whoami`, `users`, `adduser`, `passwd`,
      `su`/`login`, `lock`, `logout`).
-7. [x] Committed locally (author `"Jonas Lee"`). **Never push to a remote**
+5. [x] Completed Session 5 (Kernel Heap Allocator & Process/Syscall Subsystem):
+   - 16-byte-aligned coalescing free-list Kernel Heap Allocator
+     (`kheap_init`, `kmalloc`, `kcalloc`, `krealloc`, `kfree`,
+     `kheap_validate` in `kernel/src/memory.h` & `kernel/src/memory.c`).
+   - Kernel Process Table & Syscall Subsystem (`kernel/src/proc.h`,
+     `kernel/src/proc.c`) spawning system daemons (`PID 1 kernel_task`,
+     `PID 2 vfs_persistd`, `PID 3 inputd`, `PID 4 WindowServer`) and
+     tracking per-user application processes, CPU ticks, memory, and
+     13 kernel syscalls (`syscall_dispatch`).
+   - Wired live process table, heap telemetry, and `ps`/`top`/`kill`/`heap`
+     into `Activity Monitor.app`, `Terminal.app`, and the kernel console.
+6. [x] Committed locally (author `"Jonas Lee"`). **Never push to a remote**
    — Jonas pushes himself when he says so.
 
 ---
@@ -97,12 +123,12 @@ Jonas runs the OS on an **M2 Pro Mac** in a VM:
 - Therefore the **aarch64 port is the path that actually runs on his Mac**,
   via `qemu-system-aarch64` with **HVF acceleration (near-native)**.
   Jonas said: *"ik its built for intel so i dont like it i want it to be
-  native."* That is why the port exists and why it is the current focus.
+  native."* That is why the port exists and why it is the primary target.
 - macOS dev machine has: Apple clang 14 (cross-compiles both arches),
-  nasm (brew), python3, Rosetta (x86_64 test binaries run under
-  `arch -x86_64`). **No gnu-efi on macOS** (bootloader builds on Debian
-  only) and **no ld.lld** — kernel *objects* verify locally; full *links*
-  happen on Debian.
+  nasm (brew), python3, Rosetta. **No gnu-efi on macOS** (bootloader builds
+  on Debian only) and **no ld.lld** — kernel *objects* verify locally via
+  `make -C kernel ARCH=aarch64 objs` and `make -C kernel ARCH=x86_64 objs`;
+  full *links* happen on Debian (or once `brew install lld qemu` is run).
 
 ---
 
@@ -124,13 +150,14 @@ ojjyOS-v3/
 │   └── src/
 │       ├── main.c          entry, console shell, splash art, power seq
 │       ├── users.c/h       multi-user accounts, salted SHA-256 credentials, home dirs
+│       ├── proc.c/h        kernel process table (PID/UID/ticks) & syscall dispatcher
+│       ├── memory.c/h      PMM bitmap page allocator + 512 KB coalescing kheap (kmalloc/kfree)
 │       ├── system.c/h      power requests (shutdown/restart/sync flags)
 │       ├── arch_power.h    arch_power_off()/arch_reboot() interface
 │       ├── types.h         types + per-arch asm helpers (both arches)
-│       ├── arch/aarch64/   THE PORT (all device/platform code, see §4.1)
+│       ├── arch/aarch64/   Apple Silicon / ARM64 port (all device/platform code, §4.1)
 │       ├── gdt/idt/paging/timer(PIT)/serial(16550)/entry.asm  x86-only
 │       ├── serial_core.c   shared serial_puts/puthex/printf
-│       ├── memory.c        PMM from UEFI memory map (arch-neutral)
 │       ├── framebuffer.c font.c console.c string.c panic.c  (neutral)
 │       ├── drivers/        driver.c model, input.c, ps2_*, ata, block_cache,
 │       │                   acpi (x86 S5), blockdev.h + blockdev_x86.c,
@@ -141,498 +168,239 @@ ojjyOS-v3/
 │                           services.c, theme.c
 ├── scripts/                build.sh mkfs.sh mkimg.sh run.sh run-qemu.sh
 ├── tools/                  mkojfs mkicon mkwallpaper mkarray (host tools)
-├── sysroot/                files packed into the OJFS image
-│   └── System/Web/*.page   the offline Web app's pages
-├── tests/                  host-side unit tests (test_fs.c, test_ramfs.c)
+├── sysroot/                files packed into the OJFS image (11 .app bundles + Web pages)
+│   └── System/Web/*.page   the offline Web app's pages (home, about, accounts, release, shortcuts)
+├── tests/                  host-side unit tests (test_fs.c, test_ramfs.c — 118 assertions total)
 └── build/                  outputs (gitignored)
 ```
 
-Git state: one local commit ahead of origin (`0dbaea6`), then a second
-local commit containing the aarch64 WIP + this file (made at handoff).
-**Do not push.**
-
 ---
 
-## 3. History — what already happened
+## 3. History — what happened in Sessions 1–5
 
 ### Session 1 (the rescue, commit `0dbaea6`)
 
-Jonas asked to improve the repo. A five-way parallel audit found the
-project **could not build or boot at all**. Highlights of what was fixed
-(all verified: x86_64 freestanding compile of every TU, nasm assembly of
-entry.asm, 65 host-side unit tests):
+A five-way audit found the original project **could not build or boot at all**.
+Fixed 28+ defects across build, boot, input, filesystem, and desktop:
 
-**Build/boot (was fatal):**
-- `kernel/Makefile` recipe indented with a space → make couldn't parse.
-- `mkfs.sh` `xxd -i <abs path>` produced wrong C variable names → kernel
-  never compiled. Replaced by `tools/mkarray.c` (deterministic
-  `embedded_fs`/`embedded_fs_len` header).
-- `entry.asm`: BootInfo pointer was pushed onto a .bss stack and then the
-  BSS (including the pushed value) was zeroed → `kernel_main(NULL)`.
-  Fixed (pointer survives in `rbx`). Also `__bss_start/__bss_end` were
-  declared `global` instead of `extern` — the file had never assembled.
-- Bootloader jumped into an ELF header (raw load). Rewrote `LoadKernel()`
-  to parse **ELF64 program headers**, load each PT_LOAD at its link
-  address, zero the BSS tail, jump to the real `e_entry`.
-- PMM reserved only 1–4 MB while the kernel spans ~8 MB (BSS holds 4 MB of
-  wallpaper buffers). Now reserves to the `_kernel_end` linker symbol.
-- `paging_map()` implemented for real (on-demand page tables) + explicit
-  mapping of framebuffers above 4 GB.
+- **Build/boot:** Fixed space-indented `kernel/Makefile`, replaced broken `xxd -i`
+  with deterministic `tools/mkarray.c`, preserved `BootInfo *` in `rbx` across BSS
+  clear in `entry.asm`, rewrote `LoadKernel()` in `boot/ojjy-boot.c` to parse
+  **ELF64 `PT_LOAD` program headers**, reserved up to `_kernel_end` in PMM, and
+  implemented on-demand `paging_map()` for framebuffers above 4 GB.
+- **Input:** Wired `driver_dispatch_irq()` into `isr_handler()`, unmasked PIC IRQ 2
+  cascade for slave IRQs (`>= 8`), added `0xE0` extended scancodes (giving the OS
+  a Super/Cmd key), fixed 9-bit signed mouse delta decoding, and wired scroll wheel
+  events to `compositor_handle_scroll()`.
+- **Filesystem:** Fixed OJFS root index lookup (`parent == root_idx`), made VFS mounts
+  carry per-instance `fs_data` so `/Users` and `/Library` are independent RAMFS trees,
+  replaced the leaking RAMFS bump allocator with a first-fit free list + node reuse,
+  fixed `strncpy` `n+1` write overflow, and implemented real `.`/`..` path normalization.
+- **Persistence & Power:** Added `fs/persist.c` (snapshots both RAMFS instances to
+  the GPT `ojjyOS Data` partition at sector `67584` with CRC-32 verification,
+  restored at boot, autosaved every 30 s when dirty and on `sync`/shutdown/reboot)
+  and `drivers/acpi.c` (ACPI S5 power-off and 8042 reset).
+- **Desktop:** Decoupled window opening from `bundle_launch()`, implemented window
+  close/minimize traffic lights, single-source-of-truth cursor hit-testing, fixed
+  Finder/Terminal/TextEdit/Calendar bugs, and added Desktop icons, `Web.app`, and
+  `About.app`.
 
-**Input (was completely dead):**
-- `driver_dispatch_irq()` had **zero callers** — keyboard/mouse IRQs were
-  never delivered. Wired into `isr_handler()`.
-- PIC IRQ2 cascade never unmasked → all slave-PIC IRQs dead.
-  `pic_enable_irq()` unmasks it automatically for IRQ ≥ 8.
-- No 0xE0 extended-scancode handling → **no Super/Cmd key existed at
-  all**. Added (arrows, Home/End/PgUp/PgDn/Ins/Del, right mods, Super
-  0x5B/0x5C, Menu).
-- Mouse deltas: 9-bit two's-complement decoded wrong (fast motion jumped
-  backwards). Fixed.
-- Scroll events existed but nothing consumed them →
-  `compositor_handle_scroll()` + scrolling in Finder/Terminal/TextEdit/
-  Notes/Web.
-- Mouse init reordered to the safe sequence (config before streaming,
-  ACK validation, probe that can actually fail).
+### Sessions 2 & 3 (Native Apple Silicon `aarch64` Port & Tahoe Polish, commit `935f27f`)
 
-**Filesystem (was unusable):**
-- OJFS `find_entry()` started at `parent=0xFFFFFFFF` but the writer nests
-  top-level entries under the root entry index (0) → **every path below
-  `/` failed**. Fixed: resolve the root entry index first.
-- One ramfs instance mounted at both `/Users` and `/Library` (aliased
-  trees). `VfsOps` gained a `fs_data` first parameter everywhere;
-  ramfs/ojfs are per-instance now.
-- Kernel `strncpy` wrote n+1 bytes (exact-n now; tested).
-- `component[len]='\0'` unbounded in 3 path parsers (clamped now).
-- RAMFS bump allocator leaked on every grow/unlink → pool died after a
-  few saves. Now a first-fit free-list + node-slot reuse.
-- `vfs_normalize_path` was a no-op → real `.`/`..` resolution
-  (Terminal `cd ..` works).
-- `ramfs_mkdir` returned a node *index* instead of 0/-1 → every mkdir
-  "failed". Caught by the host tests.
+- Completed `kernel/src/arch/aarch64/` (`entry.S`, `arch64.c`, `gicv2.c`, `timer_a64.c`,
+  `pl011.c`, `pl031.c`, `virtio.c`, `virtio_input.c`, `virtio_blk.c`, `psci.c`),
+  `kernel/linker-aarch64.ld` (`0x41000000`), dual-arch `kernel/Makefile` and
+  `boot/Makefile`, `scripts/build.sh`, `scripts/mkimg.sh`, and `scripts/run-qemu.sh`
+  (Apple Silicon `-accel hvf` + `ramfb` + `virtio-*`).
+- Fixed two `virtio` descriptor chain bugs: `d->next` index advancement in
+  `virtio_desc_add()` and setting `VRING_DESC_F_NEXT` on write descriptors in
+  `virtio_blk.c`.
+- Added window bottom-right resize grip + green traffic-light maximize/zoom,
+  live Mission Control window cards (`Cmd+M`), `Reduced Transparency` (`rt=`) and
+  `Reduced Motion` (`rm=`) toggles in Settings, Control Center Restart/Shut Down
+  buttons, and PS/2 modifier key release events for `Cmd+Tab`.
 
-**Persistence & power (new):**
-- Writable state **survives reboot**: `fs/persist.c` snapshots the two
-  RAMFS instances (flat structs) byte-for-byte to the "ojjyOS Data" GPT
-  partition (`OJJY_DATA_START_SECTOR = 67584`, must match mkimg.sh),
-  restores at boot. Autosave every 30 s when dirty + on
-  shutdown/reboot/`sync`.
-- ACPI S5 power-off (RSDP→XSDT→FADT→PM1a_CNT + \_S5 AML scan) and 8042
-  reset reboot in `drivers/acpi.c`; `system.c` request plumbing;
-  `shutdown`/`reboot`/`sync` in console + Terminal + UI.
-- mkimg.sh: 128 MB image = 32 MB ESP + data partition (sgdisk extents
-  fixed — the old one collided with the backup GPT).
+### Session 4 (User Accounts, Salted SHA-256 Credentials & Tahoe Desktop Expansion, commit `3582b8e`)
 
-**Desktop:**
-- Apps could never launch (window opening was gated on `bundle_launch()`,
-  which only "About" satisfied). Windows now open directly by app type.
-- Working traffic lights (close + minimize; dock restores), real
-  `compositor_destroy_window`, Cmd+Q closes the window.
-- Cursor teleport on click fixed (compositor cursor is the single source
-  of truth; `compositor_get_cursor()` feeds hit-testing).
-- Dock hit boxes halved; Finder row math fixed (+36→+44 + scroll);
-  drag-state leaks fixed; per-frame manifest reloads removed;
-  selected-index clamping; app-level Cmd+C/X/V un-shadowed from global
-  Cmd+C.
-- Terminal: `mv`/`cp` in-place path corruption fixed, `cat` reads whole
-  files, `cd ..` works, `terminal_resolve_path` returns 0/-1 and every
-  caller checks it.
-- TextEdit: Enter split fixed; no overwrite at full lines; terminator
-  hardening on line shifts.
-- Calendar: fixed a **user-triggerable crash** (unclamped day-view event
-  loop dereferenced garbage indices), `|` sanitized on save, Tab applies
-  edits, grid/agenda hit-tests bounded, `calendar_load` no longer drops a
-  final line lacking `\n`.
-- New: **desktop icons** (`/Users/guest/Desktop` + "ojjyHD" disk icon,
-  double-click to open), **Web app** (offline browser over
-  `/System/Web/*.page` tiny markup: `# heading`, `>id Label` links;
-  address bar/back/forward/scroll; pages ship in sysroot; honest about
-  being offline), **About window** (version, "Created by Jonas Lee",
-  memory), app switcher shows 8 + mouse + Super-release dismiss.
-- Boot experience: ASCII-art splash ("ojjyOS" in block letters) with
-  staged progress bar, `[ OK ]` welcome banner on the console, boxed
-  Terminal welcome, Jonas credit on the power screen.
-- App switcher: shows 8 apps, click-to-activate, Super-release dismiss
-  (`compositor_handle_key_release`, needs modifier release events from
-  the keyboard driver — x86 PS/2 driver still doesn't post modifier
-  events; ARM virtio driver does).
+- **Multi-User Account & Credential Engine (`kernel/src/users.h`, `kernel/src/users.c`):**
+  - Full FIPS 180-4 SHA-256 implementation with per-account 8-hex-char salt
+    (`SHA-256(salt_hex + ":" + password)`) and constant-time digest verification.
+  - Persistent account database in `/Library/Accounts/users.db` (`username|full_name|salt_hex|hash_hex|home_dir|admin`)
+    automatically synced to disk via `system_request_sync()`.
+  - Automatic per-user home directory provisioning under `/Users/<username>`
+    (`Desktop/Welcome.txt`, `Documents/Notes.txt`, `Calendar.txt`).
+- **First-Boot Setup Assistant & macOS Tahoe Lock/Login Screen (`compositor.c`):**
+  - When `users_count() == 0` (or clicking `+ New Account`), displays the Setup
+    Assistant card (**Full Name**, **Username**, **Password**, **Confirm Password**).
+  - When locked (`!users_is_authenticated()`, or pressing `Ctrl+Cmd+Q`), displays
+    the macOS Tahoe Lock/Login Screen with large clock, user selector pills,
+    masked password input, `+ New Account`, `Restart`, and `Shut Down`.
+- **Desktop & App Additions:**
+  - `Settings → Users & Accounts` (`SETTINGS_PAGE_USERS`) with active user card,
+    interactive password change form, account list, `+ Add Account`, `Lock Screen`,
+    and `Switch User`.
+  - Interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`) +
+    clickable active username pill on the top-right menu bar.
+  - Desktop right-click context menu (`New Folder on Desktop`, `New Text Note`,
+    `Open Terminal`, `Open Finder`, `Change Wallpaper...`, `Account Settings...`,
+    `About ojjyOS`).
+  - Added `Calculator.app` (`APP_CALCULATOR`) and `Activity Monitor.app`
+    (`APP_MONITOR`), bringing total built-in apps to 11.
 
-**Hygiene:** stale `.o` files removed from git; `.gitignore` added;
-commits authored as "Jonas Lee".
+### Session 5 (Kernel Heap Allocator & Process/Syscall Subsystem)
 
-### Session 2 (current): the aarch64 port — IN PROGRESS
-
-Jonas: *"i want it to actually support apple silicon... i want it to be
-native"* + *"lock in on the kernel... focus and spend a lot of time on the
-actual kernel."* Also asked for the boot ASCII art (done, in `0dbaea6`).
-
-Design settled (do not change without a strong reason):
-- Target: **QEMU `-M virt,gic-version=2`**, `-accel hvf` on Apple Silicon,
-  `-device ramfb` for the GOP framebuffer, PL011 serial, virtio-mmio
-  devices (virtio-blk for disk, virtio-keyboard + virtio-tablet for
-  input). GICv2 chosen over v3 because it is far simpler and QEMU
-  supports it explicitly.
-- Kernel links at **0x41000000**. Same bootloader C code as x86; only the
-  ELF `e_machine` check differs (62 x86 / 183 aarch64).
-- The ARM kernel **keeps UEFI's page tables** (UEFI identity-maps RAM and
-  MMIO; `paging_init` is x86-only). Document this in ARCHITECTURE later.
-- **Input is polled, not IRQ-driven**: `a64_poll_input()` drains
-  virtio-input each main-loop iteration; the 1 kHz generic-timer
-  interrupt (GIC PPI 30) keeps the loop alive (`wfi` wakes on it). Only
-  the timer uses the GIC — devices never raise interrupts.
-- Power via **PSCI**: `hvc #0` (QEMU virt has no EL3), fallback `smc #0`;
-  SYSTEM_OFF = 0x84000008, SYSTEM_RESET = 0x84000009.
-- Serial split: `serial_core.c` holds the shared puts/puthex/printf
-  (built on `serial_putc`); per-arch files provide `serial_init` +
-  `serial_putc` (x86: 16550 `serial.c`; ARM: `pl011.c`).
-- `types.h` gates all low-level helpers on `__x86_64__` / `__aarch64__`;
-  ARM has no-op port-I/O stubs so common code compiles (port-I/O drivers
-  are excluded from ARM builds).
-- Shared code that MUST stay arch-neutral: `main.c` (mostly), `system.c`,
-  `memory.c`, `framebuffer/font/console/string/panic.c`, everything in
-  `fs/` and `ui/`, `drivers/driver.c`, `drivers/input.c`, the
-  `drivers/blockdev.h` API, `drivers/rtc.h` API, `timer.h` API.
-
-### 4.1 Files the aarch64 port already has (all written, compile-checked individually)
-
-In `kernel/src/arch/aarch64/`:
-
-| File | Status / notes |
-|---|---|
-| `arch64.h` | arch header: `a64_init`, `a64_irq_handler`, `a64_exception_handler`, `a64_poll_input` |
-| `entry.S` | GNU syntax (clang assembles it). EL3/EL2→EL1 drop, stack setup, BSS clear (BootInfo preserved in x19), VBAR_EL1 vector table (16×0x80 aligned 0x800), 128 KB stack in .bss |
-| `gicv2.c/h` | GICv2 at GICD 0x08000000 / GICC 0x08010000; init masks all SPIs, sets priorities, enables ctlrs; ack/eoi/enable/disable helpers |
-| `timer_a64.c` | generic timer → 1 kHz tick; `timer_init`/`timer_get_ticks`/`timer_sleep`; PPI 30; `a64_timer_isr()` re-arms CNTP_TVAL |
-| `pl011.c` | `serial_init`/`serial_putc` on UART 0x09000000 (poll TXFF; LF→CRLF) |
-| `pl031.c` | RTC 0x09010000; `rtc_init`/`rtc_read_time`/`rtc_print_time`/`rtc_get_driver`(NULL stub); civil_from_days conversion; weekday |
-| `virtio.c/h` | virtio-mmio v2 transport: 32-slot scan at 0x0A000000+0x200*i, device init sequence, `virtio_queue_init`/`desc_add`/`submit`/`poll_used`. Simple single-chain-in-flight allocator (recycles on used) |
-| `virtio_devices.h` | attach/poll/ready declarations shared between transport and drivers |
-| `virtio_input.c` | keyboard + tablet: Linux keycodes→kernel KeyCode/ASCII tables, modifier state (incl. Super; posts modifier events so the app-switcher Super-release works), BTN_* → mouse buttons, EV_ABS→pixel mapping via `input_get_bounds()`, REL_WHEEL→scroll (QEMU tablet has no wheel — scroll is effectively x86-only for now, say so in docs) |
-| `virtio_blk.c` | block device; implements the `block_*` API directly (there is NO separate `blockdev_a64.c`; `drivers/blockdev_x86.c` is the x86 twin). Single `blk_transfer_sector()` helper; one 512-byte buffer per transfer; capacity read from config |
-| `psci.c` | `arch_power_off`/`arch_reboot` via PSCI hvc→smc fallback |
-
-Plus in shared code:
-- `types.h`: per-arch inline helpers (cli/sti/hlt = DAIF/wfi on ARM).
-- `serial_core.c`: shared formatting (split out of serial.c).
-- `drivers/input.c/h`: added `input_get_bounds()` (used by the tablet).
-- `boot/ojjy-boot.c`, `kernel/linker.ld`, Makefiles: **NOT yet touched**
-  for dual-arch — that is exactly where the next session continues.
-
-### 4.2 REMAINING WORK — exact steps (do these in order)
-
-**Step 1 — `kernel/src/main.c` arch ifdefs.**
-Current main.c unconditionally includes x86 headers (`gdt.h`, `idt.h`,
-`paging.h`, `drivers/ps2_keyboard.h`, `drivers/ps2_mouse.h`,
-`drivers/ata.h`, `drivers/rtc.h`, `drivers/block_cache.h`) and calls
-`gdt_init()/idt_init()/paging_init()` etc. Required changes:
-- Wrap the x86-only includes: `#ifdef __x86_64__ ... #else #include
-  "arch/aarch64/arch64.h" #endif`. (Keep `drivers/rtc.h` unconditional —
-  it is arch-neutral and both arches implement it.)
-- In `kernel_main()`: wrap `gdt_init(); idt_init();` and the
-  `pmm_init+paging_init` pairing and the PS/2/ATA/block-cache driver
-  registration block in `#ifdef __x86_64__`. For aarch64 call
-  `a64_init(boot_info);` (it does GIC + virtio + rtc_init) and skip
-  `paging_init()` entirely (UEFI tables stay). `timer_init()` runs on
-  both arches (PIT vs generic timer) — keep it unconditional.
-- Keep the common init: `driver_subsystem_init()`, `input_init()`,
-  `input_set_mouse_bounds`, VFS/mount/persist, bundle init,
-  `interrupts_enable()`, splash, welcome banner — all arch-neutral.
-- In the main loop, add `#ifndef __x86_64__ a64_poll_input(); #endif`
-  right after the power/sync handling (before draining the input queue).
-- Note: `serial_init(COM1_PORT)` stays unconditional (PL011 ignores the
-  port argument).
-- The console-mode `cat`/`ls` etc. and the `ui` command are arch-neutral.
-
-**Step 2 — `kernel/src/drivers/diagnostics.c` guards.**
-It includes `ata.h` + `block_cache.h` and calls `ata_print_devices()`.
-Wrap those includes and the ATA/cache diagnostics section in
-`#ifdef __x86_64__ ... #endif` (keep driver list, memory, input sections
-arch-neutral). This file is reachable from the console `diag` command,
-so it must compile on both arches.
-
-**Step 3 — `kernel/Makefile` ARCH switch.**
-Restructure:
-```make
-ARCH ?= x86_64
-ifeq ($(ARCH),aarch64)
-  TARGET_TRIPLE := aarch64-unknown-none-elf
-  CFLAGS += --target=$(TARGET_TRIPLE) -mgeneral-regs-only
-  # NO -mno-red-zone etc. (x86-only flags), NO -mcmodel=kernel
-  LDFLAGS := -T linker-aarch64.ld -nostdlib -static -z max-page-size=0x1000
-  ASM_RULE = $(CC) $(CFLAGS) -c   # entry.S via clang (nasm is x86-only)
-  SRCS := (common list) + arch/aarch64/*.c
-else
-  (current x86 flags/linker.ld; SRCS common + x86-only files + entry.asm via nasm)
-endif
-```
-Concrete source split:
-- Common: `src/main.c system.c string.c memory.c framebuffer.c font.c
-  console.c panic.c serial_core.c` + `src/fs/*.c` (all 6) + `src/ui/*.c`
-  (all 3) + `src/drivers/driver.c input.c diagnostics.c`
-- x86-only: `gdt.c idt.c paging.c timer.c serial.c entry.asm` +
-  `drivers/ps2_keyboard.c ps2_mouse.c ata.c block_cache.c acpi.c
-  blockdev_x86.c`
-- aarch64-only: `arch/aarch64/entry.S arch/aarch64/arch64.c
-  gicv2.c timer_a64.c pl011.c pl031.c virtio.c virtio_input.c
-  virtio_blk.c psci.c`
-- Keep `-MMD -MP` header deps and the `-include $(DEPS)` line for both.
-- Verify `make clean` still works and recipes use TABS (gotcha #1 in §7).
-
-**Step 4 — `kernel/linker-aarch64.ld`.**
-Copy of `kernel/linker.ld` with `. = 0x41000000;` instead of 0x100000 and
-the same sections (text/rodata/data/bss + `__bss_start/__bss_end` +
-`_kernel_end` + /DISCARD/). `ENTRY(_start)`.
-
-**Step 5 — `boot/ojjy-boot.c` machine check.**
-Around the ELF validation (`ehdr.e_machine != EM_X86_64`), add:
-```c
-#if defined(__x86_64__)
-  #define OJJY_EXPECTED_MACHINE 62    /* EM_X86_64 */
-#elif defined(__aarch64__)
-  #define OJJY_EXPECTED_MACHINE 183   /* EM_AARCH64 */
-#else
-  #error "Unsupported boot architecture"
-#endif
-```
-and compare against `OJJY_EXPECTED_MACHINE`. Everything else in the
-bootloader (GOP ramfb-compatible, ELF program-header loading,
-AllocateAddress at p_paddr, memory map, EBS retry) is arch-neutral.
-
-**Step 6 — `boot/Makefile` aarch64 target.**
-Parameterize like the kernel Makefile (`ARCH ?= $(shell uname -m)` with
-explicit override). Debian gnu-efi ships aarch64 headers at
-`/usr/include/efi/aarch64`; typical flags:
-`--target=aarch64-linux-gnu -I/usr/include/efi -I/usr/include/efi/aarch64
--fshort-wchar -DEFI_FUNCTION_WRAPPER` is x86-only — do NOT define
-EFI_FUNCTION_WRAPPER on aarch64; gnu-efi's aarch64 uses libgnuefi-aarch64
-+ `elf_aarch64_efi.lds` from `/usr/lib/`. Mirror the structure of the
-existing x86 rules; keep objcopy PE→raw step (same for both). You cannot
-test this on the Mac — mark it "build on Debian" and rely on Jonas to
-report, or double-check gnu-efi's Debian docs.
-
-**Step 7 — `scripts/run-qemu.sh`.** THE script Jonas will run on his Mac.
-Requirements:
-- `ARCH=${1:-aarch64}` (default aarch64 — that's his machine).
-- aarch64: `qemu-system-aarch64 -M virt,gic-version=2 -m 2048 -accel hvf
-  (fallback: -accel tcg) -bios <edk2-aarch64 firmware> -device ramfb
-  -device virtio-keyboard-device -device virtio-tablet-device
-  -drive file=build/ojjyos3.img,format=raw,if=none,id=hd -device
-  virtio-blk-device,drive=hd -serial file:/tmp/ojjyos-serial.log`.
-  Firmware paths to probe: macOS brew
-  `/opt/homebrew/share/qemu/edk2-aarch64-code.fd` (also
-  `.../edk2-arm-code.fd` variants), Linux
-  `/usr/share/qemu-efi-aarch64/QEMU_EFI.fd`,
-  `/usr/share/ovmf/...`. Fail with a clear message + install hint
-  (`brew install qemu`) if missing. Note: the disk image must be built
-  with `ARCH=aarch64` kernel (mkimg copies `build/kernel.bin`).
-- x86 mode: `qemu-system-x86_64 -M pc -m 2048 -bios <OVMF> -vga std
-  -drive file=...,format=raw -serial file:...` (PIIX IDE is `-M pc`
-  default; the kernel's ATA driver expects it).
-- Print the serial-log tail hint like run.sh does.
-
-**Step 8 — verify everything (§6 commands).**
-- aarch64: compile every listed source with
-  `clang --target=aarch64-unknown-none-elf -ffreestanding
-  -mgeneral-regs-only -Wall -Wextra -Wno-unused-parameter -O2 -Isrc -c`
-  and assemble `entry.S` with the same clang (`-c`). Fix all errors —
-  likely suspects: ARM `%x` formats in serial_printf calls (int casts),
-  missing prototypes, `VirtQueueMem` size assumptions.
-- x86_64: rerun the full compile loop + nasm + the two host test binaries
-  (both must print ALL ... PASSED).
-- Commit locally: author "Jonas Lee", message describing the port. NO PUSH.
-
-**Step 9 — update AGENTS.md** (status of each step, anything learned).
-
-### 4.3 After the port: docs sweep (Jonas requirement #8)
-
-- `README.md`: rewrite for 3.1.0 + dual-arch. Sections: what it is
-  (custom kernel, not Linux/BSD/macOS), "Created by Jonas Lee"
-  prominently, build on Debian (x86) AND `run-qemu.sh` on Apple Silicon,
-  feature list split into **Implemented / Tested / Planned** (Jonas's
-  requirement: "Distinguish implemented, tested, and planned features").
-  Planned must include: multitasking/scheduler, ELF userspace + syscalls,
-  protected address spaces, app crash isolation, network stack (→ real
-  browser), window resize, sound. Scroll-wheel on aarch64: note QEMU's
-  virtio-tablet has no wheel device yet.
-- `RELEASE.md`: add QEMU-on-Mac instructions; keep Debian/VBox flow.
-- `BUGFIXES.md`: write the full audit→fix log (source material: §3 here
-  and PLAN.md; list each finding with file, symptom, fix).
-- `LICENSE`: create — "Copyright (c) 2024 Jonas Lee. All rights reserved.
-  Created by Jonas Lee." (matches the README statement; do NOT pick an
-  open-source license for him).
-- `ARCHITECTURE.md`: add the aarch64 platform layer section (§5 table of
-  this file is the source), the persistence design, and note that ARM
-  keeps UEFI page tables.
-- `PLAN.md`: mark completed items.
-
-### 4.4 Small desktop items still open (Jonas's list, post-port)
-
-1. **Window resize** by dragging bottom-right corner + **maximize**
-   (green traffic light; store/restore bounds in CompositorWindow — add
-   `saved_x/y/w/h`, `maximized`; apps derive layout from win->x/y/w/h so
-   this works).
-2. **Mission Control** real content: draw open-window cards (app icon +
-   title) instead of the stub; click card → raise + close overlay; wire
-   the `OVERLAY_MISSION_CONTROL` click case (currently just closes).
-3. **Settings → Appearance**: "Reduced transparency" and "Reduced
-   motion" toggles (`SettingsState` + save/load keys `rt=`/`rm=`);
-   compositor: reduced transparency → opaque panels + skip blur;
-   reduced motion → snap animations to final state in
-   `update_animations()`.
-4. **Control Center honesty**: remove the fake volume/brightness sliders
-   (no hardware drivers); label Wi-Fi/Bluetooth rows "(no radio)" or
-   hide them; ADD real **Restart** and **Shut Down** buttons calling
-   `system_request_restart()`/`system_request_shutdown()` (compositor.c
-   already includes `../system.h`; the power sequence +
-   safe-to-power-off screen already exist).
-5. **Menu bar**: remove the placeholder "WiFi"/"Vol" text (keep the live
-   clock; the File/Edit/View labels are decorative but harmless — leave).
-6. **x86 PS/2 keyboard**: post KEY_PRESS/RELEASE events for modifier
-   keys too (like the ARM driver) so the app-switcher Super-release
-   works on x86 (currently returns early after updating modifiers).
-   Low risk; watch for the compositor treating bare-Super presses
-   sensibly (it does — no shortcut matches a bare Super).
-
-### 4.5 Explicitly deferred (document as Planned, do NOT fake)
-
-Real multitasking/scheduler; ELF userspace processes + syscalls +
-protected address spaces; crash isolation (app crash kills the OS today —
-in-kernel apps by design for now); network stack + real browser; window
-server as separate process; SMP/APIC (x86) & GICv3; sound; resizable
-windows live-layout. Jonas approved the priority order; userspace is
-M4. When the time comes: design doc first (PLAN.md), then implement.
+- **Kernel Heap Allocator (`kernel/src/memory.h`, `kernel/src/memory.c`):**
+  - Added a 512 KB 16-byte-aligned coalescing free-list kernel heap (`kheap_init`,
+    `kmalloc`, `kcalloc`, `krealloc`, `kfree`, `kheap_get_total`, `kheap_get_used`,
+    `kheap_get_free`, `kheap_get_alloc_count`, `kheap_validate`).
+  - Every block header carries magic `0x4F4A4850` (`"OJHP"`), detects double-frees
+    and out-of-bounds frees, splits oversized blocks on allocation, and coalesces
+    adjacent free blocks both forward and backward on `kfree`.
+- **Kernel Process Table & Syscall Subsystem (`kernel/src/proc.h`, `kernel/src/proc.c`):**
+  - Tracks up to 24 processes (`PID`, `PPID`, `UID`, `owner`, `app_type`,
+    `ProcState`, `cpu_ticks`, `memory_bytes`, `syscalls_invoked`).
+  - Spawns 4 protected system daemons at boot (`PID 1 kernel_task`,
+    `PID 2 vfs_persistd`, `PID 3 inputd`, `PID 4 WindowServer`) and automatically
+    spawns/terminates per-user application processes as windows open and close.
+  - Provides `syscall_dispatch(num, a0, a1, a2, a3)` implementing 13 kernel
+    syscalls (`SYS_GETPID`, `SYS_GETUID`, `SYS_UPTIME`, `SYS_OPEN`, `SYS_READ`,
+    `SYS_WRITE`, `SYS_CLOSE`, `SYS_MKDIR`, `SYS_UNLINK`, `SYS_MALLOC`,
+    `SYS_FREE`, `SYS_KILL`, `SYS_SYNC`).
+  - Integrated into `Activity Monitor.app` (live process table + KHeap & syscall
+    telemetry), `Terminal.app` (`ps`, `top`, `kill <pid>`, `heap`/`mem`), and
+    the fallback kernel console.
 
 ---
 
-## 5. aarch64 / QEMU virt cheat sheet
+## 4. Architecture & Subsystem Reference
+
+### 4.1 `aarch64` / QEMU `virt` Platform Layer (`kernel/src/arch/aarch64/`)
+
+| File | Responsibility |
+|---|---|
+| `arch64.h` / `arch64.c` | Platform init (`a64_init`), IRQ/exception dispatch (`a64_irq_handler`, `a64_exception_handler`), input polling (`a64_poll_input`) |
+| `entry.S` | EL3/EL2 → EL1 drop, FP/NEON enable (`CPACR_EL1`), 128 KB stack setup, BSS clear (`BootInfo *` preserved in `x19`), `VBAR_EL1` vector table |
+| `gicv2.c/h` | GICv2 at `GICD 0x08000000` / `GICC 0x08010000`; masks SPIs, sets priorities, ack/eoi/enable/disable |
+| `timer_a64.c` | ARM Generic Physical Timer → 1 kHz tick (`PPI 30`); `timer_init`/`timer_get_ticks`/`timer_sleep` |
+| `pl011.c` | `serial_init`/`serial_putc` on PL011 UART `0x09000000` |
+| `pl031.c` | PL031 RTC at `0x09010000`; Unix epoch → calendar `RtcTime` conversion |
+| `virtio.c/h` | `virtio-mmio` v2 transport scanning 32 slots at `0x0A000000 + 0x200*i` |
+| `virtio_input.c` | Virtio keyboard + tablet (`EV_KEY`, `EV_ABS` → screen bounds, `REL_WHEEL`) |
+| `virtio_blk.c` | Virtio block device implementing `block_available`/`block_read_sectors`/`block_write_sectors` |
+| `psci.c` | `arch_power_off`/`arch_reboot` via PSCI `hvc #0` (fallback `smc #0`) |
+
+### 4.2 Future Milestones (Roadmap for Next Sessions)
+
+1. **M4.1 — Preemptive Context Switching & Ring 3 / EL0 Userspace:**
+   - Extend `ProcEntry` in `kernel/src/proc.h` with saved CPU context (`CpuContext`:
+     `x19..x30, sp, elr_el1, spsr_el1` on `aarch64`; `r12..r15, rbx, rbp, rsp, rip, rflags`
+     on `x86_64`) and per-process kernel stacks allocated from `kmalloc`/`pmm_alloc_page`.
+   - Wire `SVC #0` (in `kernel/src/arch/aarch64/entry.S`) and `INT 0x80` / `SYSCALL`
+     (in `kernel/src/idt.c`) to call `syscall_dispatch()`.
+   - Add an ELF64 userspace binary loader in `proc.c` so external binaries in `/bin`
+     or `.app` bundles can execute in isolated address spaces.
+2. **M4.2 — Networking (`virtio-net` + ARP/IPv4/ICMP/UDP/TCP/HTTP):**
+   - Add `virtio_net.c` on `aarch64` (`virtio-mmio` device ID 1) and a minimal
+     socket/HTTP client so `Web.app` can fetch live HTTP pages when QEMU user-mode
+     networking (`-nic user`) is attached.
+3. **M4.3 — Audio (`virtio-sound` / HDA) & Anti-Aliased Vector Fonts.**
+
+---
+
+## 5. `aarch64` / QEMU `virt` Cheat Sheet
 
 | Thing | Address / value |
 |---|---|
-| RAM base | 0x40000000 |
-| Kernel load/link | 0x41000000 |
-| GICv2 distributor | 0x08000000 |
-| GICv2 CPU interface | 0x08010000 |
-| Timer PPI | intid 30 (non-secure EL1 physical timer) |
-| PL011 UART | 0x09000000 |
-| PL031 RTC | 0x09010000 |
-| virtio-mmio slots | 0x0A000000 + i*0x200 (32 slots, version 2 = modern) |
-| virtio device IDs | blk=2, input=18 |
-| PSCI conduit | `hvc #0` (SYSTEM_OFF 0x84000008, SYSTEM_RESET 0x84000009) |
-| Exception levels | UEFI may leave us at EL2 → entry.S drops to EL1 |
-| ELF machine | x86=62, aarch64=183 |
-
-virtio-mmio v2 register map used in `virtio.h`: magic 0x000, version
-0x004, device id 0x008, status 0x080, queue sel 0x028, num_max 0x030,
-num 0x034, ready 0x038, desc 0x040, avail 0x048, used 0x050, notify
-0x060, config 0x100. Init order: reset → ACK|DRIVER → features(0) →
-FEATURES_OK → queue setup → DRIVER_OK.
-
-x86-only files (excluded from aarch64 builds): gdt.c, idt.c, paging.c,
-timer.c (PIT), serial.c (16550), entry.asm, drivers/{ps2_keyboard,
-ps2_mouse, ata, block_cache, acpi, blockdev_x86}.c.
+| RAM base | `0x40000000` |
+| Kernel load/link | `0x41000000` |
+| GICv2 distributor | `0x08000000` |
+| GICv2 CPU interface | `0x08010000` |
+| Timer PPI | `intid 30` (non-secure EL1 physical timer) |
+| PL011 UART | `0x09000000` |
+| PL031 RTC | `0x09010000` |
+| virtio-mmio slots | `0x0A000000 + i*0x200` (32 slots, version 2 = modern) |
+| virtio device IDs | `blk=2`, `input=18` |
+| PSCI conduit | `hvc #0` (`SYSTEM_OFF 0x84000008`, `SYSTEM_RESET 0x84000009`) |
+| Exception levels | UEFI may leave us at EL2 → `entry.S` drops to EL1 |
+| ELF machine | `x86_64=62`, `aarch64=183` |
 
 ---
 
-## 6. Build & verify commands (this Mac)
+## 6. Build & Verify Commands (this Mac)
 
 ```bash
 cd "~/Desktop/Desktop Jonas/ojjyOS-kernel/ojjyOS-v3"
 
-# Filesystem image + embedded header (works on macOS)
+# 1. Rebuild the OJFS filesystem image + embedded kernel header (works on macOS)
 bash scripts/mkfs.sh
 
-# x86_64 compile check (every TU)
-cd kernel
-for f in src/*.c src/drivers/*.c src/fs/*.c src/ui/*.c; do
-  clang -target x86_64-unknown-none-elf -ffreestanding -fno-stack-protector \
-    -fno-stack-check -fno-pie -fno-pic -mno-red-zone -mno-mmx -mno-sse \
-    -mno-sse2 -mcmodel=kernel -Wall -Wextra -Wno-unused-parameter -O2 \
-    -Isrc -c -o /dev/null "$f" || echo "FAIL $f"
-done
-nasm -f elf64 -o /dev/null src/entry.asm && echo ASM_OK
+# 2. Compile-verify BOTH kernel architectures (must succeed with 0 warnings, 0 errors)
+make -C kernel clean && make -C kernel ARCH=aarch64 objs
+make -C kernel clean && make -C kernel ARCH=x86_64 objs
+make -C kernel clean
 
-# aarch64 compile check (per-file, same -Isrc)
-clang --target=aarch64-unknown-none-elf -ffreestanding -mgeneral-regs-only \
-  -Wall -Wextra -Wno-unused-parameter -O2 -Isrc -c -o /dev/null <file>
-clang --target=aarch64-unknown-none-elf -c src/arch/aarch64/entry.S -o /dev/null
+# 3. Run host unit tests (37 in test_fs + 81 in test_ramfs = 118 total assertions)
+clang -O1 -w -Ikernel/src tests/test_fs.c kernel/src/fs/ojfs.c kernel/src/fs/vfs.c kernel/src/string.c -o /tmp/test_fs && /tmp/test_fs
+clang -O1 -w -Ikernel/src tests/test_ramfs.c kernel/src/fs/ramfs.c kernel/src/fs/vfs.c kernel/src/users.c kernel/src/memory.c kernel/src/proc.c kernel/src/string.c -o /tmp/test_ramfs && /tmp/test_ramfs
+rm -f /tmp/test_fs /tmp/test_ramfs
 
-# Host unit tests (need build/system.ojfs from mkfs.sh)
-clang --target=x86_64-apple-macos13 -O1 -w -Ikernel/src -c tests/test_fs.c -o /tmp/tt.o
-clang --target=x86_64-apple-macos13 -O1 -w -Ikernel/src -c kernel/src/fs/ojfs.c -o /tmp/ojfs.o
-clang --target=x86_64-apple-macos13 -O1 -w -Ikernel/src -c kernel/src/fs/vfs.c -o /tmp/vfs.o
-clang --target=x86_64-apple-macos13 -O1 -w -Ikernel/src -c kernel/src/fs/ramfs.c -o /tmp/ramfs.o
-clang --target=x86_64-apple-macos13 -O1 -w -c kernel/src/string.c -o /tmp/string.o
-clang --target=x86_64-apple-macos13 /tmp/tt.o /tmp/ojfs.o /tmp/vfs.o /tmp/string.o -o /tmp/test_fs
-arch -x86_64 /tmp/test_fs          # expect: ALL OJFS/STRING TESTS PASSED (32)
-# test_ramfs.c the same way (ramfs.o replaces ojfs.o) — expect 33 passed
-
-# Local commit (author Jonas; NEVER push)
+# 4. Local commit (author Jonas; NEVER push)
 git add -A && git -c user.name="Jonas Lee" -c user.email="jonas@ojjyos.local" commit -m "..."
 ```
 
-Full image build + real boot verification happens on **Debian**
-(gnu-efi, ld.lld, nasm, sgdisk, mtools, VirtualBox). Apple Silicon runs
-via `scripts/run-qemu.sh` (to be written, §4.2 step 7). QEMU itself is
-NOT yet installed on this Mac — `brew install qemu` if you want to
-smoke-test, or leave it to Jonas.
-
 ---
 
-## 7. Gotchas learned the hard way (do not regress)
+## 7. Gotchas Learned the Hard Way (do not regress)
 
-1. **Makefile recipes need TABS.** The original repo shipped a
-   space-indented recipe; nothing built. Double-check any Makefile you
-   edit (the write tool preserves what you give it — use real tabs).
+1. **Makefile recipes need TABS.** Double-check any Makefile you edit.
 2. **Never push to a remote without Jonas's explicit go-ahead.**
 3. **BSS-clear vs stack**: on both arches, anything saved on the stack
-   before the BSS wipe is destroyed — keep the BootInfo pointer in a
+   before the BSS wipe is destroyed — keep the `BootInfo` pointer in a
    callee-saved register (x86 `rbx`, ARM `x19`).
-4. **VfsOps carry `fs_data` as the first parameter of every op.** Mounts
+4. **`VfsOps` carry `fs_data` as the first parameter of every op.** Mounts
    are per-instance; do not reintroduce globals (`current_instance`).
-5. **strncpy must write exactly n bytes** (tested in tests/test_fs.c).
-6. **OJFS root entry**: top-level entries have `parent == root entry
-   index` (0 in the writer), NOT 0xFFFFFFFF. `find_entry()` must resolve
-   the root index first (this was THE filesystem bug).
+5. **`strncpy` must write exactly `n` bytes** (tested in `tests/test_fs.c`).
+6. **OJFS root entry**: top-level entries have `parent == root entry index`
+   (`0` in the writer), NOT `0xFFFFFFFF`. `find_entry()` resolves the root
+   index first.
 7. **x86 IRQ wiring**: `isr_handler()` → `driver_dispatch_irq(irq)` for
-   vectors 32..47 first, legacy IDT handler fallback; `pic_enable_irq`
+   vectors `32..47` first, legacy IDT handler fallback; `pic_enable_irq`
    for IRQ ≥ 8 must also unmask the IRQ2 cascade.
-8. **Big structs never go on the kernel stack** (AppWindowState ~110 KB;
-   window reordering uses static `state_scratch`; Bundle arrays in
+8. **Big structs never go on the kernel stack** (`AppWindowState` ~110 KB;
+   window reordering uses static `state_scratch`; `Bundle` arrays in
    `app_registry_init`/`cmd_apps` are static).
-9. **Compositor cursor is the single source of truth** — main.c passes
-   `compositor_get_cursor()` coords into `compositor_handle_mouse`
-   (mouse-speed mismatch caused cursor teleports before).
+9. **Compositor cursor is the single source of truth** — `main.c` passes
+   `compositor_get_cursor()` coords into `compositor_handle_mouse` and
+   `compositor_handle_right_click`.
 10. **printf set**: `console_printf`/`serial_printf` support
     `%s %d %u %x %p %c %%` with `-`/`0`/width/`l`/`ll`. Cast explicitly
-    when passing 64-bit values as `%d`/`%x` (int promotion matters).
+    when passing 64-bit values as `%d`/`%x`.
 11. **Persistence checkpoint = raw RAMFS instance bytes.** Changing
     `RAMFS_MAX_NODES`/`RAMFS_DATA_SIZE` invalidates old checkpoints via
     the size check (intentional).
-12. **Data partition start sector 67584 is a contract** between
-    `scripts/mkimg.sh` and `kernel/src/fs/persist.h`. Change both
-    together.
-13. **aarch64 has no PIT/PS2/ATA/CMOS** — generic timer / virtio-input /
-    virtio-blk / PL031 instead. Common code must use the neutral APIs
+12. **Data partition start sector `67584` is a contract** between
+    `scripts/mkimg.sh` and `kernel/src/fs/persist.h`. Change both together.
+13. **`aarch64` has no PIT/PS2/ATA/CMOS** — generic timer / `virtio-input` /
+    `virtio-blk` / `PL031` instead. Common code must use the neutral APIs
     (`timer_get_ticks`, `input_post_*`, `block_*`, `rtc_read_time`).
-14. **The compositor's `ui` command** is the desktop entry; console mode
-    stays as the fallback shell. Both are arch-neutral.
-15. **`input_get_bounds()`** returns the screen bounds used by absolute
-    pointers; `input_set_mouse_bounds` validates non-positive sizes.
-16. virtio-blk/input use a **single-chain-in-flight** model with
-    contiguous descriptor allocation — do not submit a second chain
-    before recycling the first (`virtio_poll_used` resets `free_head`
-    to the chain head).
+14. **The compositor's `ui` command** is the desktop entry; `Shift+Esc`
+    returns from desktop UI to the fallback console so plain `Esc` only
+    closes menus/overlays/Setup Assistant inside the desktop.
+15. **`virtio-blk`/`virtio-input` single-chain-in-flight model**: `d->next`
+    must link to `idx + 1` (not `free_head`), and write sector requests
+    must set `VRING_DESC_F_NEXT` alongside `VRING_DESC_F_WRITE`.
 
 ---
 
-## 8. Version & attribution
+## 8. Version & Attribution
 
 - Version: **3.1.0** ("Make It Work" release) — `OJJYOS_VERSION` in
-  `kernel/src/main.c`. Keep in sync: boot art (main.c splash), About
-  window (compositor.c `draw_about_window`), `sysroot/System/version.txt`
-  (mkfs.sh), serial banner.
+  `kernel/src/main.c`. Keep in sync: boot art (`main.c` splash), About
+  window (`compositor.c` `draw_about_window`), `sysroot/System/version.txt`
+  (`mkfs.sh`), serial banner.
 - Author: **Jonas Lee** in every user-visible surface (README, About,
   splash, serial banner, power screen, `sysroot/System/version.txt`).
   AI contributions are improvements to HIS project — never add AI
   co-author lines to user-facing strings, and commit as
   `user.name="Jonas Lee"`.
+

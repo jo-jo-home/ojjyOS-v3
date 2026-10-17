@@ -45,6 +45,7 @@
 #include "arch_power.h"
 #include "drivers/blockdev.h"
 #include "users.h"
+#include "proc.h"
 
 /* UI compositor */
 #include "ui/compositor.h"
@@ -622,6 +623,25 @@ static void process_command(void)
                 console_printf("passwd failed: incorrect current password.\n");
             }
         }
+    } else if (strcmp(cmd, "ps") == 0 || strcmp(cmd, "top") == 0) {
+        console_printf("PID   USER       STATE      TICKS    MEM(KB)  NAME\n");
+        int n = proc_count();
+        for (int i = 0; i < n; i++) {
+            const ProcEntry *pe = proc_get_by_index(i);
+            if (!pe) continue;
+            console_printf("%-5d %-10s %-10s %-8d %-8d %s\n",
+                (int)pe->pid, pe->owner, proc_state_name(pe->state),
+                (int)pe->cpu_ticks, (int)(pe->memory_bytes / 1024), pe->name);
+        }
+    } else if (strcmp(cmd, "heap") == 0 || strcmp(cmd, "mem") == 0) {
+        console_printf("PMM Physical: %d MB free / %d MB total\n",
+            (int)(pmm_get_free_memory() / (1024 * 1024)),
+            (int)(pmm_get_total_memory() / (1024 * 1024)));
+        console_printf("Kernel Heap:  %d KB used / %d KB total (%d blocks, %s)\n",
+            (int)(kheap_get_used() / 1024),
+            (int)(kheap_get_total() / 1024),
+            (int)kheap_get_alloc_count(),
+            kheap_validate() ? "valid" : "CORRUPT");
     } else if (strcmp(cmd, "about") == 0) {
         about_app_handler(NULL);
     } else if (strcmp(cmd, "diag") == 0) {
@@ -734,6 +754,7 @@ void kernel_main(BootInfo *boot_info)
     /* On aarch64, UEFI identity-maps RAM and MMIO; we keep UEFI page tables */
     pmm_init(boot_info);
 #endif
+    kheap_init();
     timer_init();
     splash_render("Bringing up drivers...", 38);
 
@@ -793,6 +814,7 @@ void kernel_main(BootInfo *boot_info)
         }
         users_init();
     }
+    proc_init();
 
     splash_render("Preparing applications...", 72);
 
@@ -820,15 +842,17 @@ void kernel_main(BootInfo *boot_info)
 #else
     console_printf("  [ OK ] CPU vectors & GICv2 loaded (aarch64 EL1)\n");
 #endif
-    console_printf("  [ OK ] Memory: %d MB total, %d MB free\n",
+    console_printf("  [ OK ] Memory: %d MB total, %d MB free (KHeap %d KB)\n",
         (int)(pmm_get_total_memory() / (1024 * 1024)),
-        (int)(pmm_get_free_memory() / (1024 * 1024)));
+        (int)(pmm_get_free_memory() / (1024 * 1024)),
+        (int)(kheap_get_total() / 1024));
     console_printf("  [ OK ] Drivers: %d registered\n", driver_get_count());
     console_printf("  [ OK ] Root filesystem mounted (OJFS)\n");
     console_printf("  [ OK ] User filesystems mounted (RAMFS%s)\n",
         block_available() ? " + disk persistence" : ", no disk attached");
     console_printf("  [ OK ] Accounts: %d registered (active: %s)\n",
         users_count(), users_current_username());
+    console_printf("  [ OK ] Process table: %d tasks active\n", proc_count());
     console_printf("  [ OK ] Keyboard and mouse ready\n");
     console_printf("  [ OK ] Interrupts enabled\n\n");
     console_printf("  Tip: type 'ui' to start the desktop, 'help' for commands\n\n");

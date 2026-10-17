@@ -14,8 +14,13 @@
 #include "fs/ramfs.h"
 #include "fs/vfs.h"
 #include "users.h"
+#include "memory.h"
+#include "proc.h"
 #include "drivers/rtc.h"
 #include "string.h"
+
+char _kernel_start[16];
+char _kernel_end[16];
 
 extern long write(int fd, const void *buf, unsigned long count);
 
@@ -206,10 +211,58 @@ int main(void)
     users_init();
     CHECK(users_count() == 1, "users_init reloads account from users.db");
     CHECK(users_verify_credentials("jonas", "newsecret"), "reloaded account preserves salted SHA-256 hash");
+    CHECK(users_login("jonas", "newsecret") == 0, "re-authenticate jonas after reload");
+
+    /* --- Kernel Heap Allocator (kmalloc/kcalloc/krealloc/kfree + coalescing) --- */
+    kheap_init();
+    CHECK(kheap_validate(), "fresh kheap is valid");
+    CHECK(kheap_get_used() == 0, "fresh kheap has 0 bytes used");
+
+    void *b1 = kmalloc(128);
+    void *b2 = kcalloc(16, 16);
+    void *b3 = kmalloc(512);
+    CHECK(b1 != NULL && b2 != NULL && b3 != NULL, "kmalloc and kcalloc succeed");
+    CHECK(((uintptr_t)b1 & 0xF) == 0 && ((uintptr_t)b2 & 0xF) == 0, "kmalloc returns 16-byte aligned pointers");
+    CHECK(kheap_get_alloc_count() == 3, "kheap tracks 3 active allocations");
+    CHECK(kheap_validate(), "kheap valid with 3 blocks");
+
+    memset(b1, 0xAB, 128);
+    void *b1_grown = krealloc(b1, 300);
+    CHECK(b1_grown != NULL && ((uint8_t *)b1_grown)[0] == 0xAB && ((uint8_t *)b1_grown)[127] == 0xAB,
+          "krealloc preserves existing payload");
+
+    kfree(b2);
+    kfree(b1_grown);
+    kfree(b3);
+    CHECK(kheap_get_used() == 0 && kheap_get_alloc_count() == 0, "kfree releases all blocks");
+    CHECK(kheap_validate(), "kheap coalesces back to valid state");
+
+    /* --- Kernel Process Table & Syscall Dispatcher --- */
+    proc_init();
+    CHECK(proc_count() == 4, "proc_init spawns 4 core system daemons");
+    int calc_pid = proc_ensure_app(10 /* APP_CALCULATOR */, "Calculator", 256 * 1024);
+    CHECK(calc_pid >= 5, "proc_ensure_app spawns Calculator process");
+    CHECK(proc_count() == 5, "proc_count is 5 after app spawn");
+    const ProcEntry *cpe = proc_get_by_pid((uint32_t)calc_pid);
+    CHECK(cpe != NULL && strcmp(cpe->owner, "jonas") == 0, "spawned app process is owned by active user jonas");
+
+    proc_tick(50, 10);
+    CHECK(cpe->cpu_ticks > 1 && cpe->state == PROC_RUNNING, "proc_tick accounts CPU ticks to focused app");
+
+    CHECK(proc_kill(1, NULL) == -2, "proc_kill refuses to kill protected kernel_task (PID 1)");
+    int killed_app = -1;
+    CHECK(proc_kill((uint32_t)calc_pid, &killed_app) == 0 && killed_app == 10, "proc_kill terminates user app process");
+    CHECK(proc_count() == 4, "proc_count returns to 4 after kill");
+
+    void *sys_mem = (void *)(uintptr_t)syscall_dispatch(SYS_MALLOC, 64, 0, 0, 0);
+    CHECK(sys_mem != NULL, "syscall SYS_MALLOC allocates memory");
+    CHECK(syscall_dispatch(SYS_FREE, (uint64_t)(uintptr_t)sys_mem, 0, 0, 0) == 0, "syscall SYS_FREE frees memory");
+    CHECK(syscall_dispatch(SYS_GETUID, 0, 0, 0, 0) == 501, "syscall SYS_GETUID returns active user UID");
+    CHECK(proc_get_total_syscalls() >= 3, "syscall counter increments on dispatch");
 
     emit_num("tests run: ", tests_run);
     if (tests_failed == 0) {
-        emit("ALL RAMFS & USERS TESTS PASSED");
+        emit("ALL RAMFS, USERS, KHEAP & PROC TESTS PASSED");
         return 0;
     }
     emit_num("TESTS FAILED: ", tests_failed);

@@ -263,3 +263,212 @@ uint64_t pmm_get_free_memory(void)
 {
     return free_memory;
 }
+
+/* ============================================================================
+ * Kernel Heap Allocator (16-byte aligned coalescing free-list)
+ * ============================================================================ */
+
+#define KHEAP_MAGIC         0x4F4A4850U /* "OJHP" */
+#define KHEAP_ALIGN         16ULL
+#define KHEAP_MIN_SPLIT     16ULL
+
+typedef struct KHeapBlock {
+    uint32_t magic;
+    uint32_t is_free;
+    uint64_t size;
+    struct KHeapBlock *next;
+    struct KHeapBlock *prev;
+} KHeapBlock;
+
+static uint8_t kheap_arena[KHEAP_ARENA_SIZE] __attribute__((aligned(16)));
+static KHeapBlock *kheap_head = NULL;
+static bool kheap_ready = false;
+static uint64_t kheap_used_bytes = 0;
+static uint32_t kheap_alloc_count = 0;
+
+static uint64_t kheap_align_up(uint64_t n)
+{
+    return (n + (KHEAP_ALIGN - 1ULL)) & ~(KHEAP_ALIGN - 1ULL);
+}
+
+void kheap_init(void)
+{
+    memset(kheap_arena, 0, sizeof(kheap_arena));
+    kheap_head = (KHeapBlock *)kheap_arena;
+    kheap_head->magic = KHEAP_MAGIC;
+    kheap_head->is_free = 1;
+    kheap_head->size = (uint64_t)sizeof(kheap_arena) - (uint64_t)sizeof(KHeapBlock);
+    kheap_head->next = NULL;
+    kheap_head->prev = NULL;
+    kheap_used_bytes = 0;
+    kheap_alloc_count = 0;
+    kheap_ready = true;
+}
+
+void *kmalloc(size_t size)
+{
+    if (size == 0) return NULL;
+    if (!kheap_ready) kheap_init();
+
+    uint64_t req = kheap_align_up((uint64_t)size);
+    if (req == 0 || req > (uint64_t)sizeof(kheap_arena)) return NULL;
+
+    KHeapBlock *curr = kheap_head;
+    while (curr) {
+        if (curr->magic != KHEAP_MAGIC) {
+            serial_printf("[KHEAP] ERROR: Corrupted heap block header at 0x%p\n", curr);
+            return NULL;
+        }
+        if (curr->is_free && curr->size >= req) {
+            uint64_t rem = curr->size - req;
+            if (rem >= (uint64_t)sizeof(KHeapBlock) + KHEAP_MIN_SPLIT) {
+                uint8_t *split_addr = (uint8_t *)curr + sizeof(KHeapBlock) + req;
+                KHeapBlock *next_blk = (KHeapBlock *)split_addr;
+                next_blk->magic = KHEAP_MAGIC;
+                next_blk->is_free = 1;
+                next_blk->size = rem - (uint64_t)sizeof(KHeapBlock);
+                next_blk->next = curr->next;
+                next_blk->prev = curr;
+                if (curr->next) {
+                    curr->next->prev = next_blk;
+                }
+                curr->next = next_blk;
+                curr->size = req;
+            }
+            curr->is_free = 0;
+            kheap_used_bytes += curr->size;
+            kheap_alloc_count++;
+            return (void *)((uint8_t *)curr + sizeof(KHeapBlock));
+        }
+        curr = curr->next;
+    }
+
+    serial_printf("[KHEAP] WARNING: Out of heap memory (requested %d bytes)\n", (int)size);
+    return NULL;
+}
+
+void *kcalloc(size_t count, size_t size)
+{
+    if (count == 0 || size == 0) return NULL;
+    if (count > ((size_t)-1) / size) return NULL;
+    size_t total = count * size;
+    void *ptr = kmalloc(total);
+    if (ptr) {
+        memset(ptr, 0, total);
+    }
+    return ptr;
+}
+
+void kfree(void *ptr)
+{
+    if (!ptr || !kheap_ready) return;
+
+    uintptr_t p = (uintptr_t)ptr;
+    uintptr_t start = (uintptr_t)kheap_arena + sizeof(KHeapBlock);
+    uintptr_t end = (uintptr_t)kheap_arena + sizeof(kheap_arena);
+    if (p < start || p >= end) {
+        serial_printf("[KHEAP] WARNING: kfree pointer 0x%p outside heap arena\n", ptr);
+        return;
+    }
+
+    KHeapBlock *blk = (KHeapBlock *)((uint8_t *)ptr - sizeof(KHeapBlock));
+    if (blk->magic != KHEAP_MAGIC) {
+        serial_printf("[KHEAP] ERROR: Invalid block magic on kfree(0x%p)\n", ptr);
+        return;
+    }
+    if (blk->is_free) {
+        serial_printf("[KHEAP] WARNING: Double kfree(0x%p)\n", ptr);
+        return;
+    }
+
+    blk->is_free = 1;
+    if (kheap_used_bytes >= blk->size) kheap_used_bytes -= blk->size;
+    else kheap_used_bytes = 0;
+    if (kheap_alloc_count > 0) kheap_alloc_count--;
+
+    /* Coalesce forward with next block if free */
+    if (blk->next && blk->next->magic == KHEAP_MAGIC && blk->next->is_free) {
+        KHeapBlock *nxt = blk->next;
+        blk->size += (uint64_t)sizeof(KHeapBlock) + nxt->size;
+        blk->next = nxt->next;
+        if (nxt->next) {
+            nxt->next->prev = blk;
+        }
+        nxt->magic = 0;
+    }
+
+    /* Coalesce backward with prev block if free */
+    if (blk->prev && blk->prev->magic == KHEAP_MAGIC && blk->prev->is_free) {
+        KHeapBlock *prv = blk->prev;
+        prv->size += (uint64_t)sizeof(KHeapBlock) + blk->size;
+        prv->next = blk->next;
+        if (blk->next) {
+            blk->next->prev = prv;
+        }
+        blk->magic = 0;
+    }
+}
+
+void *krealloc(void *ptr, size_t new_size)
+{
+    if (!ptr) return kmalloc(new_size);
+    if (new_size == 0) {
+        kfree(ptr);
+        return NULL;
+    }
+
+    KHeapBlock *blk = (KHeapBlock *)((uint8_t *)ptr - sizeof(KHeapBlock));
+    if (blk->magic != KHEAP_MAGIC) return NULL;
+    if (blk->size >= (uint64_t)new_size) {
+        return ptr;
+    }
+
+    void *new_ptr = kmalloc(new_size);
+    if (!new_ptr) return NULL;
+    memcpy(new_ptr, ptr, (size_t)blk->size);
+    kfree(ptr);
+    return new_ptr;
+}
+
+uint64_t kheap_get_total(void)
+{
+    return (uint64_t)sizeof(kheap_arena);
+}
+
+uint64_t kheap_get_used(void)
+{
+    return kheap_used_bytes;
+}
+
+uint64_t kheap_get_free(void)
+{
+    if (!kheap_ready) return (uint64_t)sizeof(kheap_arena) - (uint64_t)sizeof(KHeapBlock);
+    uint64_t total_free = 0;
+    KHeapBlock *curr = kheap_head;
+    while (curr && curr->magic == KHEAP_MAGIC) {
+        if (curr->is_free) total_free += curr->size;
+        curr = curr->next;
+    }
+    return total_free;
+}
+
+uint32_t kheap_get_alloc_count(void)
+{
+    return kheap_alloc_count;
+}
+
+bool kheap_validate(void)
+{
+    if (!kheap_ready) kheap_init();
+    KHeapBlock *curr = kheap_head;
+    KHeapBlock *prev = NULL;
+    uint32_t count = 0;
+    while (curr) {
+        if (curr->magic != KHEAP_MAGIC) return false;
+        if (curr->prev != prev) return false;
+        if (!curr->is_free) count++;
+        prev = curr;
+        curr = curr->next;
+    }
+    return (count == kheap_alloc_count);
+}

@@ -165,7 +165,7 @@ freestanding x86_64 toolchain and by host-side unit tests of the filesystem and 
 
 ### Phase E — Verify (COMPLETED ✅)
 - [x] Freestanding compile of every kernel translation unit (`clang`, both `aarch64-unknown-none-elf` and `x86_64-unknown-none-elf`), assemble `entry.asm` with `nasm` and `entry.S` with `clang`.
-- [x] Host unit tests (`tests/test_fs.c` — 41 assertions; `tests/test_ramfs.c` — 24 assertions): OJFS reader against a real `mkojfs`-generated image; ramfs write/grow/unlink/rename cycles; `strncpy`/normalization edge cases.
+- [x] Host unit tests (`tests/test_fs.c` — 37 assertions; `tests/test_ramfs.c` — 81 assertions; 118 total): OJFS reader against a real `mkojfs`-generated image; ramfs write/grow/unlink/rename cycles; `strncpy`/normalization edge cases; salted SHA-256 user credentials; kernel heap coalescing; process & syscall dispatch.
 - [x] Tools (`mkojfs`, `mkicon`, `mkwallpaper`, `mkarray`) build and run on the host.
 - [x] Documented acceptance checklist in `README.md` and `RELEASE.md`.
 
@@ -176,6 +176,19 @@ freestanding x86_64 toolchain and by host-side unit tests of the filesystem and 
 - [x] Window resizing (bottom-right drag grip) and green traffic-light Maximize/Zoom toggle.
 - [x] Live Mission Control window cards (`Cmd+M`), Control Center Restart/Shut Down/Reduced Transparency buttons, clickable `ojjy` menu bar item (opens About), centered Launchpad labels, Reduced Transparency & Reduced Motion accessibility settings, and PS/2 modifier key release events for `Cmd+Tab`.
 
+### Phase G — Multi-User Account & Salted SHA-256 Credential System + Tahoe Desktop Expansion (COMPLETED ✅)
+- [x] Multi-user account & credential engine (`kernel/src/users.h`, `kernel/src/users.c`) with salted FIPS 180-4 SHA-256 password hashing, constant-time digest verification, persistent `/Library/Accounts/users.db`, and automatic `/Users/<username>` home directory provisioning (`Desktop/Welcome.txt`, `Documents/Notes.txt`, `Calendar.txt`).
+- [x] First-Boot Account Setup Assistant (`users_count() == 0` or `+ New Account`) and macOS Tahoe Lock/Login Screen (`!users_is_authenticated()`, `Ctrl+Cmd+Q` lock shortcut).
+- [x] `Settings → Users & Accounts` (`SETTINGS_PAGE_USERS`) with active user card, SHA-256 password change form, registered accounts list, `+ Add Account`, `Lock Screen`, and `Switch User` buttons.
+- [x] Interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`) + clickable active username pill on the top-right menu bar.
+- [x] Desktop right-click context menu (`compositor_handle_right_click`).
+- [x] Built-in `Calculator.app` (`APP_CALCULATOR`) and `Activity Monitor.app` (`APP_MONITOR`), bringing total built-in apps to 11.
+
+### Phase H — Kernel Heap Allocator & Process/Syscall Subsystem (COMPLETED ✅)
+- [x] 512 KB 16-byte-aligned coalescing free-list Kernel Heap Allocator (`kheap_init`, `kmalloc`, `kcalloc`, `krealloc`, `kfree`, `kheap_validate` in `kernel/src/memory.h` & `kernel/src/memory.c`).
+- [x] Kernel Process Table & Syscall Dispatcher (`kernel/src/proc.h`, `kernel/src/proc.c`) spawning system daemons (`PID 1 kernel_task`, `PID 2 vfs_persistd`, `PID 3 inputd`, `PID 4 WindowServer`), tracking per-user app processes (`PID >= 5`), CPU ticks, memory, and 13 syscalls (`syscall_dispatch`).
+- [x] Live process table & heap telemetry wired into `Activity Monitor.app`, `Terminal.app` (`ps`, `top`, `kill <pid>`, `heap`), and the fallback kernel console.
+
 ---
 
 ## Part 2 — Plan: macOS-essential features (COMPLETED ✅)
@@ -185,17 +198,17 @@ focus on function over polish:
 
 1. [x] **Scroll wheel everywhere** (from Phase B) — Finder, Terminal, TextEdit, Notes, and Web.
 2. [x] **Working window management** — close (red), minimize (yellow), maximize/zoom (green) traffic lights, bottom-right corner drag resize, running indicators, minimize-to-dock, `Cmd+Q`.
-3. [x] **Desktop icons** — `/Users/guest/Desktop` contents render as icons on the wallpaper with double-click to open (text files open in TextEdit, folders in Finder), plus an "ojjyHD" disk icon that opens Finder at `/`.
-4. [x] **Web (offline browser) app** — `Web.app` with address bar, back/forward history, scrollable page rendering, and clickable hyperlinks between pages stored under `/System/Web/*.page` (`home`, `about`, `release`, `shortcuts`).
-5. [x] **About This ojjyOS** — `About.app` opens a native window (and is reachable by clicking `ojjy` in the top-left menu bar) showing version, author **"Created by Jonas Lee"**, memory, display, and storage status.
-6. [x] **Mission Control, Control Center power controls & Accessibility toggles** — Mission Control cards (`Cmd+M`), Control Center Restart/Shut Down buttons, Reduced Transparency (`rt=0/1`), and Reduced Motion (`rm=0/1`).
+3. [x] **Desktop icons** — `/Users/<username>/Desktop` contents render as icons on the wallpaper with double-click to open (text files open in TextEdit, folders in Finder), plus an "ojjyHD" disk icon that opens Finder at `/`.
+4. [x] **Web (offline browser) app** — `Web.app` with address bar, back/forward history, scrollable page rendering, and clickable hyperlinks between pages stored under `/System/Web/*.page` (`home`, `about`, `accounts`, `release`, `shortcuts`).
+5. [x] **About This ojjyOS** — `About.app` opens a native window (and is reachable via the `ojjy` Menu Bar dropdown) showing version, author **"Created by Jonas Lee"**, memory, display, and storage status.
+6. [x] **Multi-User Accounts, Lock Screen, Menu Bar Dropdowns, Context Menu, Calculator & Activity Monitor** — full account lifecycle, salted SHA-256 credentials, 11 built-in apps, and live process/heap monitoring.
 
 ### Deliberately deferred (next milestones, in order)
-1. **M3.1** Real ELF process loading + protected userspace (`EL0` on `aarch64` / Ring 3 on `x86_64`) with per-process page tables, syscall ABI, and preemptive scheduler.
-2. **M3.2** AHCI/SATA + NVMe disk support on `x86_64`, `ATA` DMA (bus-mastering).
-3. **M3.3** Network stack: `virtio-net` or E1000 driver $\rightarrow$ ARP/IPv4/UDP/TCP $\rightarrow$ DHCP $\rightarrow$ HTTP $\rightarrow$ live pages in `Web.app`.
-4. **M3.4** Menu bar dropdown menus, anti-aliased font rendering, sound (`virtio-sound` / Intel HDA), SMP + multicore scheduling.
+1. **M4.1** Preemptive context switching + protected userspace (`EL0` on `aarch64` / Ring 3 on `x86_64`) with per-process page tables and ELF64 userspace binary execution.
+2. **M4.2** Network stack: `virtio-net` or E1000 driver $\rightarrow$ ARP/IPv4/UDP/TCP $\rightarrow$ DHCP $\rightarrow$ HTTP $\rightarrow$ live pages in `Web.app`.
+3. **M4.3** Anti-aliased font rendering, sound (`virtio-sound` / Intel HDA), SMP + multicore scheduling.
 
 Everything stays true to the project's identity: custom kernel, blue Tahoe theme,
 "Created by Jonas Lee" attribution everywhere it matters.
+
 

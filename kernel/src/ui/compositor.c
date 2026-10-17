@@ -16,6 +16,7 @@
 #include "../memory.h"
 #include "../system.h"
 #include "../users.h"
+#include "../proc.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -1613,33 +1614,6 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
 /* Activity Monitor app                                                */
 /* ================================================================== */
 
-typedef struct {
-    int x;
-    int y;
-    int w;
-    int row;
-} MonitorDrvCtx;
-
-static void monitor_draw_drv_cb(Driver *drv, void *ctx_ptr)
-{
-    MonitorDrvCtx *ctx = (MonitorDrvCtx *)ctx_ptr;
-    if (!drv || !ctx || ctx->row >= 6) return;
-
-    int ry = ctx->y + ctx->row * 18;
-    fb_draw_string(ctx->x + 8, ry, drv->name ? drv->name : "drv", theme->text, theme->dock_tint);
-    fb_draw_string(ctx->x + 150, ry, driver_type_string(drv->type), theme->text_muted, theme->dock_tint);
-    fb_draw_string(ctx->x + 230, ry, driver_state_string(drv->state), theme->accent, theme->dock_tint);
-
-    char num[24];
-    utoa(drv->irq_total, num, 10);
-    fb_draw_string(ctx->x + 310, ry, num, theme->text_muted, theme->dock_tint);
-
-    utoa(drv->read_bytes + drv->write_bytes, num, 10);
-    fb_draw_string(ctx->x + 380, ry, num, theme->text_muted, theme->dock_tint);
-
-    ctx->row++;
-}
-
 static void draw_monitor_window(int content_x, int content_y, int content_w, int content_h)
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
@@ -1652,11 +1626,11 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
 #else
     const char *arch_str = "Arch: x86_64 Long Mode";
 #endif
-    fb_draw_string(cx, content_y + 30, arch_str, theme->accent, theme->dock_tint);
+    fb_draw_string(cx, content_y + 28, arch_str, theme->accent, theme->dock_tint);
 
-    /* Uptime + Active User */
+    /* Uptime + Active User + Syscalls */
     uint64_t secs = timer_get_ticks() / 1000;
-    char up_line[96];
+    char up_line[112];
     char num[24];
     up_line[0] = '\0';
     str_append(up_line, sizeof(up_line), "Uptime: ");
@@ -1665,61 +1639,89 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     str_append(up_line, sizeof(up_line), "m ");
     utoa(secs % 60, num, 10);
     str_append(up_line, sizeof(up_line), num);
-    str_append(up_line, sizeof(up_line), "s   User: ");
+    str_append(up_line, sizeof(up_line), "s  User: ");
     str_append(up_line, sizeof(up_line), users_current_username());
-    fb_draw_string(cx, content_y + 48, up_line, theme->text_muted, theme->dock_tint);
+    str_append(up_line, sizeof(up_line), "  Syscalls: ");
+    utoa(proc_get_total_syscalls(), num, 10);
+    str_append(up_line, sizeof(up_line), num);
+    fb_draw_string(cx, content_y + 46, up_line, theme->text_muted, theme->dock_tint);
 
-    /* Physical Memory Usage Bar */
+    /* Physical Memory + Kernel Heap Usage */
     uint64_t total_mb = pmm_get_total_memory() / (1024 * 1024);
     uint64_t free_mb = pmm_get_free_memory() / (1024 * 1024);
     uint64_t used_mb = (total_mb >= free_mb) ? (total_mb - free_mb) : 0;
     if (total_mb == 0) total_mb = 1;
 
-    char mem_line[96];
+    char mem_line[112];
     mem_line[0] = '\0';
-    str_append(mem_line, sizeof(mem_line), "Physical Memory: ");
+    str_append(mem_line, sizeof(mem_line), "RAM: ");
     utoa(used_mb, num, 10);
     str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), " MB used / ");
+    str_append(mem_line, sizeof(mem_line), "/");
     utoa(total_mb, num, 10);
     str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), " MB total (");
-    utoa(free_mb, num, 10);
+    str_append(mem_line, sizeof(mem_line), " MB  |  KHeap: ");
+    utoa(kheap_get_used() / 1024, num, 10);
     str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), " MB free)");
-    fb_draw_string(cx, content_y + 72, mem_line, theme->text, theme->dock_tint);
+    str_append(mem_line, sizeof(mem_line), "/");
+    utoa(kheap_get_total() / 1024, num, 10);
+    str_append(mem_line, sizeof(mem_line), num);
+    str_append(mem_line, sizeof(mem_line), " KB (");
+    utoa(kheap_get_alloc_count(), num, 10);
+    str_append(mem_line, sizeof(mem_line), num);
+    str_append(mem_line, sizeof(mem_line), " blks)");
+    fb_draw_string(cx, content_y + 66, mem_line, theme->text, theme->dock_tint);
 
     int bar_w = content_w - 28;
-    draw_rounded_rect_blend(cx, content_y + 92, bar_w, 14, 6, theme->glass_aqua, 140);
+    draw_rounded_rect_blend(cx, content_y + 84, bar_w, 12, 6, theme->glass_aqua, 140);
     int fill_w = (int)((used_mb * (uint64_t)bar_w) / total_mb);
     if (fill_w < 8) fill_w = 8;
     if (fill_w > bar_w) fill_w = bar_w;
-    draw_rounded_rect_blend(cx, content_y + 92, fill_w, 14, 6, theme->accent, 220);
+    draw_rounded_rect_blend(cx, content_y + 84, fill_w, 12, 6, theme->accent, 220);
 
-    /* Kernel Drivers Table */
-    fb_draw_string(cx, content_y + 118, "Kernel Drivers & Subsystems", theme->text, theme->dock_tint);
-    fb_draw_string(cx + 8,   content_y + 138, "Driver", theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 150, content_y + 138, "Class",  theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 230, content_y + 138, "State",  theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 310, content_y + 138, "IRQs",   theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 380, content_y + 138, "I/O B",  theme->text_muted, theme->dock_tint);
+    /* Kernel & User Process Table */
+    fb_draw_string(cx, content_y + 104, "Active Processes (PID / Task / User / State / Ticks / Mem)",
+                   theme->text, theme->dock_tint);
+    fb_draw_string(cx + 4,   content_y + 122, "PID",     theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 48,  content_y + 122, "Process", theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 188, content_y + 122, "User",    theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 268, content_y + 122, "State",   theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 348, content_y + 122, "Ticks",   theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 416, content_y + 122, "Mem KB",  theme->text_muted, theme->dock_tint);
 
-    MonitorDrvCtx dctx;
-    dctx.x = cx;
-    dctx.y = content_y + 158;
-    dctx.w = content_w - 28;
-    dctx.row = 0;
-    driver_for_each(monitor_draw_drv_cb, &dctx);
+    int pcount = proc_count();
+    int max_rows = (content_h - 168) / 16;
+    if (max_rows > 10) max_rows = 10;
+    if (max_rows < 3) max_rows = 3;
+    for (int i = 0; i < pcount && i < max_rows; i++) {
+        const ProcEntry *pe = proc_get_by_index(i);
+        if (!pe) continue;
+        int ry = content_y + 140 + i * 16;
+        utoa(pe->pid, num, 10);
+        fb_draw_string(cx + 4,   ry, num, theme->text_muted, theme->dock_tint);
+        fb_draw_string(cx + 48,  ry, pe->name, theme->text, theme->dock_tint);
+        fb_draw_string(cx + 188, ry, pe->owner, theme->text_muted, theme->dock_tint);
+        fb_draw_string(cx + 268, ry, proc_state_name(pe->state),
+                       (pe->state == PROC_RUNNING) ? theme->accent : theme->text_muted,
+                       theme->dock_tint);
+        utoa(pe->cpu_ticks, num, 10);
+        fb_draw_string(cx + 348, ry, num, theme->text_muted, theme->dock_tint);
+        utoa(pe->memory_bytes / 1024, num, 10);
+        fb_draw_string(cx + 416, ry, num, theme->text_muted, theme->dock_tint);
+    }
 
     /* Open Windows / Tasks summary at bottom */
     char task_line[96];
     task_line[0] = '\0';
-    str_append(task_line, sizeof(task_line), "Open Windows: ");
+    str_append(task_line, sizeof(task_line), "Processes: ");
+    utoa((uint64_t)pcount, num, 10);
+    str_append(task_line, sizeof(task_line), num);
+    str_append(task_line, sizeof(task_line), "   Windows: ");
     utoa((uint64_t)window_count, num, 10);
     str_append(task_line, sizeof(task_line), num);
-    str_append(task_line, sizeof(task_line), "   Active App: ");
+    str_append(task_line, sizeof(task_line), "   Active: ");
     str_append(task_line, sizeof(task_line), active_app_name);
-    fb_draw_string(cx, content_y + content_h - 22, task_line, theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx, content_y + content_h - 20, task_line, theme->text_muted, theme->dock_tint);
 }
 
 static void draw_window(int idx)
@@ -3395,6 +3397,8 @@ static int destroy_window_internal(int id)
     }
     if (idx < 0) return -1;
 
+    AppType closed_type = app_states[idx].type;
+
     if (wm_hooks.on_destroy) {
         wm_hooks.on_destroy(id);
     }
@@ -3428,6 +3432,9 @@ static int destroy_window_internal(int id)
         active_window_index--;
     }
     rebuild_app_window_index();
+    if (closed_type > APP_DEMO && closed_type < APP_COUNT && app_window_index[closed_type] < 0) {
+        proc_terminate_app((int)closed_type);
+    }
     return 0;
 }
 
@@ -3764,6 +3771,8 @@ static void terminal_cat(TerminalState *term, const char *path)
     vfs_close(file);
 }
 
+static const char *app_name_from_type(AppType type);
+
 static void terminal_exec(TerminalState *term, const char *cmd)
 {
     if (!term || !cmd) return;
@@ -3771,7 +3780,95 @@ static void terminal_exec(TerminalState *term, const char *cmd)
     if (strcmp(cmd, "help") == 0) {
         terminal_append_line(term, "Commands: ls, cd, pwd, cat, echo, touch,");
         terminal_append_line(term, "  mkdir, rm, mv, cp, open, clear, sync,");
-        terminal_append_line(term, "  whoami, users, adduser, passwd, su, lock");
+        terminal_append_line(term, "  ps, top, kill, heap, whoami, users,");
+        terminal_append_line(term, "  adduser, passwd, su, lock");
+        return;
+    }
+
+    if (strcmp(cmd, "ps") == 0 || strcmp(cmd, "top") == 0) {
+        terminal_append_line(term, "PID  USER       STATE     TICKS   MEM(KB)  NAME");
+        int n = proc_count();
+        for (int i = 0; i < n; i++) {
+            const ProcEntry *pe = proc_get_by_index(i);
+            if (!pe) continue;
+            char pline[80];
+            char num[20];
+            pline[0] = '\0';
+            utoa(pe->pid, num, 10);
+            str_append(pline, sizeof(pline), num);
+            while (strlen(pline) < 5) str_append(pline, sizeof(pline), " ");
+            str_append(pline, sizeof(pline), pe->owner);
+            while (strlen(pline) < 16) str_append(pline, sizeof(pline), " ");
+            str_append(pline, sizeof(pline), proc_state_name(pe->state));
+            while (strlen(pline) < 26) str_append(pline, sizeof(pline), " ");
+            utoa(pe->cpu_ticks, num, 10);
+            str_append(pline, sizeof(pline), num);
+            while (strlen(pline) < 34) str_append(pline, sizeof(pline), " ");
+            utoa(pe->memory_bytes / 1024, num, 10);
+            str_append(pline, sizeof(pline), num);
+            while (strlen(pline) < 43) str_append(pline, sizeof(pline), " ");
+            str_append(pline, sizeof(pline), pe->name);
+            terminal_append_line(term, pline);
+        }
+        return;
+    }
+
+    if (strncmp(cmd, "kill ", 5) == 0) {
+        const char *arg = cmd + 5;
+        while (*arg == ' ') arg++;
+        int consumed = 0;
+        int pid = parse_int(arg, &consumed);
+        if (consumed <= 0 || pid <= 0) {
+            terminal_append_line(term, "Usage: kill <pid>");
+            return;
+        }
+        int killed_app = -1;
+        int rc = proc_kill((uint32_t)pid, &killed_app);
+        if (rc == 0) {
+            if (killed_app > APP_DEMO && killed_app < APP_COUNT) {
+                const char *cname = app_name_from_type((AppType)killed_app);
+                int ridx = app_registry_find_by_name(cname);
+                close_app_window((AppType)killed_app);
+                AppInfo *app = app_registry_get(ridx);
+                if (app) app->running = false;
+            }
+            terminal_append_line(term, "Process terminated.");
+        } else if (rc == -2) {
+            terminal_append_line(term, "kill: operation not permitted (system daemon)");
+        } else {
+            terminal_append_line(term, "kill: no such process");
+        }
+        return;
+    }
+
+    if (strcmp(cmd, "heap") == 0 || strcmp(cmd, "mem") == 0) {
+        char mline[80];
+        char num[24];
+        uint64_t total_mb = pmm_get_total_memory() / (1024 * 1024);
+        uint64_t free_mb = pmm_get_free_memory() / (1024 * 1024);
+        mline[0] = '\0';
+        str_append(mline, sizeof(mline), "PMM RAM:   ");
+        utoa((total_mb >= free_mb) ? (total_mb - free_mb) : 0, num, 10);
+        str_append(mline, sizeof(mline), num);
+        str_append(mline, sizeof(mline), " MB used / ");
+        utoa(total_mb, num, 10);
+        str_append(mline, sizeof(mline), num);
+        str_append(mline, sizeof(mline), " MB total");
+        terminal_append_line(term, mline);
+
+        mline[0] = '\0';
+        str_append(mline, sizeof(mline), "KHeap:     ");
+        utoa(kheap_get_used() / 1024, num, 10);
+        str_append(mline, sizeof(mline), num);
+        str_append(mline, sizeof(mline), " KB used / ");
+        utoa(kheap_get_total() / 1024, num, 10);
+        str_append(mline, sizeof(mline), num);
+        str_append(mline, sizeof(mline), " KB (");
+        utoa(kheap_get_alloc_count(), num, 10);
+        str_append(mline, sizeof(mline), num);
+        str_append(mline, sizeof(mline), " blocks, ");
+        str_append(mline, sizeof(mline), kheap_validate() ? "valid)" : "CORRUPT)");
+        terminal_append_line(term, mline);
         return;
     }
 
@@ -4679,6 +4776,10 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         web_load_page(&state->web, "home");
     } else if (type == APP_CALCULATOR) {
         calc_reset(&state->calc);
+    }
+
+    if (type > APP_DEMO && type < APP_COUNT) {
+        proc_ensure_app((int)type, app_name_from_type(type), 256ULL * 1024ULL);
     }
 
     window_count++;
@@ -6850,11 +6951,15 @@ void compositor_handle_right_click(int x, int y)
 
 void compositor_tick(uint64_t now_ms)
 {
-    if (now_ms - last_frame_ms < 33) {
+    uint64_t delta = now_ms - last_frame_ms;
+    if (delta < 33) {
         return;
     }
 
     last_frame_ms = now_ms;
+    int focused_type = (active_window_index >= 0 && active_window_index < window_count)
+                       ? (int)app_states[active_window_index].type : -1;
+    proc_tick(delta > 100 ? 33 : delta, focused_type);
     update_animations();
 
     draw_wallpaper();

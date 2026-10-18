@@ -72,6 +72,8 @@ void system_request_sync(void) {}
     else { emit("ok: " name); } \
 } while (0)
 
+static bool has_char(const char *s, char c) { for (; *s; s++) if (*s == c) return true; return false; }
+
 int main(void)
 {
     VfsOps *ops = ramfs_get_ops();
@@ -184,6 +186,15 @@ int main(void)
     CHECK(users_count() == 1, "users_count is 1 after create");
     CHECK(users_create("jonas", "Duplicate", "pass", false) != 0, "duplicate username rejected");
     CHECK(users_create("bad user!", "Bad", "pass", false) != 0, "invalid username chars rejected");
+    CHECK(users_create("..", "Dots", "pass", false) != 0, "'..' username rejected (home would be /)");
+    CHECK(users_create(".", "Dot", "pass", false) != 0, "'.' username rejected");
+    CHECK(users_create(".hidden", "Hidden", "pass", false) != 0, "leading-dot username rejected");
+    CHECK(users_create("abcdefghijklmnopqrstuvwxyz0123456789", "Long", "pass", false) != 0,
+          "over-long username rejected instead of truncated");
+    CHECK(users_create("nl", "Evil\nroot|x|y", "pass", false) == 0 &&
+          users_find("nl") && !has_char(users_find("nl")->full_name, '\n') &&
+          !has_char(users_find("nl")->full_name, '|'), "full name cannot inject users.db records");
+    CHECK(users_delete("nl") == 0, "cleanup injected-name account");
 
     /* Verify home directory provisioning */
     CHECK(vfs_isdir("/Users/jonas") != 0, "provisioned /Users/jonas");

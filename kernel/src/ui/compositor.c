@@ -1337,6 +1337,8 @@ static void draw_preview_window(PreviewState *preview, int content_x, int conten
  * Load a page from /System/Web/<id>.page into the render model.
  * Missing pages render as a "not found" page with a link home.
  */
+static bool web_history_replay;
+
 static void web_load_page(WebState *web, const char *page_id)
 {
     if (!web || !page_id || !page_id[0]) return;
@@ -1439,7 +1441,10 @@ done:
     strncpy(web->page_id, page_id, sizeof(web->page_id) - 1);
     web->page_id[sizeof(web->page_id) - 1] = '\0';
 
-    /* Push history (forward history is discarded, like a browser) */
+    /* Push history (forward history is discarded, like a browser). Back/
+     * Forward replays must not push: when full, a push shifts the array. */
+    if (web_history_replay) return;
+    if (web->history_count > 0) web->history_count = web->history_pos + 1;
     if (web->history_count < WEB_HISTORY_MAX) {
         strncpy(web->history[web->history_count++], page_id, sizeof(web->history[0]) - 1);
         web->history_pos = web->history_count - 1;
@@ -1465,11 +1470,9 @@ static void web_go_history(WebState *web, int delta)
     strncpy(page, web->history[pos], sizeof(page) - 1);
     page[sizeof(page) - 1] = '\0';
 
-    int saved_pos = web->history_pos;
-    int saved_count = web->history_count;
+    web_history_replay = true;
     web_load_page(web, page);
-    web->history_pos = saved_pos;
-    web->history_count = saved_count;
+    web_history_replay = false;
 }
 
 static void draw_web_window(WebState *web, int content_x, int content_y, int content_w, int content_h)
@@ -3511,6 +3514,8 @@ static void rebuild_app_window_index(void)
 static void raise_window_to_top(int idx)
 {
     if (idx < 0 || idx >= window_count) return;
+    /* Files may have changed while it was in the background. */
+    if (app_states[idx].type == APP_FINDER) app_states[idx].finder.needs_refresh = true;
     if (idx == window_count - 1) {
         active_window_index = idx;
         return;
@@ -3616,7 +3621,12 @@ static void finder_refresh(FinderState *state)
 
     state->entry_count = 0;
     VfsDir *dir = vfs_opendir(state->path[0] ? state->path : "/");
-    if (!dir) return;
+    if (!dir) {
+        /* Folder vanished: show it empty instead of retrying every frame. */
+        state->selected = -1;
+        state->needs_refresh = false;
+        return;
+    }
 
     VfsDirEntry entry;
     while (vfs_readdir(dir, &entry) == 0 && state->entry_count < FINDER_MAX_ENTRIES) {
@@ -3632,6 +3642,8 @@ static void finder_refresh(FinderState *state)
     }
     vfs_closedir(dir);
     state->needs_refresh = false;
+    /* Never leave the selection pointing at a stale entry (Delete/Enter). */
+    if (state->selected >= state->entry_count) state->selected = state->entry_count - 1;
 }
 
 static void finder_set_path(FinderState *state, const char *path)
@@ -3650,6 +3662,8 @@ static void finder_set_path(FinderState *state, const char *path)
     state->drag_path[0] = '\0';
     state->drag_hover_index = -1;
 
+    /* Navigating after Back discards the forward entries (browser rules). */
+    if (state->history_count > 0) state->history_count = state->history_pos + 1;
     if (state->history_count < 8) {
         strncpy(state->history[state->history_count++], path, sizeof(state->history[0]) - 1);
         state->history_pos = state->history_count - 1;
@@ -3757,6 +3771,9 @@ static void finder_update_preview(FinderState *state)
 
 static int copy_file_path(const char *src, const char *dst)
 {
+    /* Opening dst with TRUNC first would wipe src when they are the same
+     * file (Cmd+C, Cmd+V in one folder). Never overwrite anything here. */
+    if (!src[0] || !dst[0] || strcmp(src, dst) == 0 || vfs_exists(dst)) return -1;
     VfsFile *in = vfs_open(src, VFS_O_READ);
     if (!in) return -1;
     VfsFile *out = vfs_open(dst, VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
@@ -3767,12 +3784,43 @@ static int copy_file_path(const char *src, const char *dst)
 
     char buffer[128];
     ssize_t bytes;
+    int result = 0;
     while ((bytes = vfs_read(in, buffer, sizeof(buffer))) > 0) {
-        vfs_write(out, buffer, bytes);
+        if (vfs_write(out, buffer, bytes) != bytes) { result = -1; break; }
     }
+    if (bytes < 0) result = -1;
     vfs_close(in);
     vfs_close(out);
-    return 0;
+    if (result != 0) vfs_unlink(dst);   /* no silently truncated copies */
+    return result;
+}
+
+/* First free "name", "name copy", "name copy 2", ... in dir (macOS-style;
+ * the copy marker goes before the extension). */
+static int unique_copy_path(char *out, size_t size, const char *dir, const char *base)
+{
+    char name[VFS_NAME_MAX + 1];
+    const char *dot = NULL;
+    for (const char *c = base; *c; c++) if (*c == '.') dot = c;
+    size_t stem = (dot && dot != base) ? (size_t)(dot - base) : strlen(base);
+    for (int n = 0; n < 100; n++) {
+        if (n == 0) {
+            strncpy(name, base, sizeof(name) - 1);
+            name[sizeof(name) - 1] = '\0';
+        } else {
+            char suffix[16] = " copy";
+            if (n > 1) { suffix[5] = ' '; utoa((uint64_t)n, suffix + 6, 10); }
+            size_t keep = MIN(stem, sizeof(name) - 1 - strlen(suffix) - (dot && dot != base ? strlen(dot) : 0));
+            if ((int)keep <= 0) return -1;
+            memcpy(name, base, keep);
+            name[keep] = '\0';
+            str_append(name, sizeof(name), suffix);
+            if (dot && dot != base) str_append(name, sizeof(name), dot);
+        }
+        if (vfs_join_path(out, size, dir, name) != 0) return -1;
+        if (!vfs_exists(out)) return 0;
+    }
+    return -1;
 }
 
 static void terminal_append_line(TerminalState *term, const char *text)
@@ -4337,24 +4385,35 @@ static void terminal_exec(TerminalState *term, const char *cmd)
             return;
         }
 
-        VfsFile *in = vfs_open(src_resolved, VFS_O_READ);
-        if (!in) {
+        /* cp file dir -> dir/file (Unix). Refuse src == dst: opening dst
+         * with TRUNC first used to wipe the file ("cp a a", "cp a ./a"). */
+        if (vfs_isdir(dst)) {
+            char into[256];
+            if (vfs_join_path(into, sizeof(into), dst, vfs_basename(src_resolved)) != 0) {
+                terminal_append_line(term, "cp: path too long");
+                return;
+            }
+            strncpy(dst, into, sizeof(dst) - 1);
+            dst[sizeof(dst) - 1] = '\0';
+        }
+        char norm_src[256], norm_dst[256];
+        if (vfs_normalize_path(src_resolved, norm_src, sizeof(norm_src)) != 0 ||
+            vfs_normalize_path(dst, norm_dst, sizeof(norm_dst)) != 0) {
+            terminal_append_line(term, "cp: path too long");
+            return;
+        }
+        if (strcmp(norm_src, norm_dst) == 0) {
+            terminal_append_line(term, "cp: source and destination are the same file");
+            return;
+        }
+        if (!vfs_isfile(norm_src)) {
             terminal_append_line(term, "cp: cannot open source");
             return;
         }
-        VfsFile *out = vfs_open(dst, VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
-        if (!out) {
-            vfs_close(in);
-            terminal_append_line(term, "cp: cannot open destination");
-            return;
+        if (vfs_exists(norm_dst)) vfs_unlink(norm_dst);   /* cp overwrites, like Unix */
+        if (copy_file_path(norm_src, norm_dst) != 0) {
+            terminal_append_line(term, "cp: copy failed (disk full?)");
         }
-        char buffer[128];
-        ssize_t bytes;
-        while ((bytes = vfs_read(in, buffer, sizeof(buffer))) > 0) {
-            vfs_write(out, buffer, bytes);
-        }
-        vfs_close(in);
-        vfs_close(out);
         return;
     }
 
@@ -4377,6 +4436,7 @@ static void terminal_exec(TerminalState *term, const char *cmd)
             size_t len = (size_t)(redir - (cmd + 5));
             if (len > sizeof(text) - 1) len = sizeof(text) - 1;
             memcpy(text, cmd + 5, len);
+            while (len > 0 && text[len - 1] == ' ') len--;   /* "echo hi > f" writes "hi" */
             text[len] = '\0';
 
             const char *path_arg = redir + 2;
@@ -4663,6 +4723,10 @@ static void terminal_handle_key(TerminalState *term, char ascii, KeyCode key)
         terminal_append_line(term, prompt);
         terminal_history_push(term, term->input);
         terminal_exec(term, term->input);
+        /* Commands may create/move/delete files: re-read open Finder views. */
+        for (int w = 0; w < window_count; w++) {
+            if (app_states[w].type == APP_FINDER) app_states[w].finder.needs_refresh = true;
+        }
         term->input_len = 0;
         term->input[0] = '\0';
         return;
@@ -5463,7 +5527,11 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
         return;
     }
 
-    if (shortcuts && (modifiers & INPUT_MOD_SUPER) && keycode == KEY_C) {
+    /* Finder owns Cmd+C (copy file) when focused, like the editors above. */
+    bool finder_focused = overlay == OVERLAY_NONE && active_window_index >= 0 &&
+                          active_window_index < window_count &&
+                          app_states[active_window_index].type == APP_FINDER;
+    if (shortcuts && (modifiers & INPUT_MOD_SUPER) && keycode == KEY_C && !finder_focused) {
         overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
         return;
     }
@@ -5635,7 +5703,8 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
             if ((modifiers & INPUT_MOD_SUPER) && keycode == KEY_V && finder->clip_path[0]) {
                 const char *base = vfs_basename(finder->clip_path);
                 char dst[256];
-                vfs_join_path(dst, sizeof(dst), finder->path, base);
+                if (vfs_join_path(dst, sizeof(dst), finder->path, base) != 0) return;
+                if (!finder->clip_cut && unique_copy_path(dst, sizeof(dst), finder->path, base) != 0) return;
                 if (finder->clip_cut) {
                     if (vfs_rename(finder->clip_path, dst) == 0) {
                         finder->clip_path[0] = '\0';
@@ -5660,8 +5729,8 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
             if (keycode == KEY_DELETE && finder->selected >= 0) {
                 FinderEntry *entry = &finder->entries[finder->selected];
                 char path[256];
-                vfs_join_path(path, sizeof(path), finder->path, entry->name);
-                if (vfs_unlink(path) == 0) {
+                if (vfs_join_path(path, sizeof(path), finder->path, entry->name) == 0 &&
+                    vfs_unlink(path) == 0) {
                     finder->needs_refresh = true;
                 }
                 return;
@@ -5958,8 +6027,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             vfs_join_path(dst_dir, sizeof(dst_dir), finder->path, entry->name);
                             const char *base = vfs_basename(finder->drag_path);
                             char dst[256];
-                            vfs_join_path(dst, sizeof(dst), dst_dir, base);
-                            if (vfs_rename(finder->drag_path, dst) == 0) {
+                            if (vfs_join_path(dst, sizeof(dst), dst_dir, base) == 0 &&
+                                vfs_rename(finder->drag_path, dst) == 0) {
                                 finder->needs_refresh = true;
                             }
                         }
@@ -5981,8 +6050,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             vfs_join_path(dst_dir, sizeof(dst_dir), finder->path, entry->name);
                             const char *base = vfs_basename(finder->drag_path);
                             char dst[256];
-                            vfs_join_path(dst, sizeof(dst), dst_dir, base);
-                            if (vfs_rename(finder->drag_path, dst) == 0) {
+                            if (vfs_join_path(dst, sizeof(dst), dst_dir, base) == 0 &&
+                                vfs_rename(finder->drag_path, dst) == 0) {
                                 finder->needs_refresh = true;
                             }
                         }

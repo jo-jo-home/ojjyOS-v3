@@ -570,7 +570,10 @@ int users_create(const char *username, const char *full_name,
         return -1;
     }
 
-    /* Validate username characters (alphanumeric, '_', '-', '.') */
+    /* Validate username characters (alphanumeric, '_', '-', '.'). It becomes
+     * /Users/<name>: a leading '.' would allow "." / ".." (home = /Users or /)
+     * and hidden homes; over-long names are rejected, not silently cut. */
+    if (username[0] == '.' || strlen(username) >= USER_NAME_MAX) return -1;
     char clean_user[USER_NAME_MAX];
     size_t j = 0;
     for (size_t i = 0; username[i] && j + 1 < sizeof(clean_user); i++) {
@@ -605,7 +608,9 @@ int users_create(const char *username, const char *full_name,
         /* Sanitize '|' out of full_name */
         size_t k = 0;
         for (size_t i = 0; full_name[i] && k + 1 < sizeof(u->full_name); i++) {
-            u->full_name[k++] = (full_name[i] == '|') ? ' ' : full_name[i];
+            /* '|' and control chars (newlines) would corrupt users.db records */
+            char c = full_name[i];
+            u->full_name[k++] = (c == '|' || (unsigned char)c < 32 || c == 127) ? ' ' : c;
         }
         u->full_name[k] = '\0';
     } else {

@@ -112,8 +112,9 @@ class VM:
 
     def type(self, text, pace=0.08):
         for char in text:
-            if char == "_":
-                self.key("shift", True); self.press("minus", pace); self.key("shift", False)
+            shifted = {"_": "minus", ">": "dot"}.get(char) or (char.lower() if char.isupper() else None)
+            if shifted:
+                self.key("shift", True); self.press(shifted, pace); self.key("shift", False)
                 continue
             code = {" ": "spc", "\n": "ret", "\t": "tab", "/": "slash", "-": "minus", ".": "dot"}.get(char, char)
             self.press(code, pace)

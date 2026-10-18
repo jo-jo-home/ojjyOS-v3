@@ -625,6 +625,8 @@ int vfs_join_path(char *dest, size_t size, const char *base, const char *name)
 
     size_t total = base_len + (need_slash ? 1 : 0) + name_len + 1;
     if (total > size) {
+        /* Never leave callers holding uninitialised stack bytes as a path. */
+        if (dest && size) dest[0] = '\0';
         return -1;
     }
 

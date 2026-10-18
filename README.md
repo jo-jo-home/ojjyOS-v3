@@ -171,7 +171,7 @@ file authorization remain future work.
 |----------|--------|
 | `Cmd+Space` | Toggle Spotlight search |
 | `Cmd+L` | Toggle Launchpad |
-| `Cmd+C` | Toggle Control Center (unless TextEdit/Notes is focused, where `Cmd+C` copies text) |
+| `Cmd+C` | Toggle Control Center (unless TextEdit/Notes or Finder is focused, where `Cmd+C` copies) |
 | `Cmd+M` | Toggle Mission Control (live window cards) |
 | `Cmd+Tab` | Open App Switcher (release `Cmd` or click an icon to activate) |
 | `Cmd+Q` | Close active window / quit active app |

@@ -107,7 +107,7 @@ implemented. QEMU remains the Intel path and the ARM fallback/test platform.
 bash scripts/test-vmapp.sh          # Mapping, file-alias and lock safeguards; no VM
 python3 -B tests/vz_boot.py --image build/aarch64/ojjyos3.img --output build/vz-boot-new
 python3 -B tests/vz_smoke.py --image build/aarch64/ojjyos3.img \
-  --output build/vz-smoke-new --fresh-data
+  --output build/vz-smoke-new --fresh-data --protected
 ```
 
 Choose a new output directory each time. These tests copy the disk and use private
@@ -115,7 +115,7 @@ EFI stores; `--fresh-data` only clears that test copy. The smoke uses the app's
 explicit `--control <unix-socket>` test mode, with owner-only socket permissions
 and view-local input (no global desktop event injection). It accepts `key <HID
 usage> <0|1>`, `text <US ASCII>`, `move x y`, `click x y`, `screenshot <new.png>`,
-`status`, `fullscreen`, `start`, and `quit`, one line per connection with a JSON
+`status`, `fullscreen`, `hide`, `start`, and `quit`, one line per connection with a JSON
 reply. Coordinates use the 1440×900 logical guest desktop. Ordinary hardware input
 is disabled only in this explicitly controlled test view. Normal app launches
 accept normal keyboard/mouse input. Install Pillow for screenshot assertions.

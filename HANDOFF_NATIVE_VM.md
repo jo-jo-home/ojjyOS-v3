@@ -1,5 +1,16 @@
 # HANDOFF — Native VM (ojjyOS.app on Apple Virtualization.framework)
 
+## FINAL DELIVERY (2026-10-18)
+
+Native app/USB/PCI/timer implementation and final native/QEMU regressions
+are complete. Installed images were rebuilt with data hashes identical to
+their pre-build state and retained backups. See the newest `AGENTS.md` and
+`NATIVE_VM_PLAN.md` log for receipts, capture hardening and limitations.
+Launch `build/ojjyOS.app` or `bash scripts/run-vm.sh`; shut down inside the
+guest and quit the app before rebuilding. Integration is local only; do not
+push without Jonas asking. All earlier pause/TODO paragraphs below are
+historical snapshots, not directions to restart completed milestones.
+
 ## Current correction (2026-10-18 resumed session)
 
 N9/N10 is now implemented and native three-boot smoke passes, including

@@ -18,9 +18,24 @@ import tempfile
 import time
 
 from PIL import Image, ImageChops
+from qemu_smoke import protected_checks
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMP = Path(tempfile.gettempdir()) / 'opencode'
+
+
+def pointer_hotspot(before, after, x, y):
+    if before.size != after.size:
+        raise RuntimeError('Native host window was still resizing during pointer capture')
+    sx, sy = after.width / 1440, after.height / 900
+    region = (round((x-10)*sx), round((y-10)*sy), round((x+40)*sx), round((y+50)*sy))
+    diff = ImageChops.difference(before, after).crop(region)
+    # Ignore small CG color/dither changes and the soft shadow. The high-
+    # contrast outline starts at the hotspot, not the bitmap's 2px margin.
+    red, green, blue = diff.split()
+    changed = ImageChops.lighter(ImageChops.lighter(red, green), blue).point(
+        lambda value: 255 if value > 64 else 0).getbbox()
+    return ((region[0]+changed[0])/sx, (region[1]+changed[1])/sy) if changed else None
 
 
 class NativeVM:
@@ -67,17 +82,24 @@ class NativeVM:
             return result
 
     def key(self, usage, down):
+        if isinstance(usage, str):
+            usage = {'meta_l': 227, 'spc': 44}[usage]
         self.command(f'key {usage} {int(down)}')
 
     def press(self, usage):
         self.key(usage, True)
         self.key(usage, False)
 
-    def type(self, text):
+    def type(self, text, pace=None):
         lines = text.split('\n')
         for index, line in enumerate(lines):
             if line:
-                self.command('text ' + line)
+                if pace is None:
+                    self.command('text ' + line)
+                else:
+                    for char in line:
+                        self.command('text ' + char)
+                        time.sleep(pace)
             if index < len(lines) - 1:
                 self.press(40)
         time.sleep(.1)
@@ -169,7 +191,14 @@ def run(args):
                 else:
                     fcntl.lockf(file, fcntl.LOCK_UN)
                     raise RuntimeError(f'Live VM did not retain exclusive lock: {locked}')
+        # Force a hidden-window precondition. Capture must make this VM's
+        # Metal surface visible before saving, not return a blank surface.
+        vm.command('hide')
+        if vm.command('status')['visible']:
+            raise RuntimeError('Failed to establish hidden-window capture precondition')
         vm.screenshot(output / 'setup.png')
+        if not vm.command('status')['visible']:
+            raise RuntimeError('Capture did not restore its own window visibility')
         if 'first-boot setup active' not in vm.text():
             raise RuntimeError('Setup smoke requires --fresh-data (private disk only)')
         vm.type('oooo')
@@ -180,14 +209,9 @@ def run(args):
         vm.screenshot(output / 'pointer-100-100.png')
         before_pointer = Image.open(output / 'setup.png').convert('RGB')
         after_pointer = Image.open(output / 'pointer-100-100.png').convert('RGB')
-        sx, sy = after_pointer.width / 1440, after_pointer.height / 900
-        px, py = round(100 * sx), round(100 * sy)
-        region = (round(90*sx),round(90*sy),round(140*sx),round(150*sy))
-        changed = ImageChops.difference(before_pointer,after_pointer).crop(region).getbbox()
-        # The bitmap starts two logical pixels before its hotspot (see
-        # cursor_image.h). Compare the hotspot, not the shadow's top-left.
-        if not changed or abs(region[0]+changed[0]+2*sx-px)>3*sx or abs(region[1]+changed[1]+2*sy-py)>3*sy:
-            raise RuntimeError(f'Native absolute pointer does not land at (100,100): {changed}')
+        hotspot = pointer_hotspot(before_pointer, after_pointer, 100, 100)
+        if not hotspot or abs(hotspot[0]-100)>3 or abs(hotspot[1]-100)>3:
+            raise RuntimeError(f'Native absolute pointer does not land at (100,100): {hotspot}')
         for field, y in (('Jonas Lee',367), ('tester',407), ('testpass',447), ('testpass',487)):
             vm.command(f'click 750 {y}')
             vm.type(field)
@@ -210,6 +234,9 @@ def run(args):
         start = len(vm.text())
         vm.type('whoami\n')
         vm.wait('tester (Jonas Lee)', after=start)
+        if args.protected:
+            protected_checks(vm, 'aarch64', output)
+            vm.console()
         vm.shutdown()
     except BaseException:
         try:
@@ -270,6 +297,7 @@ def run(args):
         'absolute_pointer': 'passed', 'setup_clicks': 'passed', 'retina_capture': 'passed',
         'sync_shutdown': 'passed', 'cold_login': 'passed', 'source_unchanged': True,
         'checkpoint_fallback': 'passed', 'native_fullscreen': 'passed',
+        'protected_apps': 'passed' if args.protected else 'not requested',
         'limitations': 'Fixed 2880x1800 scanout; no live guest display-mode changes. Manual focus-loss behavior not exhaustively tested.'}, indent=2) + '\n')
     print(f'PASS: native USB setup/editing, Retina capture, sync/shutdown and saved login; evidence: {output}')
 
@@ -280,4 +308,5 @@ if __name__ == '__main__':
     parser.add_argument('--app', default=str(ROOT / 'build/ojjyOS.app/Contents/MacOS/ojjyOS'))
     parser.add_argument('--output', required=True)
     parser.add_argument('--fresh-data', action='store_true')
+    parser.add_argument('--protected', action='store_true', help='also run the shared EL0 boundary/cleanup suite on VZ')
     run(parser.parse_args())

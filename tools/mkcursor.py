@@ -51,7 +51,8 @@ def render(k):
     pm = Image.merge("RGBA", [Image.composite(c, Image.new("L", big, 0), a) for c in (r, g, b)] + [a])
     small = pm.resize((W * k, H * k), Image.LANCZOS)
     data = []
-    for (pr, pg, pb, pa) in list(small.getdata()):
+    pixels = getattr(small, "get_flattened_data", small.getdata)()
+    for (pr, pg, pb, pa) in pixels:
         if pa:
             pr, pg, pb = (min(255, pr * 255 // pa), min(255, pg * 255 // pa), min(255, pb * 255 // pa))
         data += [pr, pg, pb, pa]

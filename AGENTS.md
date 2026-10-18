@@ -1,6 +1,51 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## CURRENT WORK (N9/N10 verified, N11 next; 2026-10-18)
+## LATEST (2026-10-18): native VM delivered; N1–N11 complete
+
+All native milestones are verified (`0054e86` is the N9/N10 app commit;
+see git log for the final N11 capture/docs commit). Integration is a local
+fast-forward to `main`; nothing is pushed. Launch **`build/ojjyOS.app`** or run
+`bash scripts/run-vm.sh`. It boots Jonas's custom kernel on Apple's VZ,
+not QEMU or Linux. QEMU remains supported (HVF/TCG/Intel fallback).
+
+Installed ARM and Intel images were rebuilt with the standard preserving
+builder; both entire data partitions exactly match their pre-build SHA-256
+and newest retained backups. Legacy disk also unchanged. Receipt:
+`build/vz-resume/installed-data-verified.json`. Installed kernels are
+byte-identical to development artifacts used by the regression suites.
+
+`build/vz-resume/delivered-native-alpha/report.json` passes native click
+setup, uppercase/Shift+Esc, pixel pointer alignment, Retina/full-screen,
+256 editing cycles, all 19 protected-app cases plus cleanup/recovery,
+clean shutdown, cold password login and corrupt-checkpoint fallback.
+`installed-vz-boot/report.json` verifies boot/device/DHCP/IRQ/clock against
+a private copy of the installed image without clearing its saved data.
+All test VMs/disks were private; the user's VM was never stopped.
+
+QEMU final TCG/HVF/Intel smoke passes. Network/HTTP, local HTTP+HTTPS
+browser, network UI checks pass; apps/file/design/animation tours completed
+and representative captures reviewed. Receipts: `build/vz-resume/final-*.log`.
+Normal/sanitized host suites and warning-free ARM/Intel builds pass.
+Native-host guards: 102 Swift checks and five pixel-gate Python tests.
+Final exact-source receipts: `build/vz-resume/n11-{host-final,app-guards,
+arm-final,x86-final,native-final}.log`, `n11-native-final/report.json`.
+All pass without warnings. The native rerun uses a private copy of the
+installed image and includes the hidden-window capture regression and EL0.
+
+Capture hardening: WindowServer returned transparent RGBA surfaces and
+show-animation edge strips, not a black guest frame. Capture now brings
+only its own window forward and waits (bounded) for opaque edge midpoints;
+it never substitutes another image. Pixel gates still reject blank images,
+missing/misaligned cursors and geometry changes. Guest motion is unchanged.
+
+Limits: fixed 2880x1800 scanout, not live guest mode resize; directly
+attached USB HID only, no hubs/hot-plug enumeration; guest clock is UTC;
+control text is US ASCII; manual hardware focus-loss behavior is not
+exhaustively tested. No hard frame-time guarantee or bare-metal Mac support.
+Shut down inside the guest, then quit the app before rebuilding its disk.
+The conversation-export JSON is intentionally untracked. Do not add it.
+
+## Historical checkpoint (N9/N10 verified, before N11; 2026-10-18)
 
 N8 kernel component committed `91bf20d`. Native app implementation:
 `vmapp/main.swift`, `scripts/{build-vmapp,run-vm,test-vmapp}.sh`,

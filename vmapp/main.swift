@@ -124,6 +124,10 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
             styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
         window.title = "ojjyOS"; window.minSize = NSSize(width:960,height:600)
         window.contentAspectRatio = NSSize(width:1440,height:900)
+        // Document-window show animations temporarily scale the captured
+        // Metal surface. Tests own visibility explicitly, so disable only
+        // this host animation in control mode (guest motion stays enabled).
+        if options.control != nil { window.animationBehavior = .none }
         window.collectionBehavior.insert(.fullScreenPrimary)
         window.contentView = view; window.delegate = self
         view.capturesSystemKeys = true
@@ -260,17 +264,35 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         defer { view.injecting = false }
         switch type { case .leftMouseDown: view.mouseDown(with:event); case .leftMouseUp: view.mouseUp(with:event); default: view.mouseMoved(with:event) }
     }
-    func screenshot(_ path: String) throws {
-        guard let image = CGWindowListCreateImage(.null,.optionIncludingWindow,CGWindowID(window.windowNumber),.boundsIgnoreFraming) else {
-            throw HostError("Own-window capture unavailable; no screenshot saved")
-        }
+    func screenshot(_ path: String) throws -> Bool {
+        guard let image = CGWindowListCreateImage(.null,.optionIncludingWindow,CGWindowID(window.windowNumber),.boundsIgnoreFraming) else { return false }
         let rect = window.convertToScreen(view.convert(view.bounds,to:nil))
         let sx = Double(image.width)/window.frame.width, sy = Double(image.height)/window.frame.height
         let crop = CGRect(x:(rect.minX-window.frame.minX)*sx,y:(window.frame.maxY-rect.maxY)*sy,width:rect.width*sx,height:rect.height*sy)
-        guard let content = image.cropping(to:crop),let png = NSBitmapImageRep(cgImage:content).representation(using:.png,properties:[:]) else { throw HostError("Own-window capture failed") }
+        guard let content = image.cropping(to:crop) else { return false }
+        let bitmap = NSBitmapImageRep(cgImage:content)
+        // WindowServer can return a fully transparent surface, or an
+        // internally scaled show-animation surface with transparent edges.
+        // Neither is a completed view capture. Ignore rounded corners, but
+        // require all four edge midpoints to be opaque before publishing.
+        let w = bitmap.pixelsWide, h = bitmap.pixelsHigh
+        guard w > 10, h > 10 else { return false }
+        for (x,y) in [(4,h/2),(w-5,h/2),(w/2,4),(w/2,h-5)] {
+            guard let color = bitmap.colorAt(x:x,y:y),color.alphaComponent >= 0.99 else { return false }
+        }
+        guard let png = bitmap.representation(using:.png,properties:[:]) else { throw HostError("Own-window encoding failed") }
         let url = URL(fileURLWithPath:path)
         guard !FileManager.default.fileExists(atPath:url.path) else { throw HostError("Screenshot target already exists") }
         try png.write(to:url,options:.atomic)
+        return true
+    }
+    func prepareScreenshot() {
+        // Metal surfaces can be uncomposited when their window is occluded.
+        // An explicit test capture brings only our own window forward first.
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps:true)
+        window.displayIfNeeded()
+        view.displayIfNeeded()
     }
 }
 
@@ -324,7 +346,18 @@ final class ControlServer {
             }
             return ["ok":true]
         }
-        if line.hasPrefix("screenshot ") { try onMain { try $0.screenshot(String(line.dropFirst(11))) }; return ["ok":true] }
+        if line.hasPrefix("screenshot ") {
+            try onMain { $0.prepareScreenshot() }
+            // Wait for observable completion, not an arbitrary sleep. No
+            // PNG is written until the view's surface is opaque. A genuine
+            // opaque black guest frame still fails the caller's pixel gate.
+            let deadline = ProcessInfo.processInfo.systemUptime + 3
+            while try !onMain({ host in try autoreleasepool { try host.screenshot(String(line.dropFirst(11))) } }) {
+                guard ProcessInfo.processInfo.systemUptime < deadline else { throw HostError("Own-window surface remained transparent; no screenshot saved") }
+                usleep(16667)
+            }
+            return ["ok":true]
+        }
         let parts = line.split(separator:" ").map(String.init)
         if parts.count == 3 && parts[0] == "key",let usage = Int(parts[1]),let down = Int(parts[2]),(down == 0 || down == 1) {
             try onMain { try $0.key(usage,down:down == 1) }; usleep(4000); return ["ok":true]
@@ -339,7 +372,9 @@ final class ControlServer {
         }
         if line == "status" { return try onMain { ["ok":true,"state":$0.machine?.state.rawValue ?? -1,
             "fullscreen":$0.window.styleMask.contains(.fullScreen),
+            "visible":$0.window.isVisible,
             "viewWidth":$0.view.bounds.width,"viewHeight":$0.view.bounds.height] } }
+        if line == "hide" { try onMain { $0.window.orderOut(nil) }; return ["ok":true] }
         if line == "fullscreen" { try onMain { $0.fullScreen() }; return ["ok":true] }
         if line == "start" { try onMain { try $0.start() }; return ["ok":true] }
         if line == "quit" {

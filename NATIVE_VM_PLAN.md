@@ -60,6 +60,48 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- N11 final exact-source gate passes: `n11-host-final.log`,
+  `n11-app-guards.log` (102 Swift + five Python capture probes),
+  `n11-{arm,x86}-final.log` (zero warnings/errors) and
+  `n11-native-final/report.json` (three native cold boots, protected apps,
+  hidden-window capture, setup/input/fullscreen/persistence/fallback).
+  Final native test leaves the installed source disk unchanged. Cursor
+  generator output remains byte-identical after the Pillow API update.
+  All native milestones complete; finish with the reviewed N11 local commit
+  and fast-forward `main`. No remote push; conversation export stays untracked.
+
+- N11 delivery verification (2026-10-18): standard builds updated both
+  installed images without changing either data partition. SHA-256 equals
+  pre-build values and newest full backups (`installed-data-verified.json`):
+  ARM `ce09a93f33b046a2abed527cdc91e20547f1bf480d88f5cc5a3da1d702fcaa8d`,
+  Intel `2910f9e463394546790a465e60ae9abde773a0820966a5452bb91b38d6602f3f`.
+  Legacy image unchanged. Installed kernel binaries equal tested development
+  binaries. `installed-vz-boot/report.json` boots an unchanged private copy
+  with restored state, five virtio devices, two USB HID devices, real DHCP
+  and timer/clock assertions. Native `delivered-native-alpha/report.json`
+  passes all three cold boots plus the shared protected-app suite (19
+  programs, fault classes, watchdog/output/syscall limits, equal free pages,
+  clean successes after faults and Spotlight→Terminal execution).
+  QEMU TCG/HVF/Intel smokes pass (`final-{tcg,hvf,intel}.log`); network,
+  local HTTP/HTTPS browser and network-UI checks pass. App/file/design/
+  animation tours completed and representative captures reviewed. Perf
+  receipt `final-perf/perf.json` records Terminal/Settings/Web/Calculator
+  opens at 231–243ms under HVF; no hard real-time claim.
+
+- N11 capture regression: an extended native run exposed fully transparent
+  WindowServer/Metal captures; hide/show could also return resized or
+  transparent-edge frames. A fixed sleep and disabling show animations were
+  insufficient. Capture now fronts its own window, yields the main queue
+  and waits with a 3s deadline for four opaque edge midpoints, ignoring only
+  rounded corners. No PNG is published until readiness; opaque black images
+  still fail the independent nonblank gate. Native smoke explicitly hides
+  its window before capture. Pointer pixel comparison ignores tiny RGB
+  resampling differences and locates the contrasting stroke. Five fixture
+  tests cover correct/noisy, missing, 10px offset, large offset and changed
+  geometry; tolerance stays 3 logical pixels. `test-vmapp.sh` runs those
+  plus the existing 102 host checks. A Pillow iteration deprecation in the
+  cursor fixture's generator was updated without changing generated pixels.
+
 - N9/N10 complete evidence: `build/vz-resume/native-complete/report.json`
   passes three native cold boots with click-based setup (uppercase/spaces),
   pixel-confirmed absolute pointer, Retina CG captures, full-screen entry/exit,

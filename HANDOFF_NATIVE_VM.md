@@ -5,6 +5,138 @@ Jonas. You (the next AI) have NO other context: read this whole file, then
 `AGENTS.md` (project rules + history), `NATIVE_VM_PLAN.md` (probe facts),
 `RENDERER_UI_PLAN.md` (the just-finished renderer/UI work).
 
+## ⚠️ PROGRESS UPDATE (paused again 2026-10-18, ~16:30) — READ FIRST
+
+A second session continued from the WIP and got much further. State:
+branch `native-vm`, commits `65c605f` (N2 done) and `b6e5aa3` (N3 done),
+PLUS a large UNCOMMITTED working tree (N5/N6 + three bug fixes). Both
+builds compile with 0 warnings and `bash scripts/test.sh` passes right
+now. THE WORKING TREE IS BEING COMMITTED AS "N5/N6 WIP" — check
+`git log`/`git status` for the exact commit after this file was written.
+
+### Done and committed
+
+- **N2** (`65c605f`): platform plumbing — `platform.c` ACPI parse,
+  `platform_init()` first in kernel_main, `pci.h/.c` (ECAM via mmio.h,
+  bus-0 enumerate, BAR decode, Memory+BusMaster enable, `pci_find()`).
+  QEMU TCG+HVF smoke --protected + pointer PASS (build/n2-*).
+- **N3** (`b6e5aa3`): owned page tables — 2 MiB blocks classified from
+  the UEFI map (RAM=Normal, else Device), 4-8 GiB Device blocks for VZ's
+  64-bit virtio BARs, IPS=40 when PARange>=2. All suites PASS (build/n3-*).
+
+### Done, in the WIP commit (N5/N6, kernel side)
+
+- `VirtioDev` transport abstraction in `virtio.h/.c`: one handle per
+  device, mmio + virtio-pci modern (capability walk per spec 4.1;
+  offsets in the code). All drivers (blk/net/rng/gpu/input) converted.
+  `virtio_pci_init()` scans bus 0 for 1af4:1041/1042/1043/1044/1050.
+- 16-bit `mmio_read16/mmio_write16` added to `mmio.h` (PCI queue fields).
+- `virtio_console.c`: **Apple's console is FULL virtio-serial** (this
+  took a day of marker debugging — read "VZ console facts" below).
+  Linux layout: rx0=q0, tx0=q1, ctrl-in=q2, ctrl-out=q3. Protocol:
+  DEVICE_READY(0) → PORT_READY(3,value 1) → PORT_OPEN(6,value 1) with
+  `struct {u32 id; u16 event; u16 value}` on queue 3, THEN data on
+  queue 1 actually reaches the host. Constants from Linux uapi
+  `linux/virtio_console.h` (PORT_OPEN=6; the old guess "3" is PORT_READY).
+- Early GPU probe also tries PCI (`pci_find(1af4,0x1050)`) so the VZ
+  splash works; `virtio_gpu_owns()` now compares VirtioDev handles.
+- Panic handler prints FAR_EL1 and the caller (x30 at exception entry —
+  VEC_SYNC passes it as 4th arg). This found two real bugs (below).
+- `virtio_dev_num_queues()` (PCI only; **VZ does not implement the
+  num_queues register** — reads 0 — so detect the serial layout by
+  device id, not by num_queues).
+
+### Bugs found and fixed (in the WIP commit)
+
+1. **N3 map bug**: `block_is_ram()` excluded type 0
+   (EfiReservedMemoryType); QEMU's ramfb lives in a type-0 region, so
+   the first framebuffer write took an alignment fault in memset.
+   Fixed: types 0-7, 9, 10 (except 8) all count as RAM.
+2. **PMM-before-init bug (the big one)**: the renderer's
+   `fb_use_backbuffer(true)` allocates the back buffer with
+   `pmm_alloc_bytes()` — but the boot splash calls it BEFORE
+   `pmm_init()`. The zero-cleared bitmap says every page is free, so it
+   "allocated" page 256 at 0x100000 (which the owned page tables map
+   Device) and the zeroing memset faulted. The standard smokes pass
+   because their GOP is 0x0 (no fb), so nothing allocated. Fixed:
+   `pmm_ready` flag — `pmm_alloc_page`/`pmm_alloc_contiguous` return 0
+   before init; the splash then draws direct to scanout
+   (fb_use_backbuffer returns false; splash ignores the return value).
+3. Panic diagnostics (FAR + caller) — keep them, they are gold.
+
+### VZ console facts (measured, marker-proven)
+
+- VZ console = 1af4:1043 on PCI 0:5.0, 4 queues: init(0),(1),(2),(3)
+  all succeed. Control messages on q0/q2 never complete; **queue 3 was
+  never actually tested with a control message** (earlier tests sent
+  data-shaped messages to the wrong queues with wrong constants).
+- Data on q1 completes (descriptor returns) but is DROPPED until the
+  port is opened. Apple's binary (strings in the VZ XPC service) says:
+  "Cannot transmit data for closed port id", "sent PORT_OPEN without
+  DEVICE_READY first", "has_received_console_device_ready".
+- probe.swift now prints `stopped-after N.NNs` when the VM stops
+  (Timer polls state; .stopped/.error only). Kernel boot-to-console ≈
+  0.75 s. The 1-bit marker technique: `arch_power_off()` in guest code
+  → VM state .stopped(0) vs .running(1) at probe end. Multi-value:
+  busy-wait value×500 ms then power off; decode from the timestamp.
+- The mystery that remains: in the last VZ runs, console queue init
+  appeared to fail/hang (marker never fired) — BUT a failed init
+  (`return -1`) and a hang look identical through this probe. The
+  PMM bug above may or may not explain it (VZ boots with fb=0x0, so
+  probably NOT). Re-test after this commit; if init(1) still fails,
+  bisect with markers/delay-readout, and consider: QEMU test rig (see
+  next section) to iterate faster.
+
+### Fast test rig for the console (USE THIS — minutes, not hours)
+
+QEMU can emulate the SAME modern PCI console:
+```
+qemu-system-aarch64 -M virt,gic-version=2 -accel tcg -cpu cortex-a72 \
+  -m 2048 -bios /opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+  -global virtio-mmio.force-legacy=false -device ramfb \
+  -device virtio-keyboard-device -device virtio-tablet-device \
+  -drive file=DISK,format=raw,if=none,id=hd -device virtio-blk-device,drive=hd \
+  -chardev file,id=clog,path=/tmp/qconsole.log \
+  -device virtio-serial-pci,disable-legacy=on,id=vs0 \
+  -device virtconsole,bus=vs0.0,chardev=clog \
+  -serial file:/tmp/qemu-serial.log
+```
+`disable-legacy=on` makes it modern (device id 1043, like VZ). Without
+it you get legacy 0x1003 (not attached). QEMU/EDK2 DOES publish MCFG
+(ECAM 0x4010000000, above 4 GiB!) — but `platform.c` force-zeroes
+`platform.ecam` on QEMU, so `virtio_pci_init` never runs there. To use
+this rig you must let ecam stand when MCFG exists (drop the force-zero
+in `platform_init`, keep QEMU's virtio-mmio init as `platform.qemu`).
+Verify the standard smokes still pass afterwards (they should: the PCI
+scan only adds; mmio attach is unchanged). Also note QEMU's 64-bit BARs
+land at 0x8000000000+ — the 4-8 GiB device blocks don't cover them;
+if you keep this rig, map the ECAM/BAR window it reports (or extend
+the device mapping to 128 GiB when IPS allows) — under VZ the BARs are
+at 0x1_000x_0000 which IS covered.
+
+### Remaining TODO (in order)
+
+1. Re-run both builds + test.sh on this tree (was green at pause).
+2. VZ probe (`vmapp/probe.swift`, build/run commands in §2 below):
+   expect `/tmp/vz-serial.log` to fill with the boot log ending in
+   "[INIT] Entering main loop" = N6 acceptance. Use the QEMU rig above
+   for faster iteration if it fails.
+3. If the console still fails on VZ: test control messages on queue 3
+   with markers; check the ctrl message buffer/statics; consider
+   posting the ctrl-in buffer BEFORE the handshake.
+4. N7/N4: verify the menu-bar clock (boot_epoch from OJJYBOOT.LOG
+   "[BOOT] Clock:") and timer ticks ([PERF] lines) under VZ.
+5. N8: xHCI + USB HID (largest piece; full bring-up in §4 N8).
+6. N9: the app (§4 N9). vmapp/probe.swift is the working reference
+   (serial via VZVirtioConsoleDeviceSerialPortConfiguration — the
+   isConsole/VZConsoleDeviceConfiguration variant was tried and
+   reverted).
+7. N10: --control socket + tests/vz_smoke.py.
+8. N11: docs, full regression, merge native-vm into main, rebuild
+   installed images + data-partition hash check.
+
+
+
 ## 0. What Jonas wants (his words, in order)
 
 1. "qemu is laggy and i want it to feel smooth like a native virtualbox

@@ -82,6 +82,12 @@ int pci_find(uint16_t vendor, uint16_t device, PciDev *out)
     return -1;
 }
 
+void pci_enable(const PciDev *d)
+{
+    config_write16(d->bus, d->dev, d->fn, 4,
+                   (uint16_t)(config_read16(d->bus, d->dev, d->fn, 4) | 0x6));
+}
+
 void pci_init(void)
 {
     if (!platform.ecam) return;

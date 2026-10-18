@@ -81,3 +81,22 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
   Evidence: builds 0 warnings (build/n3-build-*), tests pass (build/n3-tests),
   QEMU TCG + HVF smoke --protected PASS (build/n3-tcg, build/n3-hvf),
   pointer PASS (build/n3-ptr).
+- N5/N6 (uncommitted at pause, see HANDOFF_NATIVE_VM.md "PROGRESS
+  UPDATE"): VirtioDev transport (mmio + PCI modern), all drivers
+  converted, 16-bit mmio accessors, panic prints FAR + caller. Console
+  driver written for Apple's full virtio-serial (rx0/tx0/ctrl-in/ctrl-out
+  = q0..q3; DEVICE_READY→PORT_READY→PORT_OPEN on q3, data on q1; constants
+  from Linux uapi). Two real bugs found via the new panic diagnostics and
+  fixed: (1) N3 mapped QEMU's type-0 ramfb region as Device → first fb
+  write faulted; block_is_ram now treats types 0-7,9,10 as RAM.
+  (2) fb_use_backbuffer allocates the back buffer from the PMM but the
+  boot splash calls it BEFORE pmm_init → zeroed bitmap "allocated"
+  0x100000 (Device-mapped) → fault; PMM now refuses allocations before
+  pmm_init (pmm_ready), splash falls back to direct scanout.
+  VZ probe progress: kernel boots through GICv3 + PCI scan + device
+  attach; console control messages on queue 3 NOT yet verified end-to-end
+  (earlier tests used wrong queues/constants). Evidence: build/n5-*,
+  build/n6-build/test logs, /tmp/vz-serial.log runs.
+- Paused 2026-10-18 ~16:30 at Jonas's request; handoff written into
+  HANDOFF_NATIVE_VM.md "PROGRESS UPDATE" (VZ console facts, the QEMU
+  virtio-serial-pci test rig, remaining TODO).

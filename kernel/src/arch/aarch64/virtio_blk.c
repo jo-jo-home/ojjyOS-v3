@@ -43,23 +43,23 @@ static bool blk_present = false;
 static bool blk_flush_supported = false;
 static uint64_t blk_sectors = 0;
 
-int virtio_blk_attach(uint32_t mmio_base, bool supports_flush)
+int virtio_blk_attach(VirtioDev *dev, bool supports_flush)
 {
     if (blk_present) {
         return -1;   /* One block device is enough */
     }
 
-    if (virtio_queue_init(&blk_dev.vq, mmio_base, &blk_dev.queue_mem) != 0) {
+    if (virtio_dev_queue_init(dev, &blk_dev.vq, &blk_dev.queue_mem, 0) != 0) {
         return -1;
     }
 
-    virtio_dev_ready(mmio_base);
+    virtio_dev_ready(dev);
     blk_present = true;
     blk_flush_supported = supports_flush;
 
     /* Capacity: 8 bytes at config offset 0 (little-endian) */
-    uintptr_t cfg = (uintptr_t)mmio_base + VIO_CFG;
-    uint64_t sectors = (uint64_t)mmio_read32(cfg) | ((uint64_t)mmio_read32(cfg + 4) << 32);
+    uint64_t sectors = (uint64_t)virtio_dev_cfg32(dev, VIRTIO_BLK_CFG_CAPACITY) |
+                       ((uint64_t)virtio_dev_cfg32(dev, VIRTIO_BLK_CFG_CAPACITY + 4) << 32);
     blk_sectors = sectors;
 
     serial_printf("[VIRTIO-BLK] Attached: %d MB (%d sectors)\n",

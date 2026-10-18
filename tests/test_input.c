@@ -11,9 +11,15 @@ int driver_register(Driver *driver) { (void)driver; return 0; }
 void driver_register_irq(Driver *driver, uint8_t irq) { (void)driver; (void)irq; }
 void pic_enable_irq(uint8_t irq) { (void)irq; }
 void pic_disable_irq(uint8_t irq) { (void)irq; }
-int virtio_queue_init(VirtQueue *q, uint32_t base, VirtQueueMem *mem)
-{ (void)q; (void)base; (void)mem; return -1; }
-void virtio_dev_ready(uint32_t base) { (void)base; }
+int virtio_dev_queue_init(VirtioDev *dev, VirtQueue *q, VirtQueueMem *mem, uint16_t index)
+{ (void)dev; (void)q; (void)mem; (void)index; return -1; }
+void virtio_dev_ready(VirtioDev *dev) { (void)dev; }
+void virtio_notify(const VirtQueue *q) { (void)q; }
+uint32_t virtio_dev_cfg32(const VirtioDev *dev, uint32_t off) { (void)dev; (void)off; return 0; }
+uint16_t virtio_dev_cfg16(const VirtioDev *dev, uint32_t off) { (void)dev; (void)off; return 0; }
+uint8_t virtio_dev_cfg8(const VirtioDev *dev, uint32_t off) { (void)dev; (void)off; return 0; }
+void virtio_dev_cfg_write8(const VirtioDev *dev, uint32_t off, uint8_t value)
+{ (void)dev; (void)off; (void)value; }
 
 static InputEvent event;
 static void drain(void) { while (input_poll_event(&event)) {} }

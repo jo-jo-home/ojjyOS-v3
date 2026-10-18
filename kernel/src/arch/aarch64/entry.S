@@ -120,6 +120,7 @@ _start:
     mov x0, x1
     mov x1, x2
     mov x2, x3
+    ldr x3, [sp, #8]     /* x30 at entry: caller of the faulting function */
     bl a64_exception_handler
     b .Lhang
 .endm

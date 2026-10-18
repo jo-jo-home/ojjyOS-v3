@@ -81,24 +81,24 @@ static int virtio_net_tx(const uint8_t *frame, size_t len)
     return 0;
 }
 
-int virtio_net_attach(uint32_t base, bool has_mac)
+int virtio_net_attach(VirtioDev *dev, bool has_mac)
 {
     if (attached) return -1;
-    if (virtio_queue_init_index(&rxq, base, &rx_mem, 0) != 0 ||
-        virtio_queue_init_index(&txq, base, &tx_mem, 1) != 0) {
+    if (virtio_dev_queue_init(dev, &rxq, &rx_mem, 0) != 0 ||
+        virtio_dev_queue_init(dev, &txq, &tx_mem, 1) != 0) {
         serial_printf("[VIRTIO-NET] queue setup failed\n");
         return -1;
     }
 
     uint8_t mac[6];
     if (has_mac) {
-        for (int i = 0; i < 6; i++) mac[i] = mmio_read8((uintptr_t)base + VIO_CFG + (uintptr_t)i);
+        for (int i = 0; i < 6; i++) mac[i] = virtio_dev_cfg8(dev, (uint32_t)i);
     } else {
         random_bytes(mac, 6);
         mac[0] = (uint8_t)((mac[0] & 0xFE) | 0x02);     /* local, unicast */
     }
 
-    virtio_dev_ready(base);
+    virtio_dev_ready(dev);
 
     unsigned count = NET_BUFS < rxq.size ? NET_BUFS : rxq.size;
     for (unsigned i = 0; i < count; i++) {

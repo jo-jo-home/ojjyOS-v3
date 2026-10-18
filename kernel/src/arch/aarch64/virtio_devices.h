@@ -1,8 +1,9 @@
 /*
  * ojjyOS v3 Kernel - virtio Device Drivers (aarch64)
  *
- * Declarations shared between the transport (virtio.c) and the
- * device drivers (virtio_input.c, virtio_blk.c).
+ * Declarations shared between the transports (virtio.c) and the device
+ * drivers. Drivers are transport-independent: they receive a VirtioDev
+ * handle and use the virtio.h API.
  *
  * ojjyOS - Created by Jonas Lee
  */
@@ -12,22 +13,18 @@
 
 #include "types.h"
 #include "boot_info.h"
+#include "virtio.h"
 
-/* Device attach hooks called by the transport during bus scan.
- * Return 0 on success. */
-int virtio_blk_attach(uint32_t mmio_base, bool supports_flush);
-int virtio_input_attach(uint32_t mmio_base);
+/* Device attach hooks called by the bus scans. Return 0 on success. */
+int virtio_blk_attach(VirtioDev *dev, bool supports_flush);
+int virtio_input_attach(VirtioDev *dev);
 void virtio_input_handle_key(uint16_t code, int32_t value);
 
-/* Finalize device bring-up (set DRIVER_OK). */
-void virtio_dev_ready(uint32_t base);
-/* Reset + feature negotiation (up to FEATURES_OK) for early drivers. */
-int virtio_dev_begin(uint32_t base, uint32_t features);
-
 /* virtio-gpu display: probed before the rest of the bus, right after the
- * page allocator exists. Replaces info's framebuffer on success. */
+ * page allocator exists (mmio slots and PCI). Replaces info's framebuffer
+ * on success. */
 bool virtio_gpu_display_init(BootInfo *info);
-bool virtio_gpu_owns(uint32_t base);
+bool virtio_gpu_owns(const VirtioDev *dev);
 void virtio_gpu_poll(void);
 
 /* Poll all input devices for pending events (called each main-loop
@@ -35,13 +32,19 @@ void virtio_gpu_poll(void);
 void virtio_input_poll(void);
 
 /* virtio-net (device 1): attach, then poll from the main loop. */
-int virtio_net_attach(uint32_t base, bool has_mac);
+int virtio_net_attach(VirtioDev *dev, bool has_mac);
 void virtio_net_poll(void);
 
 /* virtio-rng (device 4): fills the kernel entropy pool. */
-int virtio_rng_attach(uint32_t base);
+int virtio_rng_attach(VirtioDev *dev);
 void virtio_rng_poll(void);
 void virtio_rng_request(void);
+
+/* virtio-console (device 3): serial output over the PCI console device
+ * (Apple VZ has no UART). Registering it replays the boot log ring. */
+int virtio_console_attach(VirtioDev *dev);
+void virtio_console_poll(void);
+
 #ifdef OJJY_HOST_TEST
 void virtio_input_test_pointer_init(int32_t min_x, int32_t max_x, int32_t min_y, int32_t max_y);
 void virtio_input_test_pointer_event(uint16_t type, uint16_t code, int32_t value);

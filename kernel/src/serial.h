@@ -26,6 +26,10 @@ void serial_init(uint16_t port);
 /* Write a character (arch primitive) */
 void serial_putc(char c);
 
+/* aarch64 only: replays the boot-log ring into `sink` and forwards every
+ * later byte (used by virtio-console on platforms without a UART). */
+void serial_set_sink(void (*sink)(char c));
+
 /* Write a string (shared) */
 void serial_puts(const char *s);
 

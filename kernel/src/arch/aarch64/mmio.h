@@ -17,6 +17,8 @@
 #if defined(OJJY_HOST_TEST) || !defined(__aarch64__)
 static inline uint32_t mmio_read32(uintptr_t a) { return *(volatile uint32_t *)a; }
 static inline void mmio_write32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
+static inline uint16_t mmio_read16(uintptr_t a) { return *(volatile uint16_t *)a; }
+static inline void mmio_write16(uintptr_t a, uint16_t v) { *(volatile uint16_t *)a = v; }
 static inline uint8_t mmio_read8(uintptr_t a) { return *(volatile uint8_t *)a; }
 static inline void mmio_write8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
 #else
@@ -29,6 +31,16 @@ static inline uint32_t mmio_read32(uintptr_t a)
 static inline void mmio_write32(uintptr_t a, uint32_t v)
 {
     __asm__ volatile("str %w0, [%1]" : : "r"(v), "r"(a) : "memory");
+}
+static inline uint16_t mmio_read16(uintptr_t a)
+{
+    uint16_t v;
+    __asm__ volatile("ldrh %w0, [%1]" : "=r"(v) : "r"(a) : "memory");
+    return v;
+}
+static inline void mmio_write16(uintptr_t a, uint16_t v)
+{
+    __asm__ volatile("strh %w0, [%1]" : : "r"((uint32_t)v), "r"(a) : "memory");
 }
 static inline uint8_t mmio_read8(uintptr_t a)
 {

@@ -16,6 +16,7 @@
 #include "types.h"
 #include "platform.h"
 #include "pci.h"
+#include "arch_power.h"
 
 /* Implemented in timer_a64.c: re-arms the EL1 physical timer and
  * advances the millisecond tick counter. */
@@ -33,7 +34,10 @@ void a64_init(BootInfo *boot_info)
 
     /* QEMU virt: fixed virtio-mmio slots. Apple VZ: PCIe devices. */
     if (platform.qemu) virtio_mmio_init();
-    if (platform.ecam) pci_init();
+    if (platform.ecam) {
+        pci_init();
+        virtio_pci_init();
+    }
 
     /* Real-time clock (PL031 on QEMU; boot-time clock elsewhere) */
     rtc_init();
@@ -60,8 +64,10 @@ void a64_irq_handler(void)
  * Synchronous exception entry: print what happened and halt.
  * (A fuller fault handler comes with real task management.)
  */
-void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
+void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr, uint64_t caller)
 {
+    uint64_t far;
+    __asm__ volatile("mrs %0, far_el1" : "=r"(far));
     cli();
     fb_use_backbuffer(false);
     serial_printf("\n[PANIC] Exception at EL1\n");
@@ -70,6 +76,8 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
         (unsigned int)((esr >> 26) & 0x3F),
         (unsigned int)(esr & 0x1FFFFFF));
     serial_printf("  ELR_EL1 = 0x%x\n", (unsigned int)elr);
+    serial_printf("  FAR_EL1 = 0x%llx\n", (unsigned long long)far);
+    serial_printf("  Caller  = 0x%llx\n", (unsigned long long)caller);
     serial_printf("  SPSR_EL1 = 0x%x\n", (unsigned int)spsr);
     serial_printf("System halted.\n");
 
@@ -108,4 +116,5 @@ void a64_poll_input(void)
     virtio_net_poll();
     virtio_rng_poll();
     virtio_gpu_poll();
+    virtio_console_poll();
 }

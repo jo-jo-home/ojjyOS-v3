@@ -25,6 +25,8 @@
 #include "string.h"
 #include "timer.h"
 
+#include "pci.h"
+
 #define GPU_CMD_GET_DISPLAY_INFO   0x0100
 #define GPU_CMD_RESOURCE_CREATE_2D 0x0101
 #define GPU_CMD_SET_SCANOUT        0x0103
@@ -62,7 +64,8 @@ static GpuFlush gpu_flush_req __attribute__((aligned(16)));
 static union { GpuHdr hdr; GpuDisplayInfo info; } gpu_resp __attribute__((aligned(16)));
 static GpuHdr gpu_resp2 __attribute__((aligned(16)));
 
-static uint32_t gpu_base, gpu_w, gpu_h;
+static VirtioDev *gpu_handle;
+static uint32_t gpu_w, gpu_h;
 static uint32_t *gpu_pixels;
 static bool gpu_ready, gpu_broken;
 static uint64_t last_auto_flush;
@@ -143,67 +146,96 @@ static void gpu_choose_size(uint32_t *w, uint32_t *h)
     *w &= ~1u;                      /* fb_present copies two pixels at a time */
 }
 
+/* Create the 2D resource, attach it to guest RAM and show it. Shared by
+ * the virtio-mmio and virtio-pci probes. */
+static bool gpu_bringup(VirtioDev *dev, BootInfo *info)
+{
+    uint32_t w, h;
+    gpu_choose_size(&w, &h);
+    uint32_t *pixels = pmm_alloc_bytes((size_t)w * h * 4);
+    if (!pixels) return false;
+
+    memset(&gpu_req, 0, sizeof(gpu_req));
+    gpu_req.create.hdr.type = GPU_CMD_RESOURCE_CREATE_2D;
+    gpu_req.create.resource_id = GPU_RESOURCE_ID;
+    gpu_req.create.format = GPU_FORMAT_B8G8R8X8;
+    gpu_req.create.width = w;
+    gpu_req.create.height = h;
+    if (gpu_command(&gpu_req, sizeof(GpuCreate2D), sizeof(GpuHdr)) != GPU_RESP_OK_NODATA) goto fail;
+
+    memset(&gpu_req, 0, sizeof(gpu_req));
+    gpu_req.attach.hdr.type = GPU_CMD_ATTACH_BACKING;
+    gpu_req.attach.resource_id = GPU_RESOURCE_ID;
+    gpu_req.attach.nr_entries = 1;
+    gpu_req.attach.addr = (uint64_t)(uintptr_t)pixels;
+    gpu_req.attach.length = w * h * 4;
+    if (gpu_command(&gpu_req, sizeof(GpuAttach), sizeof(GpuHdr)) != GPU_RESP_OK_NODATA) goto fail;
+
+    memset(&gpu_req, 0, sizeof(gpu_req));
+    gpu_req.scanout.hdr.type = GPU_CMD_SET_SCANOUT;
+    gpu_req.scanout.r = (GpuRect){ 0, 0, w, h };
+    gpu_req.scanout.scanout_id = 0;
+    gpu_req.scanout.resource_id = GPU_RESOURCE_ID;
+    if (gpu_command(&gpu_req, sizeof(GpuSetScanout), sizeof(GpuHdr)) != GPU_RESP_OK_NODATA) goto fail;
+
+    gpu_pixels = pixels;
+    gpu_w = w; gpu_h = h;
+    gpu_ready = true;
+    gpu_handle = dev;
+    info->fb_addr = (uint64_t)(uintptr_t)pixels;
+    info->fb_width = w;
+    info->fb_height = h;
+    info->fb_pitch = w * 4;
+    info->fb_bpp = 32;
+    fb_init(info);
+    fb_set_flush_hook(gpu_update);
+    serial_printf("[VIRTIO-GPU] Display %dx%d @ %p attached (%s)\n",
+        (int)w, (int)h, pixels,
+        dev->kind == VIRTIO_TRANSPORT_PCI ? "PCI" : "virtio-mmio");
+    return true;
+fail:
+    serial_printf("[VIRTIO-GPU] Display setup failed (resp 0x%x)\n", gpu_resp.hdr.type);
+    return false;
+}
+
 bool virtio_gpu_display_init(BootInfo *info)
 {
+    /* virtio-mmio (QEMU virt): fixed slots. */
     for (int i = 0; i < VIRTIO_MMIO_SLOTS && !gpu_ready; i++) {
         uint32_t base = VIRTIO_MMIO_BASE + (uint32_t)i * VIRTIO_MMIO_STRIDE;
         if (mmio_read32(base + VIO_MAGIC) != 0x74726976u || mmio_read32(base + VIO_VERSION) != 2 ||
             mmio_read32(base + VIO_DEVICE_ID) != VIRTIO_ID_GPU) continue;
-        if (virtio_dev_begin(base, 0) != 0) continue;
-        if (virtio_queue_init_index(&ctrlq, base, &gpu_mem, 0) != 0) continue;
-        virtio_dev_ready(base);
-        gpu_base = base;
 
-        uint32_t w, h;
-        gpu_choose_size(&w, &h);
-        uint32_t *pixels = pmm_alloc_bytes((size_t)w * h * 4);
-        if (!pixels) return false;
-
-        memset(&gpu_req, 0, sizeof(gpu_req));
-        gpu_req.create.hdr.type = GPU_CMD_RESOURCE_CREATE_2D;
-        gpu_req.create.resource_id = GPU_RESOURCE_ID;
-        gpu_req.create.format = GPU_FORMAT_B8G8R8X8;
-        gpu_req.create.width = w;
-        gpu_req.create.height = h;
-        if (gpu_command(&gpu_req, sizeof(GpuCreate2D), sizeof(GpuHdr)) != GPU_RESP_OK_NODATA) goto fail;
-
-        memset(&gpu_req, 0, sizeof(gpu_req));
-        gpu_req.attach.hdr.type = GPU_CMD_ATTACH_BACKING;
-        gpu_req.attach.resource_id = GPU_RESOURCE_ID;
-        gpu_req.attach.nr_entries = 1;
-        gpu_req.attach.addr = (uint64_t)(uintptr_t)pixels;
-        gpu_req.attach.length = w * h * 4;
-        if (gpu_command(&gpu_req, sizeof(GpuAttach), sizeof(GpuHdr)) != GPU_RESP_OK_NODATA) goto fail;
-
-        memset(&gpu_req, 0, sizeof(gpu_req));
-        gpu_req.scanout.hdr.type = GPU_CMD_SET_SCANOUT;
-        gpu_req.scanout.r = (GpuRect){ 0, 0, w, h };
-        gpu_req.scanout.scanout_id = 0;
-        gpu_req.scanout.resource_id = GPU_RESOURCE_ID;
-        if (gpu_command(&gpu_req, sizeof(GpuSetScanout), sizeof(GpuHdr)) != GPU_RESP_OK_NODATA) goto fail;
-
-        gpu_pixels = pixels;
-        gpu_w = w; gpu_h = h;
-        gpu_ready = true;
-        info->fb_addr = (uint64_t)(uintptr_t)pixels;
-        info->fb_width = w;
-        info->fb_height = h;
-        info->fb_pitch = w * 4;
-        info->fb_bpp = 32;
-        fb_init(info);
-        fb_set_flush_hook(gpu_update);
-        serial_printf("[VIRTIO-GPU] Display %dx%d @ %p attached (slot %d)\n", (int)w, (int)h, pixels, i);
+        VirtioDev *dev = virtio_dev_mmio_slot(base);
+        if (!dev) return false;
+        dev->device_id = VIRTIO_ID_GPU;
+        if (virtio_dev_begin(dev, 0) != 0) continue;
+        if (virtio_dev_queue_init(dev, &ctrlq, &gpu_mem, 0) != 0) continue;
+        virtio_dev_ready(dev);
+        if (!gpu_bringup(dev, info)) return false;
         return true;
-fail:
-        serial_printf("[VIRTIO-GPU] Display setup failed (resp 0x%x)\n", gpu_resp.hdr.type);
-        return false;
     }
-    return false;
+
+    /* virtio-pci (Apple VZ): BARs are assigned by firmware; the display
+     * comes up before the PCI bus scan so the splash can appear. */
+    PciDev pci;
+    if (pci_find(0x1af4, 0x1050, &pci) == 0) {
+        VirtioDev *dev = NULL;
+        if (virtio_dev_pci_setup(&pci, &dev) == 0) {
+            pci_enable(&pci);
+            if (virtio_dev_begin(dev, 0) == 0 &&
+                virtio_dev_queue_init(dev, &ctrlq, &gpu_mem, 0) == 0) {
+                virtio_dev_ready(dev);
+                gpu_bringup(dev, info);
+            }
+        }
+    }
+    return gpu_ready;
 }
 
-bool virtio_gpu_owns(uint32_t base)
+bool virtio_gpu_owns(const VirtioDev *dev)
 {
-    return gpu_ready && base == gpu_base;
+    return gpu_ready && dev == gpu_handle;
 }
 
 /* Main loop: direct (non-back-buffered) drawing such as the fallback

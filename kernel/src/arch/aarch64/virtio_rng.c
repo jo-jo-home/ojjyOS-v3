@@ -29,11 +29,11 @@ void virtio_rng_request(void)
     virtio_submit(&rngq, head);
 }
 
-int virtio_rng_attach(uint32_t base)
+int virtio_rng_attach(VirtioDev *dev)
 {
     if (attached) return -1;
-    if (virtio_queue_init(&rngq, base, &rng_mem) != 0) return -1;
-    virtio_dev_ready(base);
+    if (virtio_dev_queue_init(dev, &rngq, &rng_mem, 0) != 0) return -1;
+    virtio_dev_ready(dev);
     attached = true;
     refills_left = 16;          /* 1 KiB of host entropy at boot */
     virtio_rng_request();

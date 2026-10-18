@@ -39,7 +39,7 @@ void a64_irq_handler(void);
 /*
  * Exception (sync error) entry: prints diagnostics and halts.
  */
-void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr);
+void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr, uint64_t caller);
 
 /*
  * Harvest pending input events from virtio devices.

@@ -13,20 +13,26 @@ void virtio_host_mmio_write(uint32_t base, uint32_t off, uint32_t value)
     if (off == VIO_QUEUE_SEL) queue_sel = value;
     if (off == VIO_QUEUE_NOTIFY) notified = value;
 }
-int virtio_blk_attach(uint32_t base, bool flush) { (void)base; (void)flush; return -1; }
-int virtio_input_attach(uint32_t base) { (void)base; return -1; }
-int virtio_net_attach(uint32_t base, bool mac) { (void)base; (void)mac; return -1; }
-int virtio_rng_attach(uint32_t base) { (void)base; return -1; }
-bool virtio_gpu_owns(uint32_t base) { (void)base; return false; }
+int virtio_blk_attach(VirtioDev *dev, bool flush) { (void)dev; (void)flush; return -1; }
+int virtio_input_attach(VirtioDev *dev) { (void)dev; return -1; }
+int virtio_net_attach(VirtioDev *dev, bool mac) { (void)dev; (void)mac; return -1; }
+int virtio_rng_attach(VirtioDev *dev) { (void)dev; return -1; }
+int virtio_console_attach(VirtioDev *dev) { (void)dev; return -1; }
+bool virtio_gpu_owns(const VirtioDev *dev) { (void)dev; return false; }
 
 int main(void)
 {
     static VirtQueueMem memory;
     VirtQueue queue;
+    VirtioDev dev;                  /* MMIO transport at the host-faked slot */
+    memset(&dev, 0, sizeof(dev));
+    dev.kind = VIRTIO_TRANSPORT_MMIO;
+    dev.mmio = 0;
     const uint16_t sizes[] = {8, 64, 128};
     for (unsigned test = 0; test < ARRAY_SIZE(sizes); test++) {
         offered = sizes[test];
-        CHECK(virtio_queue_init(&queue, 0, &memory) == 0 && queue.size == offered && selected == offered,
+        CHECK(virtio_dev_queue_init(&dev, &queue, &memory, 0) == 0 &&
+              queue.size == offered && selected == offered,
               "transport records actual negotiated size");
         /* More than 64 completions reproduced the old QEMU input mismatch.
          * Also cross the 16-bit index wrap, which is independent of depth. */
@@ -50,9 +56,9 @@ int main(void)
         CHECK(virtio_desc_add(&queue, 0, 8, 0) == 0xFFFF, "descriptor bounds follow negotiated depth");
     }
     offered = 0;
-    CHECK(virtio_queue_init(&queue, 0, &memory) == -1, "absent queue rejected");
+    CHECK(virtio_dev_queue_init(&dev, &queue, &memory, 0) == -1, "absent queue rejected");
     offered = 64;
-    CHECK(virtio_queue_init_index(&queue, 0, &memory, 1) == 0 && queue_sel == 1 && queue.index == 1,
+    CHECK(virtio_dev_queue_init(&dev, &queue, &memory, 1) == 0 && queue_sel == 1 && queue.index == 1,
           "multi-queue init selects the requested queue (net TX = 1)");
     uint16_t head = virtio_desc_add(&queue, 0x1000, 64, 0);
     virtio_submit(&queue, head);

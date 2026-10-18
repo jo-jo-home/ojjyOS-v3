@@ -26,6 +26,7 @@ extern char _kernel_end[];
 static uint64_t total_memory = 0;
 static uint64_t free_memory = 0;
 static uint64_t bitmap_pages = 0;
+static bool pmm_ready = false;   /* No allocations before pmm_init */
 
 /*
  * Mark a page as used
@@ -195,6 +196,7 @@ void pmm_init(BootInfo *info)
     }
 
     bitmap_pages = sizeof(page_bitmap) * 8;
+    pmm_ready = true;
 
     serial_printf("[PMM] Total usable memory: %d MB\n",
         (int)(total_memory / (1024 * 1024)));
@@ -210,6 +212,11 @@ void pmm_init(BootInfo *info)
  */
 uint64_t pmm_alloc_page(void)
 {
+    /* The boot splash allocates its back buffer before pmm_init; with the
+     * zero-cleared bitmap every page would look free and the allocator
+     * would hand out page 256 (which the owned page tables map Device). */
+    if (!pmm_ready) return 0;
+
     /* Simple linear search for a free page */
     for (uint64_t i = 0; i < sizeof(page_bitmap); i++) {
         if (page_bitmap[i] != 0xFF) {
@@ -244,7 +251,7 @@ uint64_t pmm_alloc_page(void)
  */
 uint64_t pmm_alloc_contiguous(uint64_t pages)
 {
-    if (!pages) return 0;
+    if (!pages || !pmm_ready) return 0;
     uint64_t run = 0;
     for (uint64_t page = 256; page < MAX_PAGES; page++) {
         if (pmm_is_page_used(page)) { run = 0; continue; }

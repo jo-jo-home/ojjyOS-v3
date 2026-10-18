@@ -1,5 +1,13 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## >>> START HERE (2026-10-18, later): native-vm job PAUSED mid-N5/N6 <<<
+
+Jonas paused the session again. Read **`HANDOFF_NATIVE_VM.md` — the
+"⚠️ PROGRESS UPDATE" section at the very top** first: it contains the
+exact state (N2/N3 committed; N5/N6 + three bug fixes in a WIP commit),
+the measured VZ console facts, a fast QEMU test rig for the console
+driver, and the ordered TODO. Branch `native-vm`; do not push.
+
 ## >>> START HERE (2026-10-18): unfinished job — read `HANDOFF_NATIVE_VM.md` <<<
 
 Jonas stopped the previous session mid-task and asked for a handoff. The

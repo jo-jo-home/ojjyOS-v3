@@ -42,7 +42,15 @@ vm.start { r in
     if case .failure(let e) = r { print("start failed: \(e)"); exit(2) }
     print("started")
 }
+let bootTime = Date()
+Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { t in
+    if vm.state == .stopped || vm.state == .error {
+        print(String(format: "stopped-after %.2fs state %d",
+                     Date().timeIntervalSince(bootTime), vm.state.rawValue))
+        exit(0)
+    }
+}
 DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {
-    print("state \(vm.state.rawValue)"); exit(0)
+    print("still-running state \(vm.state.rawValue)"); exit(0)
 }
 RunLoop.main.run()

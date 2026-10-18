@@ -256,63 +256,63 @@ static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
 /*
  * Read the absinfo max value for one axis from the device config.
  */
-static bool input_abs_range(uint32_t mmio, uint8_t axis, int32_t *min, int32_t *max)
+static bool input_abs_range(VirtioDev *dev, uint8_t axis, int32_t *min, int32_t *max)
 {
-    uintptr_t cfg = (uintptr_t)mmio + VIO_CFG;
-    mmio_write8(cfg, VIRTIO_INPUT_CFG_ABS_INFO);
-    mmio_write8(cfg + 1, axis);
+    virtio_dev_cfg_write8(dev, 0, VIRTIO_INPUT_CFG_ABS_INFO);   /* select */
+    virtio_dev_cfg_write8(dev, 1, axis);                         /* subsel */
     virtio_memory_barrier();
 
-    /* absinfo: min(u32), max(u32), fuzz, flat, res at CFG+8 */
-    if (mmio_read8(cfg + 2) < 20) return false;
-    *min = (int32_t)mmio_read32(cfg + 8); *max = (int32_t)mmio_read32(cfg + 12);
+    /* absinfo: min(u32), max(u32), fuzz, flat, res at cfg+8 */
+    if (virtio_dev_cfg8(dev, 2) < 20) return false;
+    *min = (int32_t)virtio_dev_cfg32(dev, 8);
+    *max = (int32_t)virtio_dev_cfg32(dev, 12);
     return *max > *min;
 }
 
-int virtio_input_attach(uint32_t mmio_base)
+int virtio_input_attach(VirtioDev *dev)
 {
     if (input_dev_count >= MAX_INPUT_DEVICES) {
         return -1;
     }
 
     int idx = input_dev_count;
-    InputDevState *dev = &input_devs[idx];
-    memset(dev, 0, sizeof(*dev));
+    InputDevState *dev_state = &input_devs[idx];
+    memset(dev_state, 0, sizeof(*dev_state));
 
     /* Static queue memory per device */
     static VirtQueueMem input_queue_mem[MAX_INPUT_DEVICES];
-    if (virtio_queue_init(&dev->vq, mmio_base, &input_queue_mem[idx]) != 0) {
+    if (virtio_dev_queue_init(dev, &dev_state->vq, &input_queue_mem[idx], 0) != 0) {
         return -1;
     }
 
     /* A device reporting ABS ranges is a pointer (tablet) */
-    if (input_abs_range(mmio_base, ABS_X, &dev->abs_min_x, &dev->abs_max_x) &&
-        input_abs_range(mmio_base, ABS_Y, &dev->abs_min_y, &dev->abs_max_y)) {
-        dev->has_pointer = true;
+    if (input_abs_range(dev, ABS_X, &dev_state->abs_min_x, &dev_state->abs_max_x) &&
+        input_abs_range(dev, ABS_Y, &dev_state->abs_min_y, &dev_state->abs_max_y)) {
+        dev_state->has_pointer = true;
     }
 
-    virtio_dev_ready(mmio_base);
+    virtio_dev_ready(dev);
 
     /* Prime the queue with 64 individual 8-byte event descriptors
      * (QEMU virtio-input requires one descriptor per VirtioInputEvent,
      * and drops batches if fewer descriptors than batch_size are available). */
-    uint16_t count = MIN(INPUT_EVENTS_PER_BUF, dev->vq.size);
+    uint16_t count = MIN(INPUT_EVENTS_PER_BUF, dev_state->vq.size);
     for (uint16_t b = 0; b < count; b++) {
-        dev->vq.mem->desc[b].addr  = (uint64_t)(uintptr_t)&dev->events[b];
-        dev->vq.mem->desc[b].len   = sizeof(VirtioInputEvent);
-        dev->vq.mem->desc[b].flags = VRING_DESC_F_WRITE;
-        dev->vq.mem->desc[b].next  = 0;
-        dev->vq.mem->avail.ring[b] = b;
+        dev_state->vq.mem->desc[b].addr  = (uint64_t)(uintptr_t)&dev_state->events[b];
+        dev_state->vq.mem->desc[b].len   = sizeof(VirtioInputEvent);
+        dev_state->vq.mem->desc[b].flags = VRING_DESC_F_WRITE;
+        dev_state->vq.mem->desc[b].next  = 0;
+        dev_state->vq.mem->avail.ring[b] = b;
     }
     virtio_memory_barrier();
-    dev->vq.avail_idx = count;
-    dev->vq.mem->avail.idx = count;
+    dev_state->vq.avail_idx = count;
+    dev_state->vq.mem->avail.idx = count;
     virtio_memory_barrier();
-    mmio_write32((uintptr_t)mmio_base + VIO_QUEUE_NOTIFY, 0);
+    virtio_notify(&dev_state->vq);
 
     serial_printf("[VIRTIO-INPUT] Device %d attached (%s, abs %dx%d)\n",
-        idx, dev->has_pointer ? "pointer" : "keyboard",
-        (int)dev->abs_max_x, (int)dev->abs_max_y);
+        idx, dev_state->has_pointer ? "pointer" : "keyboard",
+        (int)dev_state->abs_max_x, (int)dev_state->abs_max_y);
     input_dev_count++;
     return 0;
 }
@@ -371,7 +371,7 @@ void virtio_input_poll(void)
 
         if (recycled) {
             virtio_memory_barrier();
-            mmio_write32((uintptr_t)vq->mmio + VIO_QUEUE_NOTIFY, 0);
+            virtio_notify(vq);
         }
     }
 }

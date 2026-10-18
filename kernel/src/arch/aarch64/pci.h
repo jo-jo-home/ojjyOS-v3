@@ -16,7 +16,7 @@
 #include "types.h"
 #include "platform.h"
 
-typedef struct {
+typedef struct PciDev {
     uint8_t bus, dev, fn;
     uint16_t vendor, device;
     uint8_t class_code, subclass, prog_if;
@@ -31,6 +31,9 @@ void pci_init(void);
 /* Scan bus 0 for vendor:device. Works before pci_init(). Returns 0 and fills
  * *out (BARs decoded) when found, -1 otherwise. */
 int pci_find(uint16_t vendor, uint16_t device, PciDev *out);
+
+/* Enable Memory Space + Bus Master (the devices DMA our RAM). */
+void pci_enable(const PciDev *d);
 
 /* Raw config access (offset must be naturally aligned). */
 uint32_t pci_config_read32(uint8_t bus, uint8_t dev, uint8_t fn, uint16_t off);

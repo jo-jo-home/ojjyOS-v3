@@ -31,9 +31,10 @@ extern void a64_user_enter(uint64_t entry, uint64_t stack, uint64_t kernel_stack
 static uint64_t descriptor(const void *table) { return (uint64_t)(uintptr_t)table | TABLE; }
 
 /* Is any byte of this 2 MiB block DRAM according to the UEFI memory map?
- * Types 1-7, 9 and 10 are real memory; 8 is explicitly unusable, 11+ is
- * device/MMIO. Both machines report big, aligned RAM ranges, so the
- * any-byte rule matches the actual topology. */
+ * Types 0-7, 9 and 10 are real memory (QEMU marks its ramfb reservation
+ * type 0 = reserved, and the firmware writes it cacheable, so reserved
+ * must map Normal too); 11+ is device/MMIO. Both machines report big,
+ * aligned RAM ranges, so the any-byte rule matches the actual topology. */
 static bool block_is_ram(uint64_t block_base)
 {
     const BootInfo *info = g_boot_info;
@@ -43,7 +44,7 @@ static bool block_is_ram(uint64_t block_base)
     for (uint64_t i = 0; i < entries; i++) {
         const EfiMemoryDescriptor *d =
             (const EfiMemoryDescriptor *)(uintptr_t)(info->mmap_addr + i * info->mmap_desc_size);
-        if (d->type < 1 || d->type == 8 || d->type > 10) continue;
+        if (d->type > 10 || d->type == 8) continue;   /* 8 = unusable */
         uint64_t start = d->phys_addr;
         uint64_t end = start + d->num_pages * 4096;
         if (start < block_end && block_base < end) return true;

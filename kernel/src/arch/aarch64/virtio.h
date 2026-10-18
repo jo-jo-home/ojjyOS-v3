@@ -22,6 +22,23 @@ static inline void virtio_memory_barrier(void)
 #endif
 }
 
+/* Wall-clock milliseconds from the ARM generic counter. Device waits use
+ * this, not loop counts: under hardware virtualization (HVF) the CPU spins
+ * far faster than QEMU's I/O thread completes requests, so a fixed spin
+ * budget timed out real disk writes. Works with interrupts masked. */
+static inline uint64_t virtio_now_ms(void)
+{
+#ifdef OJJY_HOST_TEST
+    static uint64_t fake;
+    return fake++;
+#else
+    uint64_t cnt, frq;
+    __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
+    return frq ? cnt / (frq / 1000) : 0;
+#endif
+}
+
 /* virtio-mmio slot region on the QEMU virt machine */
 #define VIRTIO_MMIO_BASE        0x0A000000UL
 #define VIRTIO_MMIO_STRIDE      0x200

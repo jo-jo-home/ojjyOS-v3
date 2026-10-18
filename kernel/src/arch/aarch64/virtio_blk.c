@@ -109,9 +109,9 @@ static int blk_request(uint64_t lba, void *buf, uint32_t type)
 
     /* Wait for completion (bounded) */
     uint32_t len = 0;
-    int spins = 0;
+    uint64_t deadline = virtio_now_ms() + 5000;
     while (!virtio_poll_used(vq, &len)) {
-        if (++spins > 5000000) {
+        if (virtio_now_ms() > deadline) {
             serial_printf("[VIRTIO-BLK] Timeout at sector %d\n", (int)lba);
             /* Do not reuse DMA buffers after an uncompleted request. */
             blk_present = false;

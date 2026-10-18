@@ -37,10 +37,11 @@
 #define GPU_RESOURCE_ID            1
 #define GPU_MAX_SCANOUTS           16
 
-/* Largest screen we drive; bigger host sizes (Retina pixel counts) are
- * halved so software rendering under emulation stays responsive. */
-#define GPU_MAX_W  1920
-#define GPU_MAX_H  1200
+/* Largest screen we drive (2x HiDPI of a 1920x1200 layout); bigger host
+ * sizes are halved. The runner asks for 2880x1800 under HVF (crisp 2x UI)
+ * and 1440x900 under emulation. */
+#define GPU_MAX_W  3840
+#define GPU_MAX_H  2400
 
 typedef struct { uint32_t type, flags; uint64_t fence_id; uint32_t ctx_id, padding; } PACKED GpuHdr;
 typedef struct { uint32_t x, y, width, height; } PACKED GpuRect;
@@ -69,9 +70,10 @@ static uint64_t last_auto_flush;
 /* Wait for `count` used entries; bounded so a wedged device can't hang us. */
 static bool gpu_wait(int count)
 {
-    for (uint32_t spins = 0; count > 0; spins++) {
+    uint64_t deadline = virtio_now_ms() + 2000;
+    while (count > 0) {
         if (virtio_poll_used(&ctrlq, NULL)) { count--; continue; }
-        if (spins > 50000000u) {
+        if (virtio_now_ms() > deadline) {
             if (!gpu_broken) serial_printf("[VIRTIO-GPU] Device stopped answering\n");
             gpu_broken = true;
             return false;

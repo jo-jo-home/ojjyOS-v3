@@ -23,6 +23,7 @@
 #include "browser.h"
 #include "draw.h"
 #include "wallpaper.h"
+#include "../uifont.h"
 #include "../net/net.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
@@ -63,8 +64,9 @@ static uint8_t wallpaper_data[WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4];
 /* Screen-sized wallpaper caches, rebuilt only when the wallpaper or theme
  * changes. Per-frame sampling becomes a single array read instead of a
  * divide per pixel (wallpaper) or ~100 reads per pixel (glass blur). */
-#define WP_CACHE_MAX_PIXELS     (1920 * 1200)
-#define WP_CACHE_MAX_DIM        2048
+/* Caches hold PHYSICAL pixels (2x on HiDPI screens). */
+#define WP_CACHE_MAX_PIXELS     (3840 * 2400)
+#define WP_CACHE_MAX_DIM        4096
 #define WP_BLUR_RADIUS          10
 /* Allocated at the real screen size from the page allocator (not BSS: the
  * kernel image must fit the RAM the firmware leaves free at its load address). */
@@ -471,24 +473,12 @@ static inline int clamp_coord(int v, int max)
 static Color wallpaper_sample(int x, int y)
 {
     if (wp_cache_valid) {
-        x = clamp_coord(x, (int)comp_width);
-        y = clamp_coord(y, (int)comp_height);
-        return wp_cache[y * comp_width + x];
+        int k = fb_ui_scale();
+        x = clamp_coord(x * k, (int)fb_physical_width());
+        y = clamp_coord(y * k, (int)fb_physical_height());
+        return wp_cache[y * (int)fb_physical_width() + x];
     }
     return wallpaper_sample_uncached(x, y);
-}
-
-/* Blurred wallpaper behind glass. `radius` is kept for API compatibility;
- * the cache uses one fixed radius (WP_BLUR_RADIUS). */
-static Color blur_sample(int x, int y, int radius)
-{
-    (void)radius;
-    if (wp_cache_valid) {
-        x = clamp_coord(x, (int)comp_width);
-        y = clamp_coord(y, (int)comp_height);
-        return wp_blur[y * comp_width + x];
-    }
-    return wallpaper_sample(x, y);
 }
 
 /*
@@ -530,7 +520,8 @@ static void box_blur_line(Color *buf, int count, int stride, int radius)
 static void wallpaper_rebuild_cache(void)
 {
     wp_cache_valid = false;
-    uint32_t w = comp_width, h = comp_height;
+    uint32_t w = fb_physical_width(), h = fb_physical_height();
+    int blur_radius = WP_BLUR_RADIUS * fb_ui_scale();
     if (w == 0 || h == 0 || (uint64_t)w * h > WP_CACHE_MAX_PIXELS ||
         w > WP_CACHE_MAX_DIM || h > WP_CACHE_MAX_DIM) {
         return;   /* Fall back to the slow uncached path */
@@ -550,10 +541,10 @@ static void wallpaper_rebuild_cache(void)
     /* Separable box blur, two passes each way (approximates a Gaussian) */
     for (int pass = 0; pass < 2; pass++) {
         for (uint32_t y = 0; y < h; y++) {
-            box_blur_line(&wp_blur[y * w], (int)w, 1, WP_BLUR_RADIUS);
+            box_blur_line(&wp_blur[y * w], (int)w, 1, blur_radius);
         }
         for (uint32_t x = 0; x < w; x++) {
-            box_blur_line(&wp_blur[x], (int)h, (int)w, WP_BLUR_RADIUS);
+            box_blur_line(&wp_blur[x], (int)h, (int)w, blur_radius);
         }
     }
     for (uint32_t i = 0; i < w * h; i++)
@@ -1794,9 +1785,9 @@ static void draw_window(int idx)
         draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, solid, 255);
     } else {
         if (wp_cache_valid && win->glass_level == 1) {
-            gfx_round_rect_image(surface(), draw_x, draw_y, draw_w, draw_h, r, wp_glass);
+            gfx_round_rect_image(surface(), draw_x, draw_y, draw_w, draw_h, r, wp_glass, 255);
         } else if (wp_cache_valid) {
-            gfx_round_rect_image(surface(), draw_x, draw_y, draw_w, draw_h, r, wp_blur);
+            gfx_round_rect_image(surface(), draw_x, draw_y, draw_w, draw_h, r, wp_blur, 255);
             draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, theme->glass_aqua, opacity);
         } else {
             draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, theme->glass_aqua, 230);
@@ -2639,15 +2630,10 @@ static void draw_launchpad(int anim)
         draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0,
                                 theme->dock_tint, overlay_alpha(230, anim));
     } else {
-        int blur_radius = theme->glass.blur_px[2];
-        for (uint32_t y = 0; y < comp_height; y++) {
-            for (uint32_t x = 0; x < comp_width; x++) {
-                Color blurred = blur_sample((int)x, (int)y, blur_radius);
-                Color blended = blend(blurred, theme->dock_tint, 80);
-                Color base = fb_get_pixel((int)x, (int)y);
-                fb_put_pixel((int)x, (int)y, blend(base, blended, overlay_alpha(220, anim)));
-            }
-        }
+        /* Frosted full-screen glass: blurred wallpaper, then a tint. */
+        if (wp_cache_valid)
+            gfx_round_rect_image(surface(), 0, 0, (int)comp_width, (int)comp_height, 0, wp_blur, overlay_alpha(220, anim));
+        draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0, theme->dock_tint, overlay_alpha(70, anim));
     }
 
     int count = app_registry_count();
@@ -5240,6 +5226,7 @@ void compositor_init(uint32_t width, uint32_t height)
 {
     comp_width = width;
     comp_height = height;
+    text_set_density(fb_ui_scale());
 
     /* Render into the off-screen back buffer; compositor_tick presents
      * finished frames with fb_present(). Without this the whole desktop

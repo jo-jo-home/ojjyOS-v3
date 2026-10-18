@@ -152,3 +152,22 @@ Results are appended to the log below.
   * Receipts: `build/perf/p2-wall` (HVF 7 ms frames), `build/p2-live/`
     smoke (HVF) + pointer test (all corners exact, ~2.5 ms QMP-to-scanout, no
     full repaint on motion). Pointer test now reads the cursor image source.
+- Phase 2.5 / 3a done — HiDPI + font infrastructure:
+  * Framebuffer stores PHYSICAL pixels, API stays LOGICAL; scale 2 on
+    >= 2560x1440 (`fb_ui_scale()`). gfx.c scales all inputs; 2x pointer
+    (`cursor_rgba2x`), 16x32 JetBrains Mono (`tools/mkfont2x.py` ->
+    `font2x.c`), wallpaper/blur/glass caches at physical size, launchpad
+    frosted glass via gfx. Backbuffer now PMM-allocated (BSS 26 -> 17 MB).
+  * Inter (SIL OFL, `fonts/Inter-*.ttf`, licence `fonts/Inter-OFL-LICENSE.txt`)
+    -> `tools/mkuifont.py` -> `kernel/src/uifont_data.c` (9 styles x 1x/2x,
+    660 KB). API `kernel/src/uifont.{h,c}`: text_draw/_fit/_width, UTF-8,
+    1/64 px advances, ellipsis. Preview: `tools/preview/text_preview.c`.
+  * run-qemu.sh: HVF -> 2880x1800 (2x), TCG -> 1440x900.
+    `build/perf/p3-hidpi`: 2x frames avg 23 ms (drag ~43 fps), opens 240 ms.
+  * Bug found by HVF: virtio-blk waited a fixed spin count, which HVF's fast
+    CPU exhausted before QEMU finished a write ("Timeout at sector 69226",
+    save failed). Disk + GPU waits now use counter-based ms deadlines
+    (`virtio_now_ms`). 3 parallel HVF smoke --protected runs PASS; TCG smoke,
+    pointer, 2x apps check, x86 smoke PASS (`build/p3-live/`).
+  * Next: move UI text to Inter component by component (Phase 3b), together
+    with the Phase 4 redesign of each component.

@@ -44,9 +44,13 @@ typedef uint32_t Color;
 /* Initialize framebuffer from boot info */
 void fb_init(BootInfo *info);
 
-/* Get framebuffer dimensions */
+/* Get framebuffer dimensions (LOGICAL pixels; see fb_ui_scale) */
 uint32_t fb_get_width(void);
 uint32_t fb_get_height(void);
+/* HiDPI: physical pixels per logical pixel (1, or 2 on >= 2560x1440). */
+int fb_ui_scale(void);
+uint32_t fb_physical_width(void);
+uint32_t fb_physical_height(void);
 
 /* Basic drawing */
 void fb_clear(Color color);

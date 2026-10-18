@@ -138,21 +138,26 @@ static void fill_shape(GfxSurface *s, int x, int y, int w, int h, int r, Paint *
     }
 }
 
+#define SCALE_IN(s) int k_ = (s)->scale > 1 ? (s)->scale : 1
+
 void gfx_round_rect(GfxSurface *s, int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha)
 {
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
     Paint p = { MODE_SOLID, color & 0xFFFFFF, alpha, 0, 0, 0 };
     fill_shape(s, x, y, w, h, r, &p);
 }
 
-void gfx_round_rect_image(GfxSurface *s, int x, int y, int w, int h, int r, const uint32_t *src)
+void gfx_round_rect_image(GfxSurface *s, int x, int y, int w, int h, int r, const uint32_t *src, uint8_t alpha)
 {
-    Paint p = { MODE_IMAGE, 0, 255, src, 0, 0 };
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
+    Paint p = { MODE_IMAGE, 0, alpha, src, 0, 0 };
     fill_shape(s, x, y, w, h, r, &p);
 }
 
 void gfx_round_rect_vgradient(GfxSurface *s, int x, int y, int w, int h, int r,
                               uint32_t top, uint32_t bottom, uint8_t alpha)
 {
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
     Paint p = { MODE_GRADIENT, 0, alpha, 0, top, bottom };
     fill_shape(s, x, y, w, h, r, &p);
 }
@@ -174,6 +179,7 @@ static int rr_sdf16(int px, int py, int x, int y, int w, int h, int r)
 void gfx_shadow(GfxSurface *s, int x, int y, int w, int h, int r, int spread, int dy,
                 uint32_t color, uint8_t alpha)
 {
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_; spread *= k_; dy *= k_;
     if (spread <= 0 || w <= 0 || h <= 0) return;
     int sy = y + dy;
     int y1 = sy - spread, y2 = sy + h + spread;
@@ -205,6 +211,7 @@ void gfx_shadow(GfxSurface *s, int x, int y, int w, int h, int r, int spread, in
 
 void gfx_round_rect_stroke(GfxSurface *s, int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha)
 {
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
     if (w <= 2 || h <= 2) return;
     /* Straight runs */
     Paint p = { MODE_SOLID, color & 0xFFFFFF, alpha, 0, 0, 0 };
@@ -233,6 +240,7 @@ void gfx_round_rect_stroke(GfxSurface *s, int x, int y, int w, int h, int r, uin
 void gfx_draw_rgba_scaled(GfxSurface *s, const uint8_t *rgba, int src_w, int src_h,
                           int x, int y, int w, int h, uint8_t alpha)
 {
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_;
     if (w <= 0 || h <= 0 || src_w <= 0 || src_h <= 0 || !alpha) return;
     int y1 = y < s->clip_y1 ? s->clip_y1 : y, y2 = y + h > s->clip_y2 ? s->clip_y2 : y + h;
     int x1 = x < s->clip_x1 ? s->clip_x1 : x, x2 = x + w > s->clip_x2 ? s->clip_x2 : x + w;

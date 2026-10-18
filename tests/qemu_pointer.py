@@ -21,7 +21,7 @@ def cursor_image():
     header = (ROOT / 'kernel/src/cursor_image.h').read_text()
     get = lambda name: int(re.search(rf'#define {name} (\d+)', header)[1])
     w, h, hx, hy = get('CURSOR_W'), get('CURSOR_H'), get('CURSOR_HOT_X'), get('CURSOR_HOT_Y')
-    body = (ROOT / 'kernel/src/cursor_image.c').read_text().split('{', 1)[1]
+    body = (ROOT / 'kernel/src/cursor_image.c').read_text().split('{', 1)[1].split('};', 1)[0]
     data = [int(v) for v in re.findall(r'\b\d+\b', body)]
     return w, h, hx, hy, data
 

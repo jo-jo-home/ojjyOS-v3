@@ -23,5 +23,7 @@
  * with fb_blend(bg, fg, coverage).
  */
 const uint8_t *font_get_glyph_aa(char c);
+/* Same glyphs at 16x32 (2x displays), see tools/mkfont2x.py. */
+const uint8_t *font_get_glyph_aa2x(char c);
 
 #endif /* _OJJY_FONT_H */

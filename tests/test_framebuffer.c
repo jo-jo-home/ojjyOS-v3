@@ -15,6 +15,9 @@ static void find_probe(void)
 }
 #define AT(x, y) screen[((y) + probe_dy) * 55 + (x) + probe_dx]
 const uint8_t *font_get_glyph_aa(char c) { (void)c; static uint8_t glyph[128]; return glyph; }
+const uint8_t *font_get_glyph_aa2x(char c) { (void)c; static uint8_t glyph[512]; return glyph; }
+static uint32_t back_store[64 * 60];
+void *pmm_alloc_bytes(size_t bytes) { return bytes <= sizeof(back_store) ? back_store : NULL; }
 static Color screen[64 * 60];
 int main(void)
 {

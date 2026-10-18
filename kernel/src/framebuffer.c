@@ -1,37 +1,54 @@
 /*
  * ojjyOS v3 Kernel - Framebuffer Driver Implementation
  *
- * Provides basic 2D drawing operations on the UEFI GOP framebuffer.
+ * Provides basic 2D drawing operations on the UEFI GOP / virtio-gpu
+ * framebuffer.
+ *
+ * HiDPI: the screen stores PHYSICAL pixels, but every public function takes
+ * LOGICAL coordinates. On large displays (>= 2560x1440) the scale is 2:
+ * one logical pixel is a 2x2 block, so the UI keeps its layout while shapes
+ * (gfx.c), text (uifont.c, font2x) and the pointer render at full density.
+ *
+ * ojjyOS - Created by Jonas Lee
  */
 
 #include "framebuffer.h"
 #include "font.h"
 #include "string.h"
+#include "memory.h"
 #include "cursor_image.h"
 
-/* Framebuffer state: fb_base/fb_pitch describe the CURRENT draw target,
- * which is either the real screen or the off-screen back buffer. */
+/* Framebuffer state (PHYSICAL pixels): fb_base/fb_pitch describe the
+ * CURRENT draw target, either the real screen or the off-screen back buffer. */
 static uint32_t *fb_base = NULL;
 static uint32_t fb_width = 0;
 static uint32_t fb_height = 0;
 static uint32_t fb_pitch = 0;   /* In pixels, not bytes */
+static int fb_scale = 1;        /* physical pixels per logical pixel */
 
 /* Real (visible) screen */
 static uint32_t *fb_screen = NULL;
 static uint32_t fb_screen_pitch = 0;
 
-/* Off-screen back buffer (static: the kernel heap is far too small) */
-#define FB_BACK_MAX_PIXELS  (1920 * 1200)
-static uint32_t fb_back[FB_BACK_MAX_PIXELS];
+/* Off-screen back buffer, allocated at the real screen size on first use
+ * (never in BSS: the kernel image must fit below firmware memory). */
+static uint32_t *fb_back;
+static size_t fb_back_pixels;
 static bool fb_back_active = false;
 static bool fb_back_valid, cursor_visible;
-/* Clip rectangle for drawing primitives (defaults to the whole screen). */
+/* Clip rectangle (physical) for drawing primitives. */
 static int clip_x1, clip_y1, clip_x2 = 1 << 30, clip_y2 = 1 << 30;
+
+#define S fb_scale
+
+int fb_ui_scale(void) { return fb_scale; }
+uint32_t fb_physical_width(void) { return fb_width; }
+uint32_t fb_physical_height(void) { return fb_height; }
 
 void fb_set_clip(int x, int y, int w, int h)
 {
-    clip_x1 = MAX(0, x); clip_y1 = MAX(0, y);
-    clip_x2 = MIN((int)fb_width, x + w); clip_y2 = MIN((int)fb_height, y + h);
+    clip_x1 = MAX(0, x * S); clip_y1 = MAX(0, y * S);
+    clip_x2 = MIN((int)fb_width, (x + w) * S); clip_y2 = MIN((int)fb_height, (y + h) * S);
 }
 
 void fb_reset_clip(void)
@@ -52,22 +69,27 @@ void fb_get_surface(GfxSurface *s)
     s->width = (int)fb_width; s->height = (int)fb_height; s->pitch = (int)fb_pitch;
     s->clip_x1 = MAX(0, clip_x1); s->clip_y1 = MAX(0, clip_y1);
     s->clip_x2 = MIN((int)fb_width, clip_x2); s->clip_y2 = MIN((int)fb_height, clip_y2);
+    s->scale = fb_scale;
 }
 
+/* Pointer overlay, physical coordinates of the hotspot. */
 static int cursor_x, cursor_y;
 static uint64_t full_presents, cursor_updates;
 
 /* Anti-aliased pointer image (tools/mkcursor.py), blended over the frame. */
-#define CUR_X0 (cursor_x - CURSOR_HOT_X)
-#define CUR_Y0 (cursor_y - CURSOR_HOT_Y)
+#define CUR_W   (CURSOR_W * S)
+#define CUR_H   (CURSOR_H * S)
+#define CUR_X0  (cursor_x - CURSOR_HOT_X * S)
+#define CUR_Y0  (cursor_y - CURSOR_HOT_Y * S)
 
 static void cursor_draw(void)
 {
-    for (int row = 0; row < CURSOR_H; row++) {
+    const uint8_t *image = S == 2 ? cursor_rgba2x : cursor_rgba;
+    for (int row = 0; row < CUR_H; row++) {
         int y = CUR_Y0 + row;
         if (y < 0 || y >= (int)fb_height) continue;
-        const uint8_t *src = cursor_rgba + row * CURSOR_W * 4;
-        for (int col = 0; col < CURSOR_W; col++, src += 4) {
+        const uint8_t *src = image + row * CUR_W * 4;
+        for (int col = 0; col < CUR_W; col++, src += 4) {
             int x = CUR_X0 + col;
             if (!src[3] || x < 0 || x >= (int)fb_width) continue;
             Color c = RGB(src[0], src[1], src[2]);
@@ -78,15 +100,15 @@ static void cursor_draw(void)
 
 static void cursor_restore(void)
 {
-    for (int y = MAX(0, CUR_Y0); y < MIN((int)fb_height, CUR_Y0 + CURSOR_H); y++)
-        for (int x = MAX(0, CUR_X0); x < MIN((int)fb_width, CUR_X0 + CURSOR_W); x++)
+    for (int y = MAX(0, CUR_Y0); y < MIN((int)fb_height, CUR_Y0 + CUR_H); y++)
+        for (int x = MAX(0, CUR_X0); x < MIN((int)fb_width, CUR_X0 + CUR_W); x++)
             fb_screen[y * fb_screen_pitch + x] = fb_back[y * fb_width + x];
 }
 
 void fb_cursor_move(int x, int y)
 {
     if (!fb_back_active || !fb_screen || !fb_width || !fb_height) return;
-    x = MAX(0, MIN(x, (int)fb_width - 1)); y = MAX(0, MIN(y, (int)fb_height - 1));
+    x = MAX(0, MIN(x * S, (int)fb_width - 1)); y = MAX(0, MIN(y * S, (int)fb_height - 1));
     if (cursor_visible && x == cursor_x && y == cursor_y) return;
     int old_x = cursor_x, old_y = cursor_y;
     bool was_visible = cursor_visible && fb_back_valid;
@@ -97,7 +119,7 @@ void fb_cursor_move(int x, int y)
         if (flush_hook) {
             int x1 = was_visible ? MIN(old_x, x) : x, y1 = was_visible ? MIN(old_y, y) : y;
             int x2 = was_visible ? MAX(old_x, x) : x, y2 = was_visible ? MAX(old_y, y) : y;
-            flush_hook(x1 - CURSOR_HOT_X, y1 - CURSOR_HOT_Y, x2 - x1 + CURSOR_W, y2 - y1 + CURSOR_H);
+            flush_hook(x1 - CURSOR_HOT_X * S, y1 - CURSOR_HOT_Y * S, x2 - x1 + CUR_W, y2 - y1 + CUR_H);
         }
     }
 }
@@ -117,6 +139,7 @@ void fb_init(BootInfo *info)
     fb_width = info->fb_width;
     fb_height = info->fb_height;
     fb_screen_pitch = info->fb_pitch / 4;  /* Convert bytes to pixels */
+    fb_scale = (fb_width >= 2560 && fb_height >= 1440) ? 2 : 1;
     fb_base = fb_screen;
     fb_pitch = fb_screen_pitch;
     fb_back_active = false;
@@ -127,13 +150,17 @@ void fb_init(BootInfo *info)
 
 /*
  * Route drawing to the off-screen back buffer (true) or straight to the
- * screen (false). Returns false if the screen is too big for the buffer.
+ * screen (false). Returns false if the back buffer cannot be allocated.
  */
 bool fb_use_backbuffer(bool enable)
 {
     if (enable) {
-        if ((uint64_t)fb_width * fb_height > FB_BACK_MAX_PIXELS) {
-            return false;
+        size_t need = (size_t)fb_width * fb_height;
+        if (!fb_back || fb_back_pixels < need) {
+            uint32_t *buf = need ? (uint32_t *)pmm_alloc_bytes(need * sizeof(uint32_t)) : NULL;
+            if (!buf) return false;
+            fb_back = buf;
+            fb_back_pixels = need;
         }
         if (!fb_back_active) { fb_back_valid = false; cursor_visible = false; }
         fb_base = fb_back;
@@ -178,8 +205,8 @@ void fb_present(void)
 }
 
 /*
- * Copy a full-screen image (width*height pixels, tightly packed) into
- * the current draw target.
+ * Copy a full-screen image (PHYSICAL width*height pixels, tightly packed)
+ * into the current draw target.
  */
 void fb_blit_full(const uint32_t *src)
 {
@@ -193,16 +220,16 @@ void fb_blit_full(const uint32_t *src)
 }
 
 /*
- * Get framebuffer dimensions
+ * Logical framebuffer dimensions
  */
 uint32_t fb_get_width(void)
 {
-    return fb_width;
+    return fb_width / (uint32_t)S;
 }
 
 uint32_t fb_get_height(void)
 {
-    return fb_height;
+    return fb_height / (uint32_t)S;
 }
 
 /*
@@ -218,23 +245,39 @@ void fb_clear(Color color)
     }
 }
 
-/*
- * Put a single pixel
- */
-void fb_put_pixel(int x, int y, Color color)
+/* Physical-coordinate rectangle fill, clipped. */
+static void fill_phys(int x1, int y1, int x2, int y2, Color color)
 {
-    if (x < clip_x1 || x >= clip_x2 || y < clip_y1 || y >= clip_y2 ||
-        x >= (int)fb_width || y >= (int)fb_height) {
-        return;
+    x1 = MAX(x1, clip_x1); y1 = MAX(y1, clip_y1);
+    x2 = MIN(x2, MIN((int)fb_width, clip_x2)); y2 = MIN(y2, MIN((int)fb_height, clip_y2));
+    for (int py = y1; py < y2; py++) {
+        uint32_t *row = fb_base + py * fb_pitch;
+        for (int px = x1; px < x2; px++) row[px] = color;
     }
-    fb_base[y * fb_pitch + x] = color;
 }
 
 /*
- * Get a single pixel
+ * Put a single (logical) pixel
+ */
+void fb_put_pixel(int x, int y, Color color)
+{
+    if (S == 1) {
+        if (x < clip_x1 || x >= clip_x2 || y < clip_y1 || y >= clip_y2 ||
+            x < 0 || y < 0 || x >= (int)fb_width || y >= (int)fb_height) {
+            return;
+        }
+        fb_base[y * fb_pitch + x] = color;
+        return;
+    }
+    fill_phys(x * S, y * S, x * S + S, y * S + S, color);
+}
+
+/*
+ * Get a single (logical) pixel
  */
 Color fb_get_pixel(int x, int y)
 {
+    x *= S; y *= S;
     if (x < 0 || x >= (int)fb_width || y < 0 || y >= (int)fb_height) {
         return 0;
     }
@@ -246,18 +289,7 @@ Color fb_get_pixel(int x, int y)
  */
 void fb_fill_rect(int x, int y, int w, int h, Color color)
 {
-    /* Clip to screen bounds */
-    int x1 = MAX(clip_x1, x);
-    int y1 = MAX(clip_y1, y);
-    int x2 = MIN(MIN((int)fb_width, clip_x2), x + w);
-    int y2 = MIN(MIN((int)fb_height, clip_y2), y + h);
-
-    for (int py = y1; py < y2; py++) {
-        uint32_t *row = fb_base + py * fb_pitch;
-        for (int px = x1; px < x2; px++) {
-            row[px] = color;
-        }
-    }
+    fill_phys(x * S, y * S, (x + w) * S, (y + h) * S, color);
 }
 
 /*
@@ -276,39 +308,43 @@ void fb_draw_rect(int x, int y, int w, int h, Color color)
 }
 
 /*
+ * Draw one monospace glyph cell (8x16 logical) at physical (px0, py0):
+ * the 2x font on HiDPI screens. In backbuffer mode coverage blends into
+ * the scene; on the direct console path it is drawn over `bg`.
+ */
+static void draw_glyph_phys(int px0, int py0, char c, Color fg, Color bg, bool blend_into)
+{
+    const uint8_t *glyph = S == 2 ? font_get_glyph_aa2x(c) : font_get_glyph_aa(c);
+    int gw = FONT_WIDTH * S, gh = FONT_HEIGHT * S;
+    for (int row = 0; row < gh; row++) {
+        int py = py0 + row;
+        if (py < clip_y1 || py >= clip_y2 || py < 0 || py >= (int)fb_height) continue;
+        uint32_t *dst_row = fb_base + py * fb_pitch;
+        for (int col = 0; col < gw; col++) {
+            int px = px0 + col;
+            if (px < clip_x1 || px >= clip_x2 || px < 0 || px >= (int)fb_width) continue;
+            uint8_t cov = glyph[row * gw + col];
+            if (blend_into) {
+                if (!cov) continue;
+                dst_row[px] = cov >= 255 ? fg : fb_blend(dst_row[px], fg, cov);
+            } else {
+                dst_row[px] = cov == 0 ? bg : cov >= 255 ? fg : fb_blend(bg, fg, cov);
+            }
+        }
+    }
+}
+
+/*
  * Draw a character using the anti-aliased font:
  * each pixel of the 8x16 cell is blended toward the foreground by
  * its coverage value, which gives smooth, modern-looking text.
  */
 void fb_draw_char(int x, int y, char c, Color fg, Color bg)
 {
-    const uint8_t *glyph = font_get_glyph_aa(c);
-
-    for (int row = 0; row < FONT_HEIGHT; row++) {
-        for (int col = 0; col < FONT_WIDTH; col++) {
-            uint8_t cov = glyph[row * FONT_WIDTH + col];
-            Color color;
-            if (fb_back_active) {
-                /* Scene frames are fully repainted before text: blend into
-                 * the real surface (glass, gradients) instead of boxing
-                 * every glyph in a guessed background colour. */
-                int px = x + col, py = y + row;
-                if (cov == 0 || px < clip_x1 || py < clip_y1 || px >= clip_x2 || py >= clip_y2 ||
-                    px >= (int)fb_width || py >= (int)fb_height) continue;
-                Color *dst = &fb_back[py * fb_width + px];
-                *dst = cov >= 255 ? fg : fb_blend(*dst, fg, cov);
-                continue;
-            }
-            if (cov == 0) {
-                color = bg;
-            } else if (cov >= 255) {
-                color = fg;
-            } else {
-                color = fb_blend(bg, fg, cov);
-            }
-            fb_put_pixel(x + col, y + row, color);
-        }
-    }
+    /* Scene frames are fully repainted before text: blend into the real
+     * surface (glass, gradients) instead of boxing every glyph in a guessed
+     * background colour. */
+    draw_glyph_phys(x * S, y * S, c, fg, bg, fb_back_active);
 }
 
 /*
@@ -317,6 +353,7 @@ void fb_draw_char(int x, int y, char c, Color fg, Color bg)
 void fb_draw_string(int x, int y, const char *s, Color fg, Color bg)
 {
     int cur_x = x;
+    int width = (int)fb_get_width();
 
     while (*s) {
         if (*s == '\n') {
@@ -347,7 +384,7 @@ void fb_draw_string(int x, int y, const char *s, Color fg, Color bg)
         s++;
 
         /* Wrap at screen edge */
-        if (cur_x + FONT_WIDTH > (int)fb_width) {
+        if (cur_x + FONT_WIDTH > width) {
             cur_x = x;
             y += FONT_HEIGHT;
         }
@@ -361,16 +398,24 @@ void fb_draw_string(int x, int y, const char *s, Color fg, Color bg)
 void fb_draw_text_scaled(int x, int y, const char *s, int n, Color fg, int scale, bool bold)
 {
     if (scale < 1) scale = 1;
-    for (int i = 0; i < n; i++, x += FONT_WIDTH * scale) {
-        if (x >= clip_x2 || x + FONT_WIDTH * scale + 1 < clip_x1) continue;
-        const uint8_t *glyph = font_get_glyph_aa(s[i]);
-        for (int row = 0; row < FONT_HEIGHT; row++) {
-            for (int col = 0; col < FONT_WIDTH; col++) {
-                uint8_t cov = glyph[row * FONT_WIDTH + col];
+    if (scale == 1 && !bold) {
+        for (int i = 0; i < n; i++) draw_glyph_phys((x + i * FONT_WIDTH) * S, y * S, s[i], fg, fg, true);
+        return;
+    }
+    /* Enlarged text: use the densest glyphs and replicate them. */
+    int rep = scale * S / (S == 2 ? 2 : 1);
+    int gw = FONT_WIDTH * (S == 2 ? 2 : 1), gh = FONT_HEIGHT * (S == 2 ? 2 : 1);
+    for (int i = 0; i < n; i++) {
+        int x0 = (x + i * FONT_WIDTH * scale) * S, y0 = y * S;
+        if (x0 >= clip_x2 || x0 + gw * rep + S < clip_x1) continue;
+        const uint8_t *glyph = S == 2 ? font_get_glyph_aa2x(s[i]) : font_get_glyph_aa(s[i]);
+        for (int row = 0; row < gh; row++) {
+            for (int col = 0; col < gw; col++) {
+                uint8_t cov = glyph[row * gw + col];
                 if (!cov) continue;
-                for (int sy = 0; sy < scale; sy++) {
-                    for (int sx = 0; sx < scale + (bold ? 1 : 0); sx++) {
-                        int px = x + col * scale + sx, py = y + row * scale + sy;
+                for (int sy = 0; sy < rep; sy++) {
+                    for (int sx = 0; sx < rep + (bold ? S : 0); sx++) {
+                        int px = x0 + col * rep + sx, py = y0 + row * rep + sy;
                         if (px < clip_x1 || py < clip_y1 || px >= clip_x2 || py >= clip_y2 ||
                             px >= (int)fb_width || py >= (int)fb_height) continue;
                         Color *dst = &fb_base[py * fb_pitch + px];
@@ -395,6 +440,7 @@ Color fb_blend(Color bg, Color fg, uint8_t alpha)
  */
 void fb_copy_rect(int dst_x, int dst_y, int src_x, int src_y, int w, int h)
 {
+    dst_x *= S; dst_y *= S; src_x *= S; src_y *= S; w *= S; h *= S;
     /* Clip to screen bounds first */
     if (w <= 0 || h <= 0) return;
     if (dst_x < 0) { w += dst_x; src_x -= dst_x; dst_x = 0; }

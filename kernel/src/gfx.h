@@ -6,6 +6,10 @@
  * direct pointer writes; only edge pixels pay for coverage maths, so a
  * large rounded window costs about the same as a plain rectangle.
  *
+ * Coordinates, sizes and radii passed to gfx_* are LOGICAL; they are
+ * multiplied by the surface's scale (HiDPI) so shapes render at full
+ * density. Image sources (gfx_round_rect_image) are physical-size.
+ *
  * ojjyOS - Created by Jonas Lee
  */
 #ifndef _OJJY_GFX_H
@@ -16,7 +20,8 @@
 typedef struct {
     uint32_t *pixels;
     int width, height, pitch;          /* pitch in pixels */
-    int clip_x1, clip_y1, clip_x2, clip_y2;   /* half-open clip box */
+    int clip_x1, clip_y1, clip_x2, clip_y2;   /* half-open clip box (physical) */
+    int scale;               /* logical->physical factor for all gfx_* inputs (0/1 = 1) */
 } GfxSurface;
 
 /* Fast blend: alpha 0..255 (255 = fg). Two multiplies per pixel. */
@@ -34,7 +39,7 @@ uint32_t gfx_isqrt(uint32_t v);
 void gfx_round_rect(GfxSurface *s, int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
 /* Same shape, but pixels come from a full-surface-sized source image
  * (`src` has the surface's width as pitch), e.g. the blurred glass cache. */
-void gfx_round_rect_image(GfxSurface *s, int x, int y, int w, int h, int r, const uint32_t *src);
+void gfx_round_rect_image(GfxSurface *s, int x, int y, int w, int h, int r, const uint32_t *src, uint8_t alpha);
 /* Anti-aliased ring of thickness 1 (hairline border) inside the shape. */
 void gfx_round_rect_stroke(GfxSurface *s, int x, int y, int w, int h, int r, uint32_t color, uint8_t alpha);
 /* Vertical gradient fill (top -> bottom colours) with AA rounded corners. */

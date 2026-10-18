@@ -73,7 +73,7 @@ int main(void)
     reset(0x000000);
     static uint32_t src[W * H];
     for (int i = 0; i < W * H; i++) src[i] = (uint32_t)i & 0xFFFFFF;
-    gfx_round_rect_image(&surf, 4, 4, 30, 20, 0, src);
+    gfx_round_rect_image(&surf, 4, 4, 30, 20, 0, src, 255);
     CHECK(at(10, 10) == src[10 * W + 10], "image fill copies source pixels");
 
     static uint8_t img[16 * 16 * 4];

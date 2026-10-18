@@ -7,4 +7,6 @@
 #define CURSOR_HOT_X 2
 #define CURSOR_HOT_Y 2
 extern const uint8_t cursor_rgba[CURSOR_W * CURSOR_H * 4];   /* straight alpha */
+/* Same pointer at 2x density (2*CURSOR_W x 2*CURSOR_H, hotspot doubled). */
+extern const uint8_t cursor_rgba2x[CURSOR_W * CURSOR_H * 4 * 4];
 #endif

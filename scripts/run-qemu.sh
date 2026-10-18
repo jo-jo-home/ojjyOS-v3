@@ -9,8 +9,9 @@
 # Usage:
 #   bash scripts/run-qemu.sh [aarch64|x86_64]
 #
-# ARM display size: OJJY_RES=WIDTHxHEIGHT (default 1440x900, 16:10 = the
-# full-screen area of a notched MacBook). Use 1600x900 on a 16:9 monitor.
+# ARM display size: OJJY_RES=WIDTHxHEIGHT (default 2880x1800 with HVF = a
+# 1440x900 layout at Retina 2x, or 1440x900 under emulation; 16:10 = the
+# full-screen area of a notched MacBook). Use 3200x1800 (or 1600x900) on 16:9.
 # OJJY_DISPLAY=ramfb restores the old 4:3-only firmware display.
 # OJJY_FULLSCREEN=1 starts in macOS full screen (Zoom To Fit is always on).
 # OJJY_ACCEL=hvf|tcg picks the accelerator (default: HVF when available).
@@ -105,7 +106,10 @@ if [ "$ARCH" = "aarch64" ]; then
 
     # virtio-gpu takes any screen size, so the guest can match the Mac's
     # screen shape; ramfb firmware only offers 4:3 modes (black bars).
-    RES="${OJJY_RES:-1440x900}"
+    # HVF is fast enough for a Retina-density 2x UI (2880x1800 = 1440x900
+    # layout at double resolution); emulation stays at 1x.
+    if [ "$ACCEL" = "hvf" ]; then DEFAULT_RES="2880x1800"; else DEFAULT_RES="1440x900"; fi
+    RES="${OJJY_RES:-$DEFAULT_RES}"
     if [[ ! "$RES" =~ ^[0-9]+x[0-9]+$ ]]; then
         echo -e "${RED}Error: OJJY_RES must look like 1440x900${NC}"; exit 1
     fi
@@ -139,7 +143,7 @@ if [ "$ARCH" = "aarch64" ]; then
     echo -e "${YELLOW}Display tips (macOS):${NC}"
     echo    "  - Fill the screen: QEMU menu View -> Enter Fullscreen (Zoom To Fit is"
     echo    "    already on). Or start that way: OJJY_FULLSCREEN=1 bash scripts/run-qemu.sh"
-    echo    "  - Guest is $RES; set OJJY_RES=1600x900 for a 16:9 monitor"
+    echo    "  - Guest is $RES; on a 16:9 monitor use OJJY_RES=3200x1800 (or 1600x900)"
     echo    "  - Release a captured mouse/keyboard: Ctrl-Option-G"
     echo
 

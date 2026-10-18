@@ -334,6 +334,7 @@ echo "This is a test document." > "$SYSROOT/Users/guest/Documents/Test.txt"
 
 # Build OJFS image
 echo "Building OJFS image..."
+bash "$SCRIPT_DIR/build-programs.sh"
 ./mkojfs "$BUILD_DIR/system.ojfs" "$SYSROOT"
 
 # Create C header with embedded filesystem

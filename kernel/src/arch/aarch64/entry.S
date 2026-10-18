@@ -53,7 +53,9 @@ _start:
 
 .Ldrop_from_el2:
     /* EL2: stop trapping anything, run EL1 naked */
-    msr hcr_el2, xzr
+    mov x9, #(1 << 31)          /* RW: EL1 is AArch64 */
+    msr hcr_el2, x9
+    msr cptr_el2, xzr
     /* Allow EL1 access to physical counter/timer */
     mov x9, #0x3
     msr cnthctl_el2, x9
@@ -159,10 +161,13 @@ vectors:
     VEC_FIQ
     VEC_SERROR
 
-    /* Lower EL, AArch64 (no EL0 yet) */
-    VEC_SYNC
-    VEC_IRQ
-    VEC_FIQ
+    /* Lower EL, AArch64: complete EL0 state saved out of line. */
+    .align 7
+    b a64_user_sync_entry
+    .align 7
+    b a64_user_irq_entry
+    .align 7
+    b a64_user_irq_entry
     VEC_SERROR
 
     /* Lower EL, AArch32 (unused) */

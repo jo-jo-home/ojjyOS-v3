@@ -33,6 +33,8 @@ COMMON_C_SOURCES = src/main.c \
                    src/system.c \
                    src/users.c \
                    src/proc.c \
+                   src/user.c \
+                   src/user_image.c \
                    src/string.c \
                    src/memory.c \
                    src/framebuffer.c \
@@ -59,6 +61,7 @@ LINKER_SCRIPT = linker-aarch64.ld
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib -static -z max-page-size=0x1000
 
 ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
+                 src/arch/aarch64/user_arch.c \
                  src/arch/aarch64/gicv2.c \
                  src/arch/aarch64/timer_a64.c \
                  src/arch/aarch64/pl011.c \
@@ -68,7 +71,7 @@ ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
                  src/arch/aarch64/virtio_blk.c \
                  src/arch/aarch64/psci.c
 
-ASM_SOURCES = src/arch/aarch64/entry.S
+ASM_SOURCES = src/arch/aarch64/entry.S src/arch/aarch64/user_entry.S
 ASM_OBJECTS = $(ASM_SOURCES:.S=.o)
 else
 TARGET_TRIPLE = x86_64-unknown-none-elf
@@ -83,6 +86,7 @@ LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib -static -z max-page-size=0x1000
 NASMFLAGS = -f elf64
 
 ARCH_C_SOURCES = src/gdt.c \
+                 src/user_unsupported.c \
                  src/idt.c \
                  src/paging.c \
                  src/timer.c \
@@ -106,6 +110,7 @@ OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
 
 # All objects across both arches (for clean)
 ALL_CLEAN_OBJECTS = $(COMMON_C_SOURCES:.c=.o) \
+                    src/user_unsupported.o src/arch/aarch64/user_arch.o src/arch/aarch64/user_entry.o \
                     src/gdt.o src/idt.o src/paging.o src/timer.o src/serial.o \
                     src/drivers/ps2_keyboard.o src/drivers/ps2_mouse.o \
                     src/drivers/ata.o src/drivers/rtc.o src/drivers/block_cache.o \

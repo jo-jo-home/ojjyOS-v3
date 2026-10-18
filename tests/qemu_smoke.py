@@ -8,6 +8,7 @@ Requires fresh data for setup; --fresh-data resets ONLY the private test copy.
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -111,6 +112,9 @@ class VM:
 
     def type(self, text, pace=0.08):
         for char in text:
+            if char == "_":
+                self.key("shift", True); self.press("minus", pace); self.key("shift", False)
+                continue
             code = {" ": "spc", "\n": "ret", "\t": "tab", "/": "slash", "-": "minus", ".": "dot"}.get(char, char)
             self.press(code, pace)
 
@@ -137,6 +141,58 @@ class VM:
         self.stderr.close()
         self.socket_path.unlink(missing_ok=True)
         self.socket_dir.cleanup()
+
+
+def protected_checks(vm, arch, output):
+    if arch != "aarch64":
+        start = len(vm.text()); vm.type("run hello\n")
+        vm.wait("protected execution unsupported", after=start)
+        print("x86_64: unsupported capability reported honestly", flush=True)
+        return
+    cases = [("hello", "exited", 0), ("badptr", "exited", 0),
+             ("registers", "exited", 0), ("output_limit", "exited", 0),
+             ("kernel_read", "fault", -11), ("kernel_write", "fault", -11),
+             ("code_write", "fault", -11), ("stack_exec", "fault", -11),
+             ("null", "fault", -11), ("privileged", "fault", -11),
+             ("fp", "fault", -11), ("badsvc", "fault", -11),
+             ("guard", "fault", -11), ("wfi", "fault", -11),
+             ("mmio", "fault", -11), ("kernel_exec", "fault", -11), ("badsp", "fault", -11),
+             ("spin", "timeout", -110), ("syscall_limit", "limit", -125)]
+    # Repeat successes after each hostile task; stale TLBs and leaked pages
+    # must not make the subsequent program fail.
+    for name, status, code in cases + [("hello", "exited", 0)] * 12:
+        start = len(vm.text()); vm.type(f"run {name}\n", pace=0.025)
+        vm.wait(f"status={status} code={code}", after=start, timeout=20)
+        vm.wait("[USER] Cleanup", after=start)
+        text = vm.text()[start:]
+        match = re.search(r"free_before=(\d+) free_after=(\d+)", text)
+        if not match or match[1] != match[2]:
+            raise RuntimeError(f"private page leak after {name}: {text}")
+        if name == "spin":
+            elapsed = re.search(r"ms=(\d+)", text)
+            if not elapsed or not 100 <= int(elapsed[1]) < 150:
+                raise RuntimeError(f"watchdog budget failed: {text}")
+        if status == "fault":
+            esr = int(re.search(r"esr=([0-9a-fA-F]+)", text)[1], 16)
+            ec = (esr >> 26) & 63
+            expected_ec = {"kernel_read": 0x24, "kernel_write": 0x24,
+                           "code_write": 0x24, "stack_exec": 0x20,
+                           "null": 0x24, "guard": 0x24, "fp": 7,
+                           "badsvc": 0x15, "wfi": 1, "privileged": 0x18,
+                           "mmio": 0x24, "kernel_exec": 0x20, "badsp": 0x24}
+            if ec != expected_ec[name]:
+                raise RuntimeError(f"unexpected fault class {name}: {ec:#x}")
+            start = len(vm.text()); vm.type("run hello\n", pace=0.025)
+            vm.wait("status=exited code=0", after=start)
+        print(f"EL0 {name}: {status}, code={code}, no page leak", flush=True)
+    # Return from fallback console to the real UI and launch Terminal.
+    vm.type("ui\n"); time.sleep(1)
+    vm.key("meta_l", True); vm.press("spc"); vm.key("meta_l", False)
+    vm.type("terminal\n"); time.sleep(1)
+    start = len(vm.text()); vm.type("run hello\n")
+    vm.wait("status=exited code=0", after=start)
+    time.sleep(0.5)
+    vm.screenshot(output / "desktop-after-app-faults.png")
 
 
 def run(args):
@@ -180,6 +236,9 @@ def run(args):
         for _ in range(4): vm.press("backspace")
         vm.type("whoami\n")
         vm.wait("tester (jonas)", after=start, timeout=15)
+        if args.protected:
+            protected_checks(vm, args.arch, output)
+            if args.arch == "aarch64": vm.console()
         # Cross the 64-entry virtio ring repeatedly, including releases.
         for _ in range(256):
             vm.press("o", pace=0.005)
@@ -276,4 +335,5 @@ if __name__ == "__main__":
     parser.add_argument("--image", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--fresh-data", action="store_true", help="reset only the newly created private test disk's data partition")
+    parser.add_argument("--protected", action="store_true", help="also test protected app execution/capability")
     run(parser.parse_args())

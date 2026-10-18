@@ -17,6 +17,7 @@
 #include "../system.h"
 #include "../users.h"
 #include "../proc.h"
+#include "../user.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -3902,11 +3903,38 @@ static void terminal_exec(TerminalState *term, const char *cmd)
 {
     if (!term || !cmd) return;
 
+    if (strcmp(cmd, "run") == 0 || strncmp(cmd, "run ", 4) == 0) {
+        static UserResult result;
+        int rc = user_run(cmd[3] ? cmd + 4 : "", &result);
+        if (rc) terminal_append_line(term, user_error_name(rc));
+        else {
+            char line[TERMINAL_LINE_MAX]; size_t n = 0;
+            for (size_t i = 0; i < result.output_length; i++) {
+                char c = result.output[i];
+                if (c == '\n' || n == sizeof(line) - 1) {
+                    line[n] = 0; terminal_append_line(term, line); n = 0;
+                }
+                if (c != '\n') line[n++] = c;
+            }
+            if (n) { line[n] = 0; terminal_append_line(term, line); }
+            strcpy(line, "App ");
+            char number[24]; utoa(result.pid, number, 10);
+            str_append(line, sizeof(line), number);
+            str_append(line, sizeof(line), ": ");
+            str_append(line, sizeof(line), user_status_name(result.status));
+            str_append(line, sizeof(line), " code=");
+            itoa(result.exit_code, number, 10);
+            str_append(line, sizeof(line), number);
+            terminal_append_line(term, line);
+        }
+        return;
+    }
+
     if (strcmp(cmd, "help") == 0) {
         terminal_append_line(term, "Commands: ls, cd, pwd, cat, echo, touch,");
         terminal_append_line(term, "  mkdir, rm, mv, cp, open, clear, sync,");
         terminal_append_line(term, "  ps, top, kill, heap, whoami, users,");
-        terminal_append_line(term, "  adduser, passwd, su, lock");
+        terminal_append_line(term, "  adduser, passwd, su, lock, run <name>");
         return;
     }
 

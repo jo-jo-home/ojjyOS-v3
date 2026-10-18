@@ -11,6 +11,7 @@ kernel.bin
 
 # Generated files
 kernel/src/fs/system_fs.h
+sysroot/System/Programs/*.elf
 
 # OS junk
 .DS_Store

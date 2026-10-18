@@ -3,7 +3,50 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## PAUSED: latest handoff (2026-10-17)
+## CURRENT: bounded ARM64 protected apps completed (2026-10-17)
+
+This section supersedes older pause/no-userspace claims below. Jonas resumed
+with **"continue"**, then asked to **update context as work proceeds**; keep
+doing that in future sessions. Read **HANDOFF.md**, **PROTECTED_APPS.md** and
+**PROTECTED_APPS_PLAN.md**, then inspect actual git state before changing code.
+
+- Real static AArch64 ELF programs now run at EL0 with private RX/RW+NX pages,
+  a guarded four-page stack, clean registers/thread pointers and a private EL1
+  exception stack. Owned kernel/app page tables replace firmware mappings.
+- Checked SVC #0 ABI permits PID/UID/uptime/captured write/exit only; NEVER
+  route user registers into old `proc.c`'s raw-pointer `syscall_dispatch()`.
+- Faults return to the kernel. A 100 ms physical-counter budget stops runaway
+  EL0 loops (final spin test: 101 ms); syscall/output/page/file limits apply.
+  Full integer trap state is saved; FP/SIMD deliberately traps. All user pages
+  are wiped/freed and PID reaped after returning to kernel tables.
+- Authenticated `run hello`, `run spin`, etc. work in Terminal and console.
+  `programs/` builds separate ELF files into the read-only system image. Intel
+  builds/boots normally but explicitly reports protected execution unsupported.
+- **Not multitasking:** one bounded synchronous runner; built-in GUI apps and
+  desktop remain kernel-hosted. No Intel ring-3, hardened account/file ACLs,
+  kernel W^X, bare-metal Mac support, HVF or hard real-time UI guarantee.
+- Final builds for both architectures passed with zero warnings/errors.
+  **1055 C assertions** (849 previous + 206 user tests) and **9 Python tests**
+  pass normally and under compatible Homebrew LLVM ASan/UBSan. User tests also
+  run 4000 deterministic malformed-header mutations (not counted separately).
+- Final ARM64 live suite passes **19 distinct programs**, fault-class checks,
+  timer/syscall limits, equal free-page counts, successful runs after faults,
+  12 extra clean runs and Spotlight->Terminal hello. Both architectures pass
+  sustained input, sync/shutdown, rebuild preservation, cold-boot authentication
+  and corrupted-newest-checkpoint fallback. Only private test VMs/disks touched.
+- Final source-image data partitions hash-identically to their retained complete
+  pre-rebuild backups; legacy image hash still matches Session 8. Receipt:
+  `build/protected-data-preservation.log`.
+- Final evidence: `build/protected-build-{arm,intel}.log`,
+  `build/protected-{host,sanitized}-tests.log`,
+  `build/protected-runtime-arm-final/` and `build/protected-runtime-intel-final-v2/`
+  with matching `.log` transcripts. ARM directory contains
+  `desktop-after-app-faults.png`. Earlier partial runs remain as debugging history.
+- See git log for the local milestone commit. **Nothing pushed.** Next work is
+  actual scheduling/concurrent tasks, then user-facing app integration and
+  authorization. Fullscreen/HVF remain separate tasks; don't silently expand scope.
+
+### Historical pause (superseded by the resume above)
 
 Jonas's latest request was: **"pause. and write all context to the project.
 like a new ai can know whats happening"**. Read **[HANDOFF.md](HANDOFF.md)**
@@ -373,14 +416,15 @@ Fixed 28+ defects across build, boot, input, filesystem, and desktop:
 
 ### 4.2 Future Milestones (Roadmap for Next Sessions)
 
-1. **M4.1 — Preemptive Context Switching & Ring 3 / EL0 Userspace:**
+1. **M4.1 — Concurrent Scheduling & Intel Ring 3 (bounded ARM64 EL0 exists):**
    - Extend `ProcEntry` in `kernel/src/proc.h` with saved CPU context (`CpuContext`:
      `x19..x30, sp, elr_el1, spsr_el1` on `aarch64`; `r12..r15, rbx, rbp, rsp, rip, rflags`
      on `x86_64`) and per-process kernel stacks allocated from `kmalloc`/`pmm_alloc_page`.
-   - Wire `SVC #0` (in `kernel/src/arch/aarch64/entry.S`) and `INT 0x80` / `SYSCALL`
-     (in `kernel/src/idt.c`) to call `syscall_dispatch()`.
-   - Add an ELF64 userspace binary loader in `proc.c` so external binaries in `/bin`
-     or `.app` bundles can execute in isolated address spaces.
+   - Extend the separate checked `user.c` ABI and ARM64 trap path to concurrent
+     tasks; implement a checked Intel entry path later. **Do not expose the raw
+     kernel `syscall_dispatch()` to userspace.**
+   - Extend `user_image.c`'s bounded ELF loader to a deliberate executable/app
+     policy and lifetime-managed per-task tables, rather than bypassing validation.
 2. **M4.2 — Networking (`virtio-net` + ARP/IPv4/ICMP/UDP/TCP/HTTP):**
    - Add `virtio_net.c` on `aarch64` (`virtio-mmio` device ID 1) and a minimal
      socket/HTTP client so `Web.app` can fetch live HTTP pages when QEMU user-mode

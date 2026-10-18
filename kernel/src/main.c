@@ -46,6 +46,7 @@
 #include "drivers/blockdev.h"
 #include "users.h"
 #include "proc.h"
+#include "user.h"
 
 /* UI compositor */
 #include "ui/compositor.h"
@@ -319,6 +320,7 @@ static void cmd_help(void)
     console_printf("  cat <file>     - Display file contents\n");
     console_printf("  apps           - List applications\n");
     console_printf("  launch <app>   - Launch an application\n");
+    console_printf("  run <name>     - Run a bounded protected ELF (ARM64)\n");
     console_printf("  ui [dark]      - Start the desktop\n");
     console_printf("  whoami         - Show active user account\n");
     console_printf("  users          - List user accounts\n");
@@ -750,6 +752,15 @@ static void process_command(void)
                 (int)pe->pid, pe->owner, proc_state_name(pe->state),
                 (int)pe->cpu_ticks, (int)(pe->memory_bytes / 1024), pe->name);
         }
+    } else if (strcmp(cmd, "run") == 0) {
+        static UserResult result;
+        int rc = user_run(arg, &result);
+        if (rc) console_printf("run: %s\n", user_error_name(rc));
+        else {
+            console_printf("%s", result.output);
+            console_printf("[app %u] %s code=%d ms=%llu\n", result.pid,
+                           user_status_name(result.status), result.exit_code, result.elapsed_ms);
+        }
     } else if (strcmp(cmd, "heap") == 0 || strcmp(cmd, "mem") == 0) {
         console_printf("PMM Physical: %d MB free / %d MB total\n",
             (int)(pmm_get_free_memory() / (1024 * 1024)),
@@ -882,9 +893,10 @@ void kernel_main(BootInfo *boot_info)
     splash_render("Loading EL1 exception vectors...", 12);
     splash_render("Setting up memory...", 22);
 
-    /* On aarch64, UEFI identity-maps RAM and MMIO; we keep UEFI page tables */
+    /* Reserve physical memory before installing owned supervisor mappings. */
     pmm_init(boot_info);
 #endif
+    user_arch_init();
     kheap_init();
     timer_init();
     splash_render("Bringing up drivers...", 38);

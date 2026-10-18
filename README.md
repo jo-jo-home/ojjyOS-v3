@@ -21,9 +21,13 @@ Per project documentation standards, features are categorized into **Implemented
   - Dual-architecture UEFI application (`BOOTAA64.EFI` for `aarch64`, `BOOTX64.EFI` for `x86_64`).
   - Parses ELF64 program headers (`PT_LOAD`), validates `e_machine` (`183` / `62`), zeroes BSS tail, sets up GOP 32-bpp BGRx framebuffer, queries UEFI memory map, and jumps to `e_entry`.
 - **Dual-Architecture Kernel Core:**
-  - **`aarch64` (`kernel/src/arch/aarch64/`):** EL3/EL2 $\rightarrow$ EL1 transition (`entry.S`), `VBAR_EL1` exception vectors with visual framebuffer crash diagnostics, GICv2 interrupt controller, 1 kHz ARM Generic Timer (PPI 30), PL011 serial UART, PL031 RTC, `virtio-mmio` v2 transport (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), and PSCI (`hvc`/`smc`) shutdown & reboot. Inherits UEFI identity-mapped page tables.
+  - **`aarch64` (`kernel/src/arch/aarch64/`):** EL3/EL2 $\rightarrow$ EL1 transition (`entry.S`), `VBAR_EL1` exception vectors with visual framebuffer crash diagnostics, GICv2 interrupt controller, 1 kHz ARM Generic Timer (PPI 30), PL011 serial UART, PL031 RTC, `virtio-mmio` v2 transport (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), and PSCI (`hvc`/`smc`) shutdown & reboot. Own supervisor page tables replace the firmware mappings.
   - **`x86_64` (`kernel/src/`):** 64-bit long mode entry (`entry.asm`), GDT/TSS, IDT (256 vectors + visual panic screen), 4-level paging with on-demand `paging_map()` (including high-MMIO framebuffers above 4 GB), 8259 PIC with automatic IRQ2 cascade unmasking, 1 kHz PIT timer, 16550 UART, PS/2 keyboard (with `0xE0` extended scancodes & Super/Cmd keys) and 3-button scroll mouse, ATA PIO (LBA28/LBA48) + 64-sector LRU block cache, CMOS RTC, and ACPI S5 power-off + 8042 reset.
   - **Physical Memory Manager (`memory.c`):** Bitmap page allocator initialized from the UEFI memory map, dynamically reserving `[_kernel_start .. _kernel_end)` and the GOP framebuffer.
+- **Bounded ARM64 Protected Apps:** Authenticated `run <name>` loads separate
+  static ELF64 programs at EL0. Private page permissions, checked SVC calls,
+  fault recovery and a 100 ms timer budget are live-tested. Existing GUI apps
+  remain in the kernel; Intel reports unsupported. See [PROTECTED_APPS.md](PROTECTED_APPS.md).
 - **User Accounts & Salted SHA-256 Credentials (`kernel/src/users.c`):**
   - **Salted FIPS 180-4 SHA-256 Password Hashing:** Domain-separated 32-bit salt + 256-bit SHA-256 digest with constant-time verification (`hash_equal_ct`), stored in `/Library/Accounts/users.db` and persisted across reboots.
   - **First-Boot Account Setup Assistant & Tahoe Lock/Login Screen:** When no accounts exist (`users_count() == 0`) or **+ New Account** is clicked, presents a glass Setup Assistant card (`Full Name`, `Username`, `Password`, `Confirm`). When locked or logged out, presents the macOS Tahoe Lock Screen with clock, user avatar initials, `@username` badge, masked password field, **Sign In**, **Switch User**, and **+ New Account**.
@@ -54,7 +58,7 @@ Per project documentation standards, features are categorized into **Implemented
 
 ### Planned (Future Milestones)
 - **Preemptive Multitasking & Scheduler:** Kernel threads, per-process kernel stacks, and timer-driven context switching.
-- **Protected Userspace & Syscall ABI:** Ring 3 (`x86_64`) / `EL0` (`aarch64`) address spaces, per-process page tables, ELF64 userspace process loader, and crash isolation so a faulting app cannot take down the desktop.
+- **Broader Protected Userspace:** Concurrent ARM64 tasks, GUI app conversion and Intel ring-3. The first bounded ARM64 EL0 runner is described in [PROTECTED_APPS.md](PROTECTED_APPS.md).
 - **Network Stack & Online Web Browser:** `virtio-net` / E1000 NIC driver $\rightarrow$ Ethernet/ARP/IPv4/UDP/TCP/DNS/HTTP so `Web.app` can fetch live pages alongside `/System/Web/*.page`.
 - **Audio Subsystem:** `virtio-sound` / Intel HDA output for system alert sounds.
 - **ARM64 Scroll Wheel Device:** QEMU's `virtio-tablet-device` does not expose a scroll wheel axis; adding a secondary `virtio-mouse-device` or keyboard page-scroll binding on `aarch64` is planned.
@@ -149,10 +153,14 @@ python3 tests/qemu_smoke.py --arch aarch64 \
 source image. The smoke test also rebuilds that private disk and corrupts its
 newest checkpoint to verify recovery. Evidence stays in its output directory.
 
-Process entries and syscall dispatch exist, but apps still execute in the kernel.
-Activity Monitor's task ticks are estimates, not scheduler measurements. Protected
-userspace, app crash isolation, strong password derivation, and enforced file
-authorization are not implemented by this reliability pass.
+Built-in GUI apps still execute in the kernel; Activity Monitor's task ticks are
+estimates, not scheduler measurements. Separately built ARM64 ELF samples can now
+run at EL0 via authenticated `run <name>`, with checked SVC calls, private RX/RW
+pages, app-fault recovery and a 100 ms watchdog. This is a synchronous bounded
+runner, not multitasking. Intel explicitly reports unsupported. See
+[PROTECTED_APPS.md](PROTECTED_APPS.md) for ABI, limits and test commands
+(`--protected` adds live boundary checks). Strong password derivation and enforced
+file authorization remain future work.
 
 ---
 
@@ -173,6 +181,7 @@ authorization are not implemented by this reliability pass.
 
 ### Console & Terminal Commands
 - `ui` / `ui dark` — Launch the macOS Tahoe blue glass desktop
+- `run hello` / `run spin` — Run a bounded protected ARM64 ELF sample; login required
 - `whoami`, `users`, `adduser <user> <pass> [Full Name]`, `passwd <old> <new>`, `su <user> <pass>` / `login <user> <pass>`, `lock` / `logout` — User account & credential management
 - `ls`, `cd`, `pwd`, `cat`, `touch`, `mkdir`, `rm`, `mv`, `cp`, `echo`, `clear` — Filesystem operations
 - `sync` — Immediately checkpoint `/Users` and `/Library` RAMFS state to disk

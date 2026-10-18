@@ -1,8 +1,108 @@
-# ojjyOS v3: paused working context
+# ojjyOS v3: working context and milestone receipts
 
 Captured: **2026-10-17**. Read this together with **AGENTS.md**.
 
-## 1. Exact stopping point
+## FINAL STATE: protected execution milestone complete (2026-10-17)
+
+The user resumed; do not obey the old paused snapshot as a current stop request.
+The bounded ARM64 EL0 milestone is implemented and verified. Read
+`PROTECTED_APPS.md` for the actual ABI, mappings, limits and commands. Existing
+GUI apps remain kernel-hosted, and Intel execution is explicitly unsupported.
+No scheduling/GUI conversion/HVF/fullscreen/account-hardening claims are made.
+
+Final verification after the last loader change:
+- Both complete builds passed with zero warnings/errors.
+- 1055 C assertions (849 baseline + 206 new) and 9 Python image tests pass,
+  normally and with compatible Homebrew LLVM ASan/UBSan. The user test includes
+  4000 deterministic malformed-header mutations, plus tampered-plan/OOM cleanup.
+- `build/protected-runtime-arm-final.log`: all 19 distinct programs pass,
+  correct fault classes, equal PMM free counts, successful runs after faults,
+  12 extra hello runs, Terminal hello after Spotlight launch, full original
+  input/persistence/rebuild/cold-boot/checksum-fallback suite. Spin stops in
+  101 ms with zero syscalls, so its termination proves real timer interruption.
+- `build/protected-runtime-intel-final-v2.log`: honest unsupported result and
+  complete three-boot regression pass. Tests used isolated copies only.
+- Screenshot: `build/protected-runtime-arm-final/desktop-after-app-faults.png`.
+- Build/test receipts: `build/protected-build-arm.log`,
+  `build/protected-build-intel.log`, `build/protected-host-tests.log`,
+  `build/protected-sanitized-tests.log`.
+- `build/protected-data-preservation.log` verifies both final saved-data partitions
+  match full pre-rebuild backups (SHA-256
+  `2910f9e463394546790a465e60ae9abde773a0820966a5452bb91b38d6602f3f`).
+  Legacy whole-image SHA-256 is still
+  `1594a5d572485d4a4df474a2a5fcfbfa0af7f33f3076289e01d23e04c6e72e24`.
+
+Commit locally as Jonas; never push unasked. See current git log/status for the
+commit and any newer work. No test VM is intentionally left running. Next likely
+milestone is a planned scheduler/concurrent-task design, not pretending this
+synchronous runner already supplies one. Continue updating repo context as Jonas
+requested; preserve the evidence/limitations distinction used in this pass.
+
+## Historical progress checkpoints (superseded by final state above)
+
+This update supersedes the paused stopping point below. Jonas said **"continue"**
+and later **"remember to update context as u go"**. The old sections are retained
+as history, not a prohibition on the currently requested implementation.
+
+The detailed scope is `PROTECTED_APPS_PLAN.md`. New files currently implement a
+bounded ARM64-only EL0 runner, not a concurrent scheduler. `user.c` owns launch
+and safe syscalls; `user_image.c` validates ELF and handles private pages/copying;
+`arch/aarch64/user_arch.c` owns mappings and fault/watchdog handling;
+`user_entry.S` saves full integer state on a private exception stack. FP/SIMD
+traps deliberately. `programs/` contains real separately built ELFs. Console and
+Terminal expose authenticated `run <name>` under `/System/Programs`.
+
+Verification so far:
+- Full builds for ARM64 and Intel passed; normal and sanitized host suites passed.
+- ARM64's full original smoke flow passes with owned supervisor mappings.
+- Live `hello` and `badptr` successfully execute at EL0 and release every page.
+- Initial register test reached 257 syscalls at 8 ms instead of waiting 10 ms;
+  its test busy wait was increased. Not an observed kernel register corruption.
+- Intel passes the full three-boot input/storage/recovery flow and honestly reports
+  protected execution unsupported. Saved source disks remain separate from tests.
+
+Next: rerun ARM64 with `--protected`, finish all fault/timeout/register/Terminal
+checks, inspect failures rather than weakening assertions, review memory and trap
+boundaries, rerun both builds + host/sanitized tests, finalize docs and commit
+locally as Jonas. No push. Evidence is `build/protected-*.log` and matching private
+test directories. The old `2443b0a` remains last committed checkpoint for now;
+inspect `git status` to see all active work.
+
+Checkpoint 2: ARM64 register preservation and output-budget tests now pass.
+Kernel read/write, code write, stack execute and null access fault safely and
+each is followed by a successful hello. `privileged` also faulted safely; the
+test incorrectly expected EC=0 (undefined instruction) for MSR DAIFSet. Actual
+ESR `0x620793fe` reports EC=0x18 (trapped system-register access), the proper
+classification. Updated that expectation, not the kernel fault policy.
+Added MMIO access, kernel execution and user-SP pivot fault probes, header
+mutation coverage and cleared user thread-pointer state. Still awaiting the
+complete matrix; do not claim it passed based on these partial runs.
+
+Checkpoint 3: **full ARM64 matrix passed** in
+`build/protected-runtime-arm-v3/`, with transcript
+`build/protected-runtime-arm-v3.log`. All 19 distinct samples passed expected
+outcomes: hello, invalid-pointer/forged-call rejection, full-GPR/IRQ preservation,
+output bound, kernel read/write/execute, code write, NX stack, null/guard,
+privileged MSR, FP, nonzero SVC, WFI, MMIO, kernel-address SP pivot, infinite
+loop timeout and syscall cap. Every primary run had identical PMM free memory
+before/after; hello succeeds after each fault plus 12 extra repetitions.
+Terminal launched through Spotlight and ran hello successfully; screenshot
+`desktop-after-app-faults.png` visually confirms output and usable blue desktop.
+The same test then passed sustained input, sync/shutdown, private rebuild,
+cold-boot password login and corrupted-newest-slot recovery. Normal/sanitized
+host suites pass with 4000 malformed-header mutations. Final Intel rebuild and
+final documentation/review/commit remain; nothing pushed.
+
+Final-review note: removed `memcmp` over `UserImage` structs in favor of field
+comparisons and canonical revalidated metadata. C struct assignment does not
+guarantee padding-byte preservation; although all observed runs passed, loader
+correctness must not depend on it. Added a tampered-plan regression. Both final
+builds/host suites/live flows will be rerun for this last code change. Intel's
+prior final smoke run also passed before this narrow loader-only change.
+
+## Historical paused snapshot begins here (not current state)
+
+## 1. Exact stopping point at the earlier pause
 
 Jonas said:
 

@@ -85,10 +85,17 @@ Kernel Main (main.c)
 ### Memory Layout
 
 The diagrams and milestone lists below describe the project's evolution, not
-proof of a protected userspace. Current apps share the kernel address space.
+proof of a full userspace. Built-in GUI apps share the kernel address space.
 `proc.c` provides task records and estimated accounting, not a scheduler or
 independently executing daemons. User ownership/access enforcement remains work
 for a later milestone. See the current platform and persistence sections below.
+
+The first protected execution path is now a separate, synchronous ARM64 EL0
+runner (`user.c`, `user_image.c`, `arch/aarch64/user_arch.c`, `user_entry.S`).
+It owns mappings, validates static ELF64, checks SVC buffers through private-page
+metadata and returns on exit, fault or a 100 ms budget. Intel retains an explicit
+unsupported backend. See [PROTECTED_APPS.md](PROTECTED_APPS.md) for the concrete
+address map, ABI and limits; the old conceptual diagram below is not that map.
 
 ```
 0x0000_0000_0000_0000 ┌─────────────────────┐
@@ -949,7 +956,7 @@ for Microsoft's PE/COFF ABI on macOS.
 | **Kernel Link Base** | `0x04000000` (`kernel/linker.ld`, above OVMF's reserved low-memory ranges) | `0x41000000` (`kernel/linker-aarch64.ld`) |
 | **Entry Assembly** | `src/entry.asm` (NASM, 64 KB stack) | `src/arch/aarch64/entry.S` (clang, EL3/EL2$\rightarrow$EL1 drop, 128 KB stack) |
 | **Exception Handling** | 256-entry IDT (`idt.c`) + direct-scanout panic screen | `VBAR_EL1` vector table + direct-scanout panic screen (`ESR_EL1`, `ELR_EL1`, `SPSR_EL1`) |
-| **Page Tables / MMU** | Custom 4-level page tables (`paging.c`) + on-demand `paging_map()` for high GOP framebuffers | Inherits UEFI's identity-mapped page tables (covering RAM at `0x40000000+` and MMIO below `0x40000000`) |
+| **Page Tables / MMU** | Custom 4-level page tables (`paging.c`) + on-demand `paging_map()` for high GOP framebuffers | Owned supervisor identity tables and private EL0 mappings (`user_arch.c`); supported physical range below 4 GiB |
 | **Interrupt Controller** | Dual 8259 PIC (remapped to vectors `32..47`, auto-unmasking IRQ2 cascade) | ARM GICv2 (`gicv2.c`, GICD `0x08000000`, GICC `0x08010000`) |
 | **System Timer** | 8254 PIT at 1000 Hz (IRQ 0) | ARM Generic Physical Timer (`CNTP_*_EL0`, PPI 30) at 1000 Hz |
 | **Serial Console** | 16550 UART on I/O port `0x3F8` (`serial.c`) | ARM PL011 UART at MMIO `0x09000000` (`pl011.c`) + shared `serial_core.c` |

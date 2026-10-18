@@ -23,7 +23,7 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 
 ## Networking & web
 - [x] Network stack + working browser over http:// (BROWSER_APPS_PLAN.md).
-- [~] HTTPS (TLS 1.3) in the browser.
+- [x] HTTPS (TLS 1.3) in the browser (encrypted; identity not yet verified).
 - [ ] HTTPS certificate verification (X.509, RSA/ECDSA, root store).
 - [ ] PNG/GIF image decoding in the browser (inflate + palette).
 - [ ] Downloads to ~/Downloads with Finder integration.

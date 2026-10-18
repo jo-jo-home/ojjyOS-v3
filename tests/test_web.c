@@ -21,6 +21,15 @@ uint64_t net_now(void) { return 0; }
 static NetInfo ni;
 const NetInfo *net_info(void) { return &ni; }
 bool net_ready(void) { return false; }
+#include "net/tls.h"
+void tls_start(TlsConn *c, const char *h, TlsIo io) { (void)c; (void)h; (void)io; }
+TlsState tls_poll(TlsConn *c) { (void)c; return TLS_FAILED; }
+int tls_send(TlsConn *c, const void *d, size_t l) { (void)c; (void)d; (void)l; return -1; }
+int tls_recv(TlsConn *c, void *b, size_t l) { (void)c; (void)b; (void)l; return 0; }
+bool tls_eof(TlsConn *c) { (void)c; return true; }
+void tls_close(TlsConn *c) { (void)c; }
+const char *tls_suite_name(uint16_t s) { (void)s; return ""; }
+void *pmm_alloc_bytes(size_t n) { (void)n; return 0; }
 
 static bool resolves(const char *base, const char *ref, const char *expect)
 {
@@ -58,6 +67,13 @@ static bool sorted_by_y(void)
 {
     for (int i = 1; i < doc.run_count; i++) if (doc.runs[i].y < doc.runs[i - 1].y) return false;
     return true;
+}
+
+static bool strstr_local(const char *h, const char *n)
+{
+    size_t l = strlen(n);
+    for (; *h; h++) if (strncmp(h, n, l) == 0) return true;
+    return false;
 }
 
 static void layout(const char *html, int width) { html_layout(&doc, html, strlen(html), width, false); }
@@ -154,6 +170,19 @@ int main(void)
         if (doc.runs[i].link == 0) link = web_link_at(&doc, doc.runs[i].x + 2, doc.runs[i].y + 4);
     CHECK(link == 0, "link hit test");
     CHECK(web_link_at(&doc, 399, 2) == -1, "no link in empty space");
+
+    /* hidden content and table-cell blocks */
+    layout("<div hidden><p>secret one</p><div>nested</div></div><span style=\"display: none\">secret two</span>"
+           "<p aria-hidden=\"true\">secret three</p><p>visible</p>"
+           "<table><tr><td>1.</td><td><center><div>^</div></center></td><td>Title here</td></tr></table>", 600);
+    CHECK(!has_text("secret", 0) && !has_text("nested", 0) && has_text("visible", 0), "hidden/display:none skipped");
+    int rank_y = -1, title_y = -2;
+    for (int i = 0; i < doc.run_count; i++) {
+        const char *t = web_text(&doc, doc.runs[i].text);
+        if (strncmp(t, "1.", 2) == 0) rank_y = doc.runs[i].y;
+        if (strncmp(t, "Title", 5) == 0 || strstr_local(t, "Title")) title_y = doc.runs[i].y;
+    }
+    CHECK(rank_y == title_y, "blocks inside table cells stay on the row");
 
     /* word wrap: narrow width, long words broken, nothing past the edge */
     layout("<p>The quick brown fox jumps over the lazy dog again and again "

@@ -46,6 +46,9 @@ typedef struct {
     bool option_selected, select_has_value;
     char option_value[128];
     int table_cell;
+    int in_cell;                /* inside <td>/<th>: blocks flow inline */
+    char hide_name[16];         /* hidden subtree (hidden / display:none) */
+    int hide_depth;
     char word[WORD_MAX];
     int wlen;
 } Layout;
@@ -449,9 +452,44 @@ static int inline_box(Layout *L, int kind, int w, int h, int field)
 
 static void close_tag(Layout *L, const char *t);
 
+static bool is_void(const char *t)
+{
+    static const char *v[] = {"br", "img", "input", "hr", "meta", "link", "area", "base", "col", "embed",
+                              "source", "track", "wbr", "param"};
+    for (unsigned i = 0; i < ARRAY_SIZE(v); i++) if (is(t, v[i])) return true;
+    return false;
+}
+
+/* Without CSS, honour the explicit "not rendered" signals pages give. */
+static bool hidden_element(Attr *a, int na)
+{
+    if (attr(a, na, "hidden")) return true;
+    const char *aria = attr(a, na, "aria-hidden");
+    if (aria && is(aria, "true")) return true;
+    const char *style = attr(a, na, "style");
+    if (style) {
+        for (const char *p = style; *p; p++) {
+            if (strncmp(p, "display", 7) != 0) continue;
+            const char *q = p + 7;
+            while (*q == ' ' || *q == ':') q++;
+            if (strncmp(q, "none", 4) == 0) return true;
+        }
+    }
+    return false;
+}
+
 static void open_tag(Layout *L, const char *t, Attr *a, int na)
 {
     WebDoc *d = L->d;
+    if (L->hide_depth) {                        /* inside a hidden subtree */
+        if (is(t, L->hide_name) && !is_void(t)) L->hide_depth++;
+        return;
+    }
+    if (hidden_element(a, na) && !is(t, "html") && !is(t, "body")) {
+        flush_word(L);
+        if (!is_void(t)) { strcpy(L->hide_name, t); L->hide_depth = 1; L->skip++; }
+        return;
+    }
     const char *id = attr(a, na, "id");
     if (id) add_anchor(L, id);
 
@@ -474,6 +512,7 @@ static void open_tag(Layout *L, const char *t, Attr *a, int na)
         return;
     }
     if (is_block(t)) {
+        if (L->in_cell && !is(t, "tbody") && !is(t, "thead")) { flush_word(L); L->pending_space = !L->line_empty; return; }
         block(L, is(t, "dt") || is(t, "summary") || is(t, "legend") ? 4 : 0);
         if (is(t, "dt") || is(t, "summary") || is(t, "legend")) L->bold++;
         return;
@@ -536,10 +575,11 @@ static void open_tag(Layout *L, const char *t, Attr *a, int na)
         L->gap_done = 4;
         return;
     }
-    if (is(t, "table")) { block(L, 8); L->table_cell = 0; return; }
-    if (is(t, "tr")) { block(L, 2); L->table_cell = 0; return; }
+    if (is(t, "table")) { L->in_cell = 0; block(L, 8); L->table_cell = 0; return; }
+    if (is(t, "tr")) { L->in_cell = 0; block(L, 2); L->table_cell = 0; return; }
     if (is(t, "td") || is(t, "th")) {
         flush_word(L);
+        L->in_cell = 1;
         if (L->table_cell++ > 0 && !L->line_empty) { L->pending_space = false; L->x += 2 * WEB_CELL_W; }
         if (is(t, "th")) L->bold++;
         return;
@@ -678,6 +718,10 @@ static void open_tag(Layout *L, const char *t, Attr *a, int na)
 static void close_tag(Layout *L, const char *t)
 {
     WebDoc *d = L->d;
+    if (L->hide_depth) {
+        if (is(t, L->hide_name) && --L->hide_depth == 0 && L->skip) L->skip--;
+        return;
+    }
     if (is(t, "svg") || is(t, "math") || is(t, "template") || is(t, "object") || is(t, "canvas") ||
         is(t, "iframe") || is(t, "video") || is(t, "audio")) {
         if (L->skip) L->skip--;
@@ -695,6 +739,7 @@ static void close_tag(Layout *L, const char *t)
     if (is_block(t)) {
         flush_word(L);
         if (is(t, "dt") || is(t, "summary") || is(t, "legend")) { if (L->bold) L->bold--; }
+        if (L->in_cell) { L->pending_space = !L->line_empty; return; }
         block(L, 0);
         return;
     }
@@ -736,8 +781,8 @@ static void close_tag(Layout *L, const char *t)
     }
     if (is(t, "table")) { block(L, 8); return; }
     if (is(t, "tr")) { block(L, 0); return; }
-    if (is(t, "th")) { flush_word(L); if (L->bold) L->bold--; return; }
-    if (is(t, "td")) { flush_word(L); return; }
+    if (is(t, "th")) { flush_word(L); L->in_cell = 0; if (L->bold) L->bold--; return; }
+    if (is(t, "td")) { flush_word(L); L->in_cell = 0; return; }
     if (is(t, "b") || is(t, "strong")) { flush_word(L); if (L->bold) L->bold--; return; }
     if (is(t, "i") || is(t, "em") || is(t, "cite") || is(t, "var") || is(t, "dfn")) { flush_word(L); if (L->italic) L->italic--; return; }
     if (is(t, "code") || is(t, "kbd") || is(t, "samp") || is(t, "tt")) { flush_word(L); if (L->code) L->code--; return; }

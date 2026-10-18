@@ -46,6 +46,7 @@
 #include "drivers/blockdev.h"
 #include "users.h"
 #include "net/net.h"
+#include "random.h"
 #include "proc.h"
 #include "user.h"
 
@@ -1076,6 +1077,12 @@ void kernel_main(BootInfo *boot_info)
         for (unsigned budget = 0; budget < 128 && input_has_event(); budget++) {
             InputEvent event;
             input_poll_event(&event);
+            /* Human input timing is real entropy for the DRBG (TLS keys). */
+            {
+                uint64_t mix[2] = { timer_get_ticks(), ((uint64_t)event.type << 32) ^ (uint64_t)event.motion.x ^
+                                    ((uint64_t)event.motion.y << 16) ^ (uint64_t)event.key.keycode };
+                random_add_entropy(mix, sizeof(mix));
+            }
 
             if (ui_mode) {
                 switch (event.type) {

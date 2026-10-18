@@ -6,10 +6,65 @@
 
 #include "web/http.h"
 #include "net/tcp.h"
+#include "net/tls.h"
+#include "memory.h"
 #include "string.h"
 
 #define HTTP_IDLE_TIMEOUT_MS 20000
 #define HTTP_MAX_REDIRECTS   5
+
+/* ------------------------------------------------------------------ */
+/* TLS connection pool (each TlsConn holds ~115 KB of record buffers)  */
+/* ------------------------------------------------------------------ */
+
+#define TLS_POOL 2
+typedef struct TlsSlot { bool used; int tcp; TlsConn conn; } TlsSlot;
+static TlsSlot *tls_pool[TLS_POOL];
+
+static int tls_tcp_send(void *ctx, const uint8_t *data, size_t len)
+{
+    return tcp_send((int)(intptr_t)ctx, data, len);
+}
+
+static int tls_tcp_recv(void *ctx, uint8_t *data, size_t len)
+{
+    int h = (int)(intptr_t)ctx;
+    int n = tcp_recv(h, data, len);
+    if (n > 0) return n;
+    if (tcp_state(h) == TCP_S_ERROR || tcp_peer_closed(h)) return -1;
+    return 0;
+}
+
+static TlsSlot *tls_acquire(void)
+{
+    for (int i = 0; i < TLS_POOL; i++) {
+        if (!tls_pool[i]) tls_pool[i] = (TlsSlot *)pmm_alloc_bytes(sizeof(TlsSlot));
+        if (tls_pool[i] && !tls_pool[i]->used) { tls_pool[i]->used = true; return tls_pool[i]; }
+    }
+    return NULL;
+}
+
+static void close_transport(HttpFetch *f)
+{
+    if (f->tls) { tls_close(&f->tls->conn); f->tls->used = false; f->tls = NULL; }
+    if (f->conn >= 0) { tcp_release(f->conn); f->conn = -1; }
+}
+
+static int stream_send(HttpFetch *f, const void *data, size_t len)
+{
+    return f->tls ? tls_send(&f->tls->conn, data, len) : tcp_send(f->conn, data, len);
+}
+
+static int stream_recv(HttpFetch *f, void *buf, size_t len)
+{
+    return f->tls ? tls_recv(&f->tls->conn, buf, len) : tcp_recv(f->conn, buf, len);
+}
+
+static bool stream_closed(HttpFetch *f)
+{
+    if (f->tls) return tls_eof(&f->tls->conn) || f->tls->conn.state == TLS_FAILED;
+    return tcp_peer_closed(f->conn) || tcp_state(f->conn) == TCP_S_CLOSED;
+}
 
 static char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
 
@@ -147,6 +202,7 @@ const char *http_phase_text(HttpPhase phase)
     switch (phase) {
         case HTTP_RESOLVING:  return "Looking up host";
         case HTTP_CONNECTING: return "Connecting";
+        case HTTP_SECURING:   return "Securing connection";
         case HTTP_SENDING:    return "Sending request";
         case HTTP_RECEIVING:  return "Receiving";
         case HTTP_DONE:       return "Done";
@@ -160,7 +216,7 @@ static void set_error(HttpFetch *f, const char *msg)
     strncpy(f->error, msg, sizeof(f->error) - 1);
     f->error[sizeof(f->error) - 1] = '\0';
     f->phase = HTTP_ERROR;
-    if (f->conn >= 0) { tcp_release(f->conn); f->conn = -1; }
+    close_transport(f);
 }
 
 static void begin(HttpFetch *f)
@@ -175,16 +231,14 @@ static void begin(HttpFetch *f)
     f->conn = -1;
     f->phase_ms = f->activity_ms = net_now();
     memset(&f->head, 0, sizeof(f->head));
-    if (strcmp(f->url.scheme, "https") == 0) {
-        set_error(f, "HTTPS is not supported yet (secure connections are a planned milestone)");
-        return;
-    }
-    if (strcmp(f->url.scheme, "http") != 0) { set_error(f, "unsupported URL scheme"); return; }
+    f->secure = strcmp(f->url.scheme, "https") == 0;
+    f->tls_suite[0] = '\0';
+    if (!f->secure && strcmp(f->url.scheme, "http") != 0) { set_error(f, "unsupported URL scheme"); return; }
 
     /* GET request; identity encoding, close when done. */
     char host[URL_HOST_MAX + 8];
     strcpy(host, f->url.host);
-    if (f->url.port != 80) {
+    if (f->url.port != (f->secure ? 443 : 80)) {
         char num[8];
         utoa(f->url.port, num, 10);
         size_t l = strlen(host);
@@ -231,14 +285,13 @@ void http_start(HttpFetch *f, const char *url_text, uint8_t *buf, size_t cap)
 
 void http_cancel(HttpFetch *f)
 {
-    if (f->conn >= 0) tcp_release(f->conn);
-    f->conn = -1;
+    close_transport(f);
     if (f->phase != HTTP_DONE) { f->phase = HTTP_ERROR; strcpy(f->error, "stopped"); }
 }
 
 static void finish(HttpFetch *f)
 {
-    if (f->conn >= 0) { tcp_release(f->conn); f->conn = -1; }
+    close_transport(f);
     HttpResponseHead *h = &f->head;
     int r = http_parse_head(f->buf, f->len, h);
     if (r != 1) { set_error(f, f->len ? "malformed response from server" : "server sent no data"); return; }
@@ -301,12 +354,39 @@ HttpPhase http_poll(HttpFetch *f)
         case HTTP_CONNECTING: {
             TcpState st = tcp_state(f->conn);
             if (st == TCP_S_ERROR) { set_error(f, tcp_error_string(tcp_error(f->conn))); break; }
-            if (st == TCP_S_ESTABLISHED || st == TCP_S_CLOSE_WAIT) { f->phase = HTTP_SENDING; f->activity_ms = now; }
-            else break;
+            if (st != TCP_S_ESTABLISHED && st != TCP_S_CLOSE_WAIT) break;
+            f->activity_ms = now;
+            if (!f->secure) { f->phase = HTTP_SENDING; goto sending; }
+            f->tls = tls_acquire();
+            if (!f->tls) { set_error(f, "not enough memory for a secure connection"); break; }
+            f->tls->tcp = f->conn;
+            TlsIo io = {tls_tcp_send, tls_tcp_recv, (void *)(intptr_t)f->conn};
+            tls_start(&f->tls->conn, f->url.host, io);
+            f->phase = HTTP_SECURING;
         }   /* fall through */
+        case HTTP_SECURING: {
+            TlsState ts = tls_poll(&f->tls->conn);
+            if (ts == TLS_FAILED) {
+                char msg[96] = "secure connection failed: ";
+                size_t a = strlen(msg), b = strlen(f->tls->conn.error);
+                if (a + b >= sizeof(msg)) b = sizeof(msg) - a - 1;
+                memcpy(msg + a, f->tls->conn.error, b);
+                msg[a + b] = '\0';
+                set_error(f, msg);
+                break;
+            }
+            if (ts != TLS_OPEN) {
+                if (now - f->activity_ms > HTTP_IDLE_TIMEOUT_MS) set_error(f, "the secure handshake timed out");
+                break;
+            }
+            strncpy(f->tls_suite, tls_suite_name(f->tls->conn.suite), sizeof(f->tls_suite) - 1);
+            f->phase = HTTP_SENDING;
+            f->activity_ms = now;
+        }   /* fall through */
+        sending:
         case HTTP_SENDING: {
             if (tcp_state(f->conn) == TCP_S_ERROR) { set_error(f, tcp_error_string(tcp_error(f->conn))); break; }
-            int n = tcp_send(f->conn, f->request + f->sent, f->request_len - f->sent);
+            int n = stream_send(f, f->request + f->sent, f->request_len - f->sent);
             if (n < 0) { set_error(f, "connection closed while sending"); break; }
             f->sent += (size_t)n;
             if (f->sent == f->request_len) { f->phase = HTTP_RECEIVING; f->activity_ms = now; }
@@ -316,14 +396,16 @@ HttpPhase http_poll(HttpFetch *f)
             bool got = false;
             for (int rounds = 0; rounds < 16; rounds++) {
                 if (f->len >= f->cap) { f->truncated = true; break; }
-                int n = tcp_recv(f->conn, f->buf + f->len, f->cap - f->len);
+                int n = stream_recv(f, f->buf + f->len, f->cap - f->len);
                 if (n <= 0) break;
                 f->len += (size_t)n;
                 f->activity_ms = now;
                 got = true;
             }
             TcpState st = tcp_state(f->conn);
-            if (f->len >= f->cap || (got && response_complete(f)) || tcp_peer_closed(f->conn) || st == TCP_S_CLOSED) {
+            if (f->tls && f->tls->conn.state == TLS_FAILED && !f->len) {
+                set_error(f, f->tls->conn.error);
+            } else if (f->len >= f->cap || (got && response_complete(f)) || stream_closed(f)) {
                 if (f->len >= f->cap) f->truncated = true;
                 finish(f);
             } else if (st == TCP_S_ERROR) {

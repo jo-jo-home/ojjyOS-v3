@@ -21,6 +21,8 @@ def run(args):
         file.seek(67584 * 512); file.write(bytes((262144 - 34 - 67584 + 1) * 512))
     server = web_server.start()
     port = server.server_address[1]
+    tls_server = web_server.start_tls(str(out))
+    tls_port = tls_server.server_address[1]
     base = f'http://10.0.2.2:{port}'
     vm = VM('aarch64', disk, out, 'web')
     try:
@@ -115,16 +117,21 @@ def run(args):
         assert loaded[1] == '200' and loaded[2].startswith('text/plain'), loaded[0]
         snap('06-plain-text')
 
-        mark = len(vm.text())
-        chord('l'); vm.type('https://example.com/\n'); snap('07-https-notice', 1.5)
-        assert '[WEB] GET' not in vm.text()[mark:], 'https must not be fetched in plain text'
+        # HTTPS against the local TLS 1.3 server (self-signed: encrypted, unverified)
+        loaded, _ = visit(f'https://10.0.2.2:{tls_port}/', timeout=90)
+        assert loaded[1] == '200' and int(loaded[3]) == len(web_server.PAGE), loaded[0]
+        print('local https:', loaded[0], flush=True)
+        snap('07-https-local', 1.0)
 
         mark = len(vm.text())
         chord('l'); vm.type('ojjy:about\n'); snap('08-about')
         print('server saw:', web_server.Handler.requests, flush=True)
 
         if args.internet:
-            for name, url in [('09-cern', 'http://info.cern.ch/hypertext/WWW/TheProject.html'),
+            for name, url in [('12-https-wikipedia', 'https://en.wikipedia.org/wiki/Operating_system'),
+                              ('13-https-npr', 'https://text.npr.org/'),
+                              ('14-https-hn', 'https://news.ycombinator.com/'),
+                              ('09-cern', 'http://info.cern.ch/hypertext/WWW/TheProject.html'),
                               ('10-68k-news', 'http://68k.news/'),
                               ('11-wiby-search', 'operating system')]:
                 try:
@@ -137,6 +144,7 @@ def run(args):
     finally:
         vm.close()
         server.shutdown()
+        tls_server.shutdown()
 
 
 if __name__ == '__main__':

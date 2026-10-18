@@ -192,7 +192,8 @@ static void show_error(const Url *u, const char *reason)
         char http[URL_TEXT_MAX];
         url_format(&plain, http, sizeof(http), false);
         url_encode_component(u->host, enc, sizeof(enc));
-        sappend(body, sizeof(body), "<p>Secure (HTTPS) connections are not built yet. You can:</p><ul><li><a href=\"");
+        sappend(body, sizeof(body), "<p>ojjyOS speaks TLS 1.3 with x25519; some servers need older or different "
+                                    "settings. You can:</p><ul><li><a href=\"");
         sappend_escaped(body, sizeof(body), http);
         sappend(body, sizeof(body), "\">Try the plain http:// version</a></li><li><a href=\"" SEARCH_URL);
         sappend(body, sizeof(body), enc);
@@ -245,7 +246,6 @@ static void navigate_ex(const Url *u, bool replay)
     if (B.hist_count && !replay) B.hist_scroll[B.hist_pos] = B.scroll;
     B.hover[0] = '\0';
     if (strcmp(u->scheme, "ojjy") == 0) { load_builtin(u); return; }
-    if (strcmp(u->scheme, "https") == 0) { show_error(u, "This site needs a secure (HTTPS) connection."); return; }
     http_start_url(&fetch, u, page_buf, PAGE_BUF - 1);
     if (fetch.phase == HTTP_ERROR) { show_error(u, fetch.error); return; }
     B.loading = true;
@@ -346,6 +346,12 @@ static void reload(void)
 /* Fetch completion                                                    */
 /* ------------------------------------------------------------------ */
 
+/* Short cipher name for the status bar. */
+static const char *strstr_ci_suite(const char *suite)
+{
+    return suite[4] == 'C' ? "ChaCha20" : suite[4] == 'A' ? "AES-GCM" : suite;
+}
+
 static bool starts_with_ci(const char *s, const char *prefix)
 {
     for (; *prefix; s++, prefix++) {
@@ -395,6 +401,11 @@ static void fetch_done(void)
     sappend(st, sizeof(st), ".");
     sappend_num(st, sizeof(st), (ms % 1000) / 100);
     sappend(st, sizeof(st), " s");
+    if (fetch.secure) {
+        sappend(st, sizeof(st), "  -  Encrypted (TLS 1.3 ");
+        sappend(st, sizeof(st), strstr_ci_suite(fetch.tls_suite));
+        sappend(st, sizeof(st), "), site identity not verified");
+    }
     if (fetch.truncated) sappend(st, sizeof(st), "  (page too large: truncated)");
     if (doc.truncated) sappend(st, sizeof(st), "  (layout truncated)");
     set_status(st);

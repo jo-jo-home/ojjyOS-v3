@@ -19,6 +19,7 @@ typedef enum {
     HTTP_IDLE = 0,
     HTTP_RESOLVING,
     HTTP_CONNECTING,
+    HTTP_SECURING,              /* TLS handshake (https) */
     HTTP_SENDING,
     HTTP_RECEIVING,
     HTTP_DONE,
@@ -44,9 +45,12 @@ typedef struct {
     const uint8_t *body;        /* valid when DONE */
     size_t body_len;
     bool truncated;
+    bool secure;                /* https: encrypted with TLS 1.3 */
+    char tls_suite[40];         /* negotiated cipher suite */
     HttpResponseHead head;
     /* internals */
     int conn;
+    struct TlsSlot *tls;        /* pooled TLS connection while https is open */
     ip4_t ip;
     size_t sent, chunk_scan;
     char request[URL_PATH_MAX + URL_HOST_MAX + 256];

@@ -166,3 +166,43 @@ See `ROADMAP.md` (kept current).
   fetching, ojjy:about; real internet: CERN, 68k.news (96 KB in 0.4 s), Wiby
   search. Smoke --protected both arches PASS (`build/smoke-web-*`).
 - Next: TLS 1.3 (HTTPS), then Wi-Fi tile/Network settings, then apps pass.
+
+### Phase 5 plan: HTTPS (TLS 1.3) — design notes
+- `kernel/src/crypto/`: SHA-256 + HMAC + HKDF(-Expand-Label), X25519
+  (TweetNaCl-style, left shifts of negatives avoided for UBSan), AES-128 +
+  GCM (table AES: not constant-time — documented), ChaCha20 + Poly1305 (26-bit
+  limbs). random.c becomes a ChaCha20 fast-key-erasure DRBG seeded by
+  virtio-rng + timer jitter.
+- `kernel/src/net/tls.c`: TLS 1.3 client only (RFC 8446): x25519 key share,
+  TLS_AES_128_GCM_SHA256 + TLS_CHACHA20_POLY1305_SHA256, SNI, ALPN http/1.1,
+  middlebox-compat session id + CCS, server Finished verified, tickets and
+  CCS ignored, close_notify = EOF. Transport-agnostic (send/recv callbacks)
+  so a hosted probe (`tests/tls_probe.c`) can talk to `openssl s_server` and
+  real sites from macOS before any QEMU run.
+- Certificate chain is NOT verified yet (needs X.509 + RSA/ECDSA + roots):
+  UI must say "encrypted, identity not verified", never "secure".
+- Ground truth: python hashlib/hmac, RFC 7748/McGrew-Viega vectors, openssl
+  CLI (chacha20, poly1305 mac), openssl s_server -tls1_3.
+
+### 2026-10-17 — Phase 5 DONE: HTTPS (TLS 1.3)
+- `kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c` + `crypto.h`;
+  `tests/test_crypto.c` 43 asserts vs RFC 4231/5869/7748/8439, FIPS-197,
+  McGrew-Viega GCM, and `tests/gen_crypto_vectors.py` (python hashlib/hmac +
+  openssl CLI) -> `tests/crypto_vectors.h`. All passed first run.
+- random.c is now a ChaCha20 fast-key-erasure DRBG (SHA-256 entropy mixing;
+  virtio-rng, MAC, input-event timing).
+- `kernel/src/net/tls.c`: TLS 1.3 client, x25519, ChaCha20-Poly1305 +
+  AES-128-GCM, SNI, ALPN, middlebox compat, Finished verified, KeyUpdate,
+  alerts mapped to readable errors. Certificates NOT verified (UI says
+  "Encrypted (TLS 1.3 ...), site identity not verified").
+- `tests/tls_probe.c` (hosted, real sockets): OK vs `openssl s_server -tls1_3`
+  for both suites, and live sites example.com, wikipedia, github (578 KB),
+  google, cloudflare (1 MB), apple, HN, duckduckgo, bbc, rust-lang, npr.
+- http.c: `HTTP_SECURING` phase, pooled TlsConn (pmm), stream_* transport.
+- Browser: https enabled; start page favorites add Wikipedia/NPR/HN.
+- html.c: honour `hidden`, aria-hidden, inline display:none; block elements
+  inside table cells flow inline (HN rows). test_web 54 asserts.
+- Live `qemu_browser.py` PASS `build/web-7`: local HTTPS server (TLS 1.3,
+  self-signed) exact bytes; real Wikipedia article 675 KB/0.6 s, NPR, HN.
+- Smoke --protected both arches PASS (`build/smoke-tls-*`).
+- Next: Wi-Fi tile + Network settings page; apps pass; cert verification later.

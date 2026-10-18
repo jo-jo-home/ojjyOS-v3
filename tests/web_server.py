@@ -79,6 +79,22 @@ def start():
     return server
 
 
+def start_tls(workdir):
+    """Same pages over HTTPS (TLS 1.3 only) with a throwaway self-signed cert."""
+    import ssl, subprocess, os
+    cert, key = os.path.join(workdir, 'cert.pem'), os.path.join(workdir, 'key.pem')
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1',
+                    '-keyout', key, '-out', cert, '-days', '2', '-nodes', '-subj', '/CN=10.0.2.2'],
+                   check=True, capture_output=True)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_3
+    ctx.load_cert_chain(cert, key)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.socket = ctx.wrap_socket(server.socket, server_side=True)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
 if __name__ == "__main__":
     s = start()
     print(f"serving on http://127.0.0.1:{s.server_address[1]}/ (guest: http://10.0.2.2:{s.server_address[1]}/)")

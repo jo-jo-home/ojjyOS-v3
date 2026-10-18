@@ -1,10 +1,8 @@
 /*
  * ojjyOS v3 - Kernel randomness
  *
- * Entropy from virtio-rng (when present) and timer jitter is mixed into a
- * pool. NOTE: the current output function (xoshiro256**) is NOT a
- * cryptographic generator; it is fine for DHCP xids, ports and TCP ISNs.
- * TLS must use random_bytes() only after it is upgraded to a ChaCha20 DRBG.
+ * ChaCha20 DRBG with fast key erasure (random.c). Entropy from virtio-rng
+ * (when present), the NIC MAC and timer jitter is hashed into the key.
  *
  * ojjyOS - Created by Jonas Lee
  */

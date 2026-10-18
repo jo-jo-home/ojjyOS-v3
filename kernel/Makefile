@@ -54,8 +54,13 @@ COMMON_C_SOURCES = src/main.c \
                    src/ui/services.c \
                    src/ui/theme.c \
                    src/random.c \
+                   src/crypto/sha256.c \
+                   src/crypto/x25519.c \
+                   src/crypto/aes_gcm.c \
+                   src/crypto/chacha_poly.c \
                    src/net/net.c \
                    src/net/tcp.c \
+                   src/net/tls.c \
                    src/web/url.c \
                    src/web/http.c \
                    src/web/html.c \

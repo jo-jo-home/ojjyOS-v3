@@ -232,6 +232,9 @@ cat > "$SYSROOT/System/Web/home.html" << 'PAGE'
 <li><a href="http://frogfind.com/">FrogFind</a> &mdash; simplified search and reader (when online)</li>
 <li><a href="http://68k.news/">68k.news</a> &mdash; today's headlines, lightweight</li>
 <li><a href="http://info.cern.ch/hypertext/WWW/TheProject.html">The first website</a> (CERN, 1991)</li>
+<li><a href="https://en.wikipedia.org/wiki/Special:Random">A random Wikipedia article</a></li>
+<li><a href="https://text.npr.org/">NPR text-only news</a></li>
+<li><a href="https://news.ycombinator.com/">Hacker News</a></li>
 <li><a href="http://example.com/">example.com</a></li>
 <li><a href="http://neverssl.com/">NeverSSL</a></li>
 <li><a href="http://textfiles.com/">textfiles.com</a></li>
@@ -243,7 +246,7 @@ cat > "$SYSROOT/System/Web/home.html" << 'PAGE'
 <ul>
 <li>Type words into the address bar to search, or a web address to open it.</li>
 <li><b>Cmd+L</b> address bar, <b>Cmd+R</b> reload, <b>Cmd+[</b> / <b>Cmd+]</b> back and forward.</li>
-<li>Secure <code>https://</code> sites are not supported yet &mdash; try their <code>http://</code> address.</li>
+<li><code>https://</code> sites are encrypted with TLS 1.3. Certificates are not checked yet, so don't type passwords.</li>
 <li>No network? Turn on <b>Wi-Fi</b> in Control Center.</li>
 </ul>
 <pre>
@@ -261,7 +264,7 @@ scratch on a custom kernel &mdash; not based on Linux, BSD, Windows or macOS.</p
 <h3>Inside</h3>
 <ul>
 <li>Custom kernel for ARM64 (Apple Silicon VMs) and x86-64</li>
-<li>Its own network stack: Ethernet, ARP, IPv4, DHCP, DNS, TCP and HTTP</li>
+<li>Its own network stack: Ethernet, ARP, IPv4, DHCP, DNS, TCP, HTTP and TLS 1.3</li>
 <li>This browser: HTML layout engine, links, forms and history</li>
 <li>Finder, Terminal, TextEdit, Notes, Preview, Calendar, Calculator, Settings and more</li>
 </ul>
@@ -316,7 +319,8 @@ cat > "$SYSROOT/System/Web/release.html" << 'PAGE'
 <h3>New</h3>
 <ul>
 <li><b>Networking</b> &mdash; a from-scratch network stack with DHCP, DNS and TCP.</li>
-<li><b>A real web browser</b> &mdash; open http:// websites, follow links, search and fill in forms.</li>
+<li><b>A real web browser</b> &mdash; open websites, follow links, search and fill in forms.</li>
+<li><b>HTTPS</b> &mdash; TLS 1.3 written from scratch (x25519, ChaCha20-Poly1305, AES-GCM).</li>
 <li><b>Terminal network tools</b> &mdash; <code>ifconfig</code>, <code>ping</code>, <code>nslookup</code>,
 <code>curl</code>.</li>
 <li>Accurate, fast mouse pointer and a cleaner blue desktop.</li>

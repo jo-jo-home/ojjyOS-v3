@@ -1,5 +1,15 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## >>> START HERE (2026-10-18): unfinished job — read `HANDOFF_NATIVE_VM.md` <<<
+
+Jonas stopped the previous session mid-task and asked for a handoff. The
+current job is replacing QEMU with a native Mac app on Apple's
+Virtualization.framework. Full, step-by-step instructions are in
+**`HANDOFF_NATIVE_VM.md`**; work continues on branch **`native-vm`**
+(`git checkout native-vm`; it contains unfinished step N2 and does not build
+until pci.h/pci.c exist — see the handoff). `main` builds and passes tests.
+
+
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 

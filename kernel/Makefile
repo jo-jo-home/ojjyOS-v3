@@ -42,6 +42,7 @@ COMMON_C_SOURCES = src/main.c \
                    src/uifont_data.c \
                    src/font2x.c \
                    src/ui/wallpaper.c \
+                   src/ui/icons_data.c \
                    src/memory.c \
                    src/framebuffer.c \
                    src/font.c \

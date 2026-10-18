@@ -24,6 +24,7 @@
 #include "draw.h"
 #include "wallpaper.h"
 #include "../uifont.h"
+#include "icons.h"
 #include "../net/net.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
@@ -349,6 +350,8 @@ static int ctx_menu_y = 0;
 static uint64_t last_frame_ms = 0;
 
 static int ease_out(int t);
+static void draw_icon_id(IconId id, int x, int y, int size, uint8_t alpha);
+static void draw_app_icon(const AppInfo *app, int x, int y, int size);
 static uint8_t overlay_alpha(uint8_t base, int anim);
 static int overlay_offset(int anim, int max_offset);
 static AppType app_type_from_bundle(const char *bundle_id);
@@ -358,7 +361,6 @@ static void finder_update_preview(FinderState *state);
 static bool path_in_trash(const char *path);
 static void trash_dir(char *out, size_t size);
 static void empty_trash(void);
-static void draw_icon_scaled(const uint8_t *pixels, int src_size, int x, int y, int size);
 static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x, int y, int w, int h);
 static void textedit_load_file(TextEditState *edit, const char *path);
 static size_t str_append(char *dest, size_t size, const char *src);
@@ -741,20 +743,20 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
                     for (int a = 0; a < app_registry_count(); a++) {
                         AppInfo *app = app_registry_get(a);
                         if (app && strcmp(app->path, path) == 0 && app->icon.valid) {
-                            draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, ix, iy, icon);
+                            draw_app_icon(app, ix, iy, icon);
                             drew_icon = true;
                             break;
                         }
                     }
                 }
             } else if (entry->type == VFS_TYPE_DIR) {
-                if (icon_folder_loaded) {
-                    draw_icon_scaled(icon_folder, BUNDLE_ICON_SIZE, ix, iy, icon);
+                if (true) {  /* built-in icon set */
+                    draw_icon_id(ICON_FOLDER, ix, iy, icon, 255);
                     drew_icon = true;
                 }
             } else if (entry->type == VFS_TYPE_FILE) {
-                if (icon_file_loaded) {
-                    draw_icon_scaled(icon_file, BUNDLE_ICON_SIZE, ix, iy, icon);
+                if (true) {  /* built-in icon set */
+                    draw_icon_id(ICON_FILE, ix, iy, icon, 255);
                     drew_icon = true;
                 }
             }
@@ -2275,22 +2277,34 @@ static void draw_login_screen(void)
     }
 }
 
-static void draw_icon_scaled(const uint8_t *pixels, int src_size, int x, int y, int size)
+/* Built-in Tahoe icon set (tools/mkicons.py), filtered to any size. */
+static void draw_icon_id(IconId id, int x, int y, int size, uint8_t alpha)
 {
-    for (int py = 0; py < size; py++) {
-        int sy = (py * src_size) / size;
-        for (int px = 0; px < size; px++) {
-            int sx = (px * src_size) / size;
-            int idx = (sy * src_size + sx) * 4;
-            uint8_t r = pixels[idx + 0];
-            uint8_t g = pixels[idx + 1];
-            uint8_t b = pixels[idx + 2];
-            uint8_t a = pixels[idx + 3];
-            if (a > 16) {
-                fb_put_pixel(x + px, y + py, RGB(r, g, b));
-            }
-        }
-    }
+    if ((unsigned)id < ICON_COUNT)
+        gfx_draw_rgba_scaled(surface(), icon_pixels[id], ICON_PX, ICON_PX, x, y, size, size, alpha);
+}
+
+static int icon_for_bundle(const char *bundle_id)
+{
+    static const struct { const char *id; IconId icon; } map[] = {
+        { "com.ojjyos.finder", ICON_FINDER }, { "com.ojjyos.terminal", ICON_TERMINAL },
+        { "com.ojjyos.textedit", ICON_TEXTEDIT }, { "com.ojjyos.notes", ICON_NOTES },
+        { "com.ojjyos.preview", ICON_PREVIEW }, { "com.ojjyos.settings", ICON_SETTINGS },
+        { "com.ojjyos.about", ICON_ABOUT }, { "com.ojjyos.calendar", ICON_CALENDAR },
+        { "com.ojjyos.calculator", ICON_CALCULATOR }, { "com.ojjyos.monitor", ICON_MONITOR },
+        { "com.ojjyos.web", ICON_WEB },
+    };
+    for (unsigned i = 0; bundle_id && i < ARRAY_SIZE(map); i++)
+        if (strcmp(bundle_id, map[i].id) == 0) return (int)map[i].icon;
+    return -1;
+}
+
+static void draw_app_icon(const AppInfo *app, int x, int y, int size)
+{
+    int id = icon_for_bundle(app->bundle_id);
+    if (id >= 0) draw_icon_id((IconId)id, x, y, size, 255);
+    else if (app->icon.valid)
+        gfx_draw_rgba_scaled(surface(), app->icon.pixels, BUNDLE_ICON_SIZE, BUNDLE_ICON_SIZE, x, y, size, size, 255);
 }
 
 static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x, int y, int w, int h)
@@ -2361,7 +2375,7 @@ static void draw_dock(uint64_t now_ms)
         int icon_y = icon_center_y - size / 2 + bounce - lift;
 
         if (app->icon.valid) {
-            draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, icon_x, icon_y, size);
+            draw_app_icon(app, icon_x, icon_y, size);
         } else {
             fb_fill_rect(icon_x, icon_y, size, size, theme->accent);
         }
@@ -2548,19 +2562,10 @@ static void draw_desktop_icons(void)
         }
 
         if (icon->is_disk) {
-            /* Hand-drawn disk icon: blue rounded square with a lighter band */
-            draw_rounded_rect_blend(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, 10,
-                                    theme->accent, 230);
-            draw_rounded_rect_blend(x + 4, y + 4, DESKTOP_ICON_SIZE - 8, 18, 6,
-                                    theme->accent_soft, 160);
-            /* Drive slot + activity light; the label below names it. */
-            draw_rounded_rect_blend(x + 8, y + DESKTOP_ICON_SIZE - 14, DESKTOP_ICON_SIZE - 26, 4, 2,
-                                    theme->midnight, 120);
-            draw_rounded_rect_blend(x + DESKTOP_ICON_SIZE - 13, y + DESKTOP_ICON_SIZE - 15, 6, 6, 3,
-                                    RGB(120, 230, 160), 230);
+            draw_icon_id(ICON_DISK, x, y, DESKTOP_ICON_SIZE, 255);
         } else if (icon->type == VFS_TYPE_DIR) {
-            if (icon_folder_loaded) {
-                draw_icon_scaled(icon_folder, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
+            if (true) {  /* built-in icon set */
+                draw_icon_id(ICON_FOLDER, x, y, DESKTOP_ICON_SIZE, 255);
             } else {
                 fb_fill_rect(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, theme->accent_soft);
             }
@@ -2569,7 +2574,7 @@ static void draw_desktop_icons(void)
             for (int a = 0; a < app_registry_count(); a++) {
                 AppInfo *app = app_registry_get(a);
                 if (app && strcmp(app->path, icon->path) == 0 && app->icon.valid) {
-                    draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
+                    draw_app_icon(app, x, y, DESKTOP_ICON_SIZE);
                     drew = true;
                     break;
                 }
@@ -2578,8 +2583,8 @@ static void draw_desktop_icons(void)
                 fb_fill_rect(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, theme->accent_soft);
             }
         } else {
-            if (icon_file_loaded) {
-                draw_icon_scaled(icon_file, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
+            if (true) {  /* built-in icon set */
+                draw_icon_id(ICON_FILE, x, y, DESKTOP_ICON_SIZE, 255);
             } else {
                 fb_fill_rect(x, y, DESKTOP_ICON_SIZE, DESKTOP_ICON_SIZE, theme->accent_soft);
             }
@@ -2651,7 +2656,7 @@ static void draw_launchpad(int anim)
             int iy = start_y + row * (LAUNCHPAD_ICON_SIZE + 48);
 
             if (app->icon.valid) {
-                draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, ix, iy, LAUNCHPAD_ICON_SIZE);
+                draw_app_icon(app, ix, iy, LAUNCHPAD_ICON_SIZE);
             } else {
                 fb_fill_rect(ix, iy, LAUNCHPAD_ICON_SIZE, LAUNCHPAD_ICON_SIZE, theme->accent);
             }
@@ -2797,7 +2802,7 @@ static void draw_mission_control(int anim)
         int aidx = app_registry_find_by_name(win->title);
         AppInfo *app = app_registry_get(aidx);
         if (app && app->icon.valid) {
-            draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, cx + 16, cy + 42, 40);
+            draw_app_icon(app, cx + 16, cy + 42, 40);
         } else {
             fb_fill_rect(cx + 16, cy + 42, 40, 40, theme->accent);
         }
@@ -2859,7 +2864,7 @@ static void draw_app_switcher(int anim)
             draw_rounded_rect_blend(icon_x - 6, icon_y - 6, size + 12, size + 12, 12, theme->accent, 70);
         }
         if (app->icon.valid) {
-            draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, icon_x, icon_y, size);
+            draw_app_icon(app, icon_x, icon_y, size);
         } else {
             fb_fill_rect(icon_x, icon_y, size, size, theme->accent);
         }

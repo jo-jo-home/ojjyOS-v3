@@ -171,3 +171,9 @@ Results are appended to the log below.
     pointer, 2x apps check, x86 smoke PASS (`build/p3-live/`).
   * Next: move UI text to Inter component by component (Phase 3b), together
     with the Phase 4 redesign of each component.
+- Phase 4.1 done: new icon set `tools/mkicons.py` -> `kernel/src/ui/icons_data.c`
+  (15 icons: 11 apps + folder/file/disk/trash; vector shapes at 4x, squircle,
+  gradients, gloss, soft shadows; 128x128 premultiplied-Lanczos). Drawn via
+  `gfx_draw_rgba_scaled` (area-average shrink, bilinear grow) so 1x and 2x
+  are both smooth; apps map by bundle id, bundle .raw icons remain a fallback.
+  `build/perf/p4-icons` (2x HVF): drag 24 ms/frame.

@@ -14,8 +14,6 @@
 #include "string.h"
 #include "types.h"
 
-#define RTC_BASE        0x09010000UL
-
 #define RTC_DR          0x00    /* Data register (seconds) */
 #define RTC_MR          0x04    /* Match register */
 #define RTC_LR          0x08    /* Load register */

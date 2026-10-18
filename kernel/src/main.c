@@ -32,6 +32,7 @@
 #else
 #include "arch/aarch64/arch64.h"
 #include "arch/aarch64/virtio_devices.h"
+#include "arch/aarch64/platform.h"
 #endif
 
 /* Filesystem */
@@ -842,6 +843,13 @@ void kernel_main(BootInfo *boot_info)
 {
     g_boot_info = boot_info;
 
+#ifndef __x86_64__
+    /* Describe the machine from ACPI before anything else: the serial
+     * driver needs to know whether a PL011 exists, and every other
+     * driver asks the platform where its devices live. */
+    platform_init(boot_info);
+#endif
+
     /* Initialize serial first for debugging */
     serial_init(COM1_PORT);
     serial_printf("\n\n");
@@ -869,6 +877,14 @@ void kernel_main(BootInfo *boot_info)
     serial_printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
     serial_printf(" ~  ojjyOS  -  Tahoe Liquid Glass  ~\n");
     serial_printf("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\n");
+
+#ifndef __x86_64__
+    serial_printf("[PLATFORM] %s gic v%d gicd 0x%llx ecam 0x%llx\n",
+        platform.name ? platform.name : "?",
+        platform.gic_version,
+        (unsigned long long)platform.gicd,
+        (unsigned long long)platform.ecam);
+#endif
 
     serial_printf("[BOOT] Framebuffer: %dx%d @ 0x%p\n",
         boot_info->fb_width, boot_info->fb_height, boot_info->fb_addr);

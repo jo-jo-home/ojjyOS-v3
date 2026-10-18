@@ -63,3 +63,13 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 - 2026-10-18: probes above. Bootloader now saves `\ojjyboot.log` and dumps
   memory map, configuration tables, ACPI (MADT/MCFG/GTDT/FADT) and PCI.
 - N1 done: ARM kernel linked at 0x71000000. QEMU TCG + HVF smoke --protected PASS (build/n1); under VZ the bootloader loads it and jumps (entry 0x71053800).
+- N2 done (branch native-vm, commit to follow): pci.h/pci.c (ECAM config via
+  mmio.h, bus-0 enumeration, BAR decode, Memory+BusMaster enable, pci_find());
+  platform.c/pci.c added to kernel/Makefile; platform_init(boot_info) is now
+  the first statement of kernel_main on aarch64 with a "[PLATFORM] ..." line
+  after the banner; unused RTC_BASE removed from pl031.c. Evidence: both
+  builds 0 warnings (build/n2-build-{arm,x86}.log), scripts/test.sh all
+  suites passed (build/n2-tests.log), QEMU TCG smoke --protected PASS
+  (build/n2-tcg), HVF smoke --protected PASS (build/n2-hvf), pointer test
+  PASS with 1.9-3.4 ms overlay latency and zero scene repaints for desktop
+  moves (build/n2-ptr).

@@ -21,6 +21,7 @@
 #include "netcmd.h"
 #include "browser.h"
 #include "draw.h"
+#include "../net/net.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -33,8 +34,8 @@
 #define DOCK_HOVER_RADIUS       90
 #define SPOTLIGHT_WIDTH         520
 #define SPOTLIGHT_HEIGHT        58
-#define CONTROL_CENTER_WIDTH    260
-#define CONTROL_CENTER_HEIGHT   220
+#define CONTROL_CENTER_WIDTH    320
+#define CONTROL_CENTER_HEIGHT   236
 #define LAUNCHPAD_ICON_SIZE     56
 #define LAUNCHPAD_COLS          4
 #define LAUNCHPAD_ROWS          3
@@ -153,6 +154,7 @@ typedef enum {
     SETTINGS_PAGE_DOCK,
     SETTINGS_PAGE_KEYBOARD,
     SETTINGS_PAGE_MOUSE,
+    SETTINGS_PAGE_NETWORK,
     SETTINGS_PAGE_ABOUT,
     SETTINGS_PAGE_COUNT
 } SettingsPage;
@@ -823,6 +825,39 @@ static void mask_password_str(const char *src, char *dst, size_t dst_size)
     dst[n] = '\0';
 }
 
+/* ------------------------------------------------------------------ */
+/* Network status (Wi-Fi tile, menu bar glyph, Settings > Network).    */
+/* QEMU has no Wi-Fi radio: the tile drives the real virtual adapter.  */
+/* ------------------------------------------------------------------ */
+
+static char cc_message[48];
+static uint64_t cc_message_until;
+
+static const char *network_status_text(void)
+{
+    const NetInfo *ni = net_info();
+    if (!ni->present) return "No adapter";
+    if (!ni->enabled) return "Off";
+    return ni->configured ? "Connected" : "Connecting...";
+}
+
+static void set_wifi(bool on)
+{
+    net_set_enabled(on);
+    settings_get()->wifi_enabled = on;
+    settings_save();
+    mark_dirty();
+}
+
+/* A small Wi-Fi fan: dot + two widening arcs (bars), slashed when off. */
+static void draw_wifi_glyph(int x, int y, Color c, bool off)
+{
+    draw_rounded_rect_blend(x + 6, y + 10, 4, 4, 2, c, 255);
+    draw_rounded_rect_blend(x + 3, y + 6, 10, 2, 1, c, off ? 110 : 255);
+    draw_rounded_rect_blend(x, y + 2, 16, 2, 1, c, off ? 80 : 255);
+    if (off) for (int i = 0; i < 14; i++) fb_fill_rect(x + 1 + i, y + 1 + i, 2, 1, c);
+}
+
 static void draw_settings_window(SettingsStateUi *state, int content_x, int content_y, int content_w, int content_h)
 {
     int sidebar_w = 160;
@@ -835,6 +870,7 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         "Dock & Menu",
         "Keyboard",
         "Mouse",
+        "Network",
         "About"
     };
 
@@ -957,6 +993,48 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         fb_draw_string(main_x + 16, content_y + 16, "Mouse/Trackpad", theme->text, theme->dock_tint);
         fb_draw_string(main_x + 16, content_y + 42, "Tracking Speed", theme->text_muted, theme->dock_tint);
         fb_fill_rect(main_x + 140, content_y + 38, settings->mouse_speed * 20, 10, theme->accent_soft);
+    } else if (state->page == SETTINGS_PAGE_NETWORK) {
+        const NetInfo *ni = net_info();
+        char line[80], a[20], b[20];
+        fb_draw_string(main_x + 16, content_y + 16, "Network", theme->text, theme->dock_tint);
+        int ry = content_y + APPEARANCE_ROW_Y(0);
+        fb_draw_string(main_x + 16, ry + 5, "Wi-Fi", theme->text, theme->dock_tint);
+        fb_draw_string(main_x + 72, ry + 5, network_status_text(), theme->text_muted, theme->dock_tint);
+        if (ni->present) draw_switch(main_x + main_w - 58, ry + 3, ni->enabled);
+        int ly = ry + 34;
+        if (ni->present) {
+            net_format_mac(ni->mac, a, sizeof(a));
+            line[0] = '\0'; str_append(line, sizeof(line), "Adapter   "); str_append(line, sizeof(line), ni->driver);
+            str_append(line, sizeof(line), "  "); str_append(line, sizeof(line), a);
+            fb_draw_string(main_x + 16, ly, line, theme->text_muted, theme->dock_tint); ly += 18;
+            if (ni->configured) {
+                net_format_ip(ni->ip, a, sizeof(a)); net_format_ip(ni->netmask, b, sizeof(b));
+                line[0] = '\0'; str_append(line, sizeof(line), "Address   "); str_append(line, sizeof(line), a);
+                str_append(line, sizeof(line), " / "); str_append(line, sizeof(line), b);
+                fb_draw_string(main_x + 16, ly, line, theme->text, theme->dock_tint); ly += 18;
+                net_format_ip(ni->gateway, a, sizeof(a)); net_format_ip(ni->dns, b, sizeof(b));
+                line[0] = '\0'; str_append(line, sizeof(line), "Router    "); str_append(line, sizeof(line), a);
+                str_append(line, sizeof(line), "   DNS "); str_append(line, sizeof(line), b);
+                fb_draw_string(main_x + 16, ly, line, theme->text, theme->dock_tint); ly += 18;
+            }
+            char n1[24], n2[24];
+            utoa(ni->rx_bytes / 1024, n1, 10); utoa(ni->tx_bytes / 1024, n2, 10);
+            line[0] = '\0'; str_append(line, sizeof(line), "Traffic   received "); str_append(line, sizeof(line), n1);
+            str_append(line, sizeof(line), " KB, sent "); str_append(line, sizeof(line), n2); str_append(line, sizeof(line), " KB");
+            fb_draw_string(main_x + 16, ly, line, theme->text_muted, theme->dock_tint); ly += 26;
+            draw_rounded_rect_blend(main_x + 16, ly, 120, 22, 8, theme->accent_soft, ni->enabled ? 220 : 100);
+            fb_draw_string(main_x + 28, ly + 3, "Renew Lease", theme->text, theme->accent_soft);
+            ly += 36;
+        } else {
+            fb_draw_string(main_x + 16, ly, "No network adapter was found.", theme->text_muted, theme->dock_tint); ly += 18;
+            fb_draw_string(main_x + 16, ly, "Start QEMU with virtio-net (run-qemu.sh does).", theme->text_muted, theme->dock_tint);
+            ly += 36;
+        }
+        fb_draw_string(main_x + 16, ly, "Bluetooth", theme->text, theme->dock_tint);
+        fb_draw_string(main_x + 112, ly, "No Bluetooth hardware", theme->text_muted, theme->dock_tint);
+        ly += 30;
+        fb_draw_string(main_x + 16, ly, "In a VM the connection is a virtual", theme->text_muted, theme->dock_tint);
+        fb_draw_string(main_x + 16, ly + 16, "Ethernet adapter, shown here as Wi-Fi.", theme->text_muted, theme->dock_tint);
     } else if (state->page == SETTINGS_PAGE_ABOUT) {
         fb_draw_string(main_x + 16, content_y + 16, "About", theme->text, theme->dock_tint);
         fb_draw_string(main_x + 16, content_y + 42, "ojjyOS v3", theme->text_muted, theme->dock_tint);
@@ -1866,6 +1944,11 @@ static void draw_menu_bar(void)
     int user_w = ((int)strlen(uname) + 1) * FONT_WIDTH;
     int status_x = (int)comp_width - 136;
     fb_draw_string(status_x - user_w - 14, 8, uname, theme->accent, theme->dock_tint);
+    if (net_info()->present) {
+        const NetInfo *ni = net_info();
+        bool connected = ni->enabled && ni->configured;
+        draw_wifi_glyph(status_x - user_w - 40, 7, connected ? theme->text : theme->text_muted, !ni->enabled);
+    }
     fb_draw_string(status_x, 8, "Control", theme->text_muted, theme->dock_tint);
     fb_draw_string((int)comp_width - 70, 8, time_buf, theme->text, theme->dock_tint);
 }
@@ -2563,6 +2646,16 @@ static void draw_launchpad(int anim)
     }
 }
 
+/* Control Center: four tiles (Wi-Fi, Bluetooth, Appearance, Transparency)
+ * plus Restart / Shut Down. Geometry shared with the click handler. */
+#define CC_TILE_W   ((CONTROL_CENTER_WIDTH - 44) / 2)
+#define CC_TILE_H   56
+static void cc_tile_rect(int panel_x, int panel_y, int i, int *tx, int *ty)
+{
+    *tx = panel_x + 16 + (i % 2) * (CC_TILE_W + 12);
+    *ty = panel_y + 40 + (i / 2) * (CC_TILE_H + 10);
+}
+
 static void draw_control_center(int anim)
 {
     int x = (int)comp_width - CONTROL_CENTER_WIDTH - 20;
@@ -2571,25 +2664,47 @@ static void draw_control_center(int anim)
 
     draw_shadow(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r);
     draw_rounded_rect_blend(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r,
-                            theme->dock_tint, overlay_alpha(165, anim));
+                            theme->dock_tint, overlay_alpha(225, anim));
 
     SettingsState *settings = settings_get();
-
+    const NetInfo *ni = net_info();
     fb_draw_string(x + 16, y + 12, "Control Center", theme->text, theme->dock_tint);
 
-    int toggle_y = y + 40;
-    fb_draw_string(x + 16, toggle_y,
-                   settings->wifi_enabled ? "Wi-Fi: On (no radio)" : "Wi-Fi: Off (no radio)",
-                   theme->text_muted, theme->dock_tint);
-    fb_draw_string(x + 16, toggle_y + 22,
-                   settings->bluetooth_enabled ? "Bluetooth: On (no radio)" : "Bluetooth: Off (no radio)",
-                   theme->text_muted, theme->dock_tint);
-    fb_draw_string(x + 16, toggle_y + 44,
-                   settings->dark_mode ? "Appearance: Dark" : "Appearance: Light",
-                   theme->text, theme->dock_tint);
-    fb_draw_string(x + 16, toggle_y + 66,
-                   settings->reduced_transparency ? "Transparency: Reduced" : "Transparency: Glass",
-                   theme->text, theme->dock_tint);
+    const char *titles[4] = { "Wi-Fi", "Bluetooth", "Appearance", "Transparency" };
+    const char *status[4] = {
+        network_status_text(), "No hardware",
+        settings->dark_mode ? "Dark" : "Light",
+        settings->reduced_transparency ? "Reduced" : "Glass"
+    };
+    bool on[4] = { ni->present && ni->enabled, false, settings->dark_mode, !settings->reduced_transparency };
+    bool usable[4] = { ni->present, false, true, true };
+    for (int i = 0; i < 4; i++) {
+        int tx, ty;
+        cc_tile_rect(x, y, i, &tx, &ty);
+        draw_rounded_rect_blend(tx, ty, CC_TILE_W, CC_TILE_H, 12, COLOR_WHITE, overlay_alpha(usable[i] ? 120 : 60, anim));
+        Color disc = on[i] ? theme->accent : theme->text_muted;
+        draw_rounded_rect_blend(tx + 10, ty + 14, 28, 28, 14, disc, overlay_alpha(on[i] ? 240 : 90, anim));
+        if (i == 0) draw_wifi_glyph(tx + 16, ty + 21, COLOR_WHITE, !on[i]);
+        else if (i == 1) { fb_fill_rect(tx + 23, ty + 20, 2, 16, COLOR_WHITE); fb_fill_rect(tx + 19, ty + 24, 10, 2, COLOR_WHITE); }
+        else if (i == 2) { draw_rounded_rect_blend(tx + 17, ty + 21, 14, 14, 7, COLOR_WHITE, 255);
+                           draw_rounded_rect_blend(tx + 22, ty + 19, 12, 12, 6, disc, 255); }
+        else { draw_rounded_rect_blend(tx + 17, ty + 21, 14, 14, 4, COLOR_WHITE, on[i] ? 150 : 255); }
+        fb_draw_string(tx + 46, ty + 12, titles[i], usable[i] ? theme->text : theme->text_muted, theme->dock_tint);
+        fb_draw_string(tx + 46, ty + 30, status[i], theme->text_muted, theme->dock_tint);
+    }
+
+    /* Info line: current address, or a transient message */
+    char info[64];
+    info[0] = '\0';
+    if (cc_message[0] && timer_get_ticks() < cc_message_until) {
+        str_append(info, sizeof(info), cc_message);
+    } else if (ni->configured && ni->enabled) {
+        char ip[16];
+        net_format_ip(ni->ip, ip, sizeof(ip));
+        str_append(info, sizeof(info), "Network address ");
+        str_append(info, sizeof(info), ip);
+    }
+    fb_draw_string(x + 16, y + 40 + 2 * (CC_TILE_H + 10) + 2, info, theme->text_muted, theme->dock_tint);
 
     /* Real power controls: Restart and Shut Down */
     int btn_y = y + CONTROL_CENTER_HEIGHT - 44;
@@ -4884,6 +4999,7 @@ static int app_open_window(AppType type, const char *title)
 
     int id = create_window_internal(title, x, y, w, h, type);
     if (id >= 0) {
+        serial_printf("[UI] window '%s' at %d,%d %dx%d\n", title, x, y, w, h);   /* test/diagnostic receipt */
         rebuild_app_window_index();
         active_window_index = window_count - 1;
     }
@@ -4958,6 +5074,7 @@ void compositor_init(uint32_t width, uint32_t height)
     search_index_init();
     notifications_init();
     settings_load();
+    net_set_enabled(settings_get()->wifi_enabled);     /* Wi-Fi tile state survives reboots */
     compositor_set_dark_mode(settings_get()->dark_mode);
     compositor_set_wallpaper(settings_get()->dark_mode
         ? "/System/Wallpapers/Tahoe Dark.raw"
@@ -6117,6 +6234,16 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 overlay_set(OVERLAY_NONE);
                 return;
             }
+            {
+                /* Wi-Fi glyph (left of the user name) opens Control Center */
+                int user_w = ((int)strlen(users_current_username()) + 1) * FONT_WIDTH;
+                int gx = (int)comp_width - 136 - user_w - 40;
+                if (net_info()->present && x >= gx - 4 && x < gx + 20) {
+                    active_menu = 0;
+                    overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
+                    return;
+                }
+            }
             if (x >= (int)comp_width - 230 && x < (int)comp_width - 140) {
                 active_menu = 0;
                 overlay_set(OVERLAY_NONE);
@@ -6185,21 +6312,29 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
             int panel_y = MENU_BAR_HEIGHT + 10;
             if (x >= panel_x && x <= panel_x + CONTROL_CENTER_WIDTH &&
                 y >= panel_y && y <= panel_y + CONTROL_CENTER_HEIGHT) {
-                int toggle_y = panel_y + 40;
                 int btn_y = panel_y + CONTROL_CENTER_HEIGHT - 44;
                 int btn_w = (CONTROL_CENTER_WIDTH - 40) / 2;
                 int btn_h = 28;
-                if (y >= toggle_y && y < toggle_y + 20) {
-                    settings_toggle_wifi();
-                } else if (y >= toggle_y + 22 && y < toggle_y + 42) {
-                    settings_toggle_bluetooth();
-                } else if (y >= toggle_y + 44 && y < toggle_y + 64) {
+                int tile = -1;
+                for (int i = 0; i < 4; i++) {
+                    int tx, ty;
+                    cc_tile_rect(panel_x, panel_y, i, &tx, &ty);
+                    if (x >= tx && x < tx + CC_TILE_W && y >= ty && y < ty + CC_TILE_H) tile = i;
+                }
+                mark_dirty();
+                if (tile == 0) {
+                    if (net_info()->present) set_wifi(!net_info()->enabled);
+                    else { strcpy(cc_message, "No network adapter in this VM"); cc_message_until = timer_get_ticks() + 3000; }
+                } else if (tile == 1) {
+                    strcpy(cc_message, "No Bluetooth hardware in this VM");
+                    cc_message_until = timer_get_ticks() + 3000;
+                } else if (tile == 2) {
                     settings_toggle_dark_mode();
                     compositor_set_dark_mode(settings_get()->dark_mode);
                     compositor_set_wallpaper(settings_get()->dark_mode
                         ? "/System/Wallpapers/Tahoe Dark.raw"
                         : "/System/Wallpapers/Tahoe Light.raw");
-                } else if (y >= toggle_y + 66 && y < toggle_y + 86) {
+                } else if (tile == 3) {
                     settings_toggle_reduced_transparency();
                 } else if (y >= btn_y && y <= btn_y + btn_h) {
                     if (x >= panel_x + 16 && x <= panel_x + 16 + btn_w) {
@@ -6520,6 +6655,16 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 1) settings_toggle_time_format();
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 2) settings_toggle_reduced_transparency();
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 3) settings_toggle_reduced_motion();
+                        if (state->settings.page == SETTINGS_PAGE_NETWORK && net_info()->present) {
+                            if (row == 0) set_wifi(!net_info()->enabled);
+                            /* "Renew Lease" button sits below the detail lines */
+                            int lines = net_info()->configured ? 4 : 2;
+                            int by = content_y + APPEARANCE_ROW_Y(0) + 34 + lines * 18 + 8;
+                            if (x >= main_x + 16 && x <= main_x + 136 && y >= by && y < by + 22 && net_info()->enabled) {
+                                net_renew();
+                                mark_dirty();
+                            }
+                        }
                         if (state->settings.page == SETTINGS_PAGE_USERS) {
                             if (x >= main_x + 92 && x <= main_x + 242 &&
                                 y >= content_y + 118 && y <= content_y + 138) {
@@ -7059,6 +7204,20 @@ void compositor_tick(uint64_t now_ms)
     fb_cursor_move(cursor_x, cursor_y);
     if (netcmd_busy()) netcmd_poll(terminal_net_print);
     browser_poll();
+    {
+        /* Network status shows in the menu bar, Control Center and Settings:
+         * repaint when it changes (DHCP finishes in the background). */
+        static uint32_t last_sig;
+        static uint64_t last_counters_ms;
+        const NetInfo *ni = net_info();
+        uint32_t sig = ((uint32_t)ni->present | ((uint32_t)ni->enabled << 1) | ((uint32_t)ni->configured << 2)) ^ ni->ip;
+        if (sig != last_sig) { last_sig = sig; mark_dirty(); }
+        bool showing_counters = overlay == OVERLAY_CONTROL_CENTER ||
+            (app_window_index[APP_SETTINGS] >= 0 &&
+             app_states[app_window_index[APP_SETTINGS]].settings.page == SETTINGS_PAGE_NETWORK);
+        if (showing_counters && now_ms - last_counters_ms > 1000) { last_counters_ms = now_ms; mark_dirty(); }
+        if (cc_message[0] && now_ms >= cc_message_until && overlay == OVERLAY_CONTROL_CENTER) { cc_message[0] = '\0'; mark_dirty(); }
+    }
     uint64_t delta = now_ms - last_frame_ms;
     if (delta < 33) {
         return;

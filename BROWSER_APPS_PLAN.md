@@ -206,3 +206,18 @@ See `ROADMAP.md` (kept current).
   self-signed) exact bytes; real Wikipedia article 675 KB/0.6 s, NPR, HN.
 - Smoke --protected both arches PASS (`build/smoke-tls-*`).
 - Next: Wi-Fi tile + Network settings page; apps pass; cert verification later.
+
+### 2026-10-17 — Wi-Fi / Bluetooth request DONE (honest version)
+- Control Center redesigned as tiles (Wi-Fi, Bluetooth, Appearance,
+  Transparency) + address line + Restart/Shut Down. Wi-Fi tile calls
+  `net_set_enabled()` and persists `wifi=` (applied at UI start).
+  Bluetooth tile: "No hardware" + message; cannot be enabled.
+- Menu bar Wi-Fi glyph (slashed when off; click opens Control Center).
+- Settings > Network page: status + switch, adapter/MAC, address/mask,
+  router/DNS, traffic counters, Renew Lease, Bluetooth "No hardware", note
+  that the VM link is virtual Ethernet. Repaints when network state changes.
+- `[UI] window '<title>' at x,y wxh` serial receipt for UI tests.
+- Live `tests/qemu_network_ui.py` PASS (`build/netui-2`): tile off ->
+  `[NET] Network off`, Bluetooth message, tile on -> new DHCP lease,
+  Settings > Network shows the lease. Smoke both arches PASS.
+- Next: apps pass (all built-in apps), then cert verification / images.

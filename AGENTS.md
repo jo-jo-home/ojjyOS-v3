@@ -3,7 +3,14 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## LATEST (2026-10-17): networking + working web browser; next HTTPS, Wi-Fi tile, apps pass
+## LATEST (2026-10-17): networking, browser with HTTPS, real Wi-Fi tile, apps pass DONE
+
+Commits c07af3a (network), 11cbdbd (browser), 9adb978 (TLS 1.3/HTTPS),
+5887bf9 (Wi-Fi tile + Settings > Network), 305fc9e (apps pass). Next ideas
+in ROADMAP.md: certificate verification, images (PNG), Downloads, TextEdit
+word wrap, Preview for real files, Intel NIC. Nothing pushed.
+
+### (earlier in this session) networking + working web browser
 
 Jonas: "keep working on improvements, make a list of new stuff, improve all
 apps, focus on a working browser" and "add wifi bluetooth ... write down plans

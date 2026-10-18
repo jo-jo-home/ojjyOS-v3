@@ -92,6 +92,21 @@ int main(void)
     gfx_draw_rgba_scaled(&surf, img, 16, 16, 50, 40, 40, 40, 255);
     CHECK(guard_intact(), "image draw clipped");
 
+    /* Layer blit: same size copies exactly; half size filters; mask + clip */
+    static uint32_t layer[20 * 10];
+    for (int i = 0; i < 20 * 10; i++) layer[i] = (i % 20) < 10 ? 0x00FF00 : 0x0000FF;
+    reset(0x000000);
+    gfx_blit_scaled(&surf, layer, 20, 0, 0, 20, 10, 5, 5, 20, 10, 0, 255);
+    CHECK(at(5, 5) == 0x00FF00 && at(24, 14) == 0x0000FF && at(4, 5) == 0 && at(25, 5) == 0, "same-size layer blit is exact");
+    reset(0x000000);
+    gfx_blit_scaled(&surf, layer, 20, 0, 0, 20, 10, 0, 0, 10, 5, 0, 255);
+    CHECK((at(2, 2) & 0xFFFFFF) == 0x00FF00 && (at(8, 2) & 0xFFFFFF) == 0x0000FF, "downscaled layer keeps both halves");
+    reset(0x000000);
+    gfx_blit_scaled(&surf, layer, 20, 0, 0, 20, 10, 10, 10, 20, 10, 5, 128);
+    CHECK(at(10, 10) == 0 && (at(15, 15) >> 8 & 0xFF) > 100 && (at(15, 15) >> 8 & 0xFF) < 140, "rounded mask and alpha");
+    gfx_blit_scaled(&surf, layer, 20, 0, 0, 20, 10, 50, 40, 40, 40, 0, 255);
+    CHECK(guard_intact(), "layer blit clipped");
+
     reset(0x000000);
     gfx_round_rect_stroke(&surf, 4, 4, 40, 30, 8, 0xFFFFFF, 255);
     CHECK(at(20, 4) == 0xFFFFFF && at(20, 5) == 0 && at(4, 20) == 0xFFFFFF && at(20, 20) == 0, "hairline border");

@@ -54,6 +54,12 @@ void gfx_shadow(GfxSurface *s, int x, int y, int w, int h, int r, int spread, in
  * semicircle, 180 = full ring). Used for Wi-Fi fans, spinners, gauges. */
 void gfx_arc_up(GfxSurface *s, int cx, int cy, int r_in, int r_out, int half_angle_deg,
                 uint32_t color, uint8_t alpha);
+/* Layer blit for animations: the PHYSICAL source rectangle (src_x, src_y,
+ * src_w, src_h) of `src` (row pitch src_pitch pixels) is scaled with
+ * bilinear filtering into the LOGICAL destination rect, clipped to a
+ * rounded-rect mask of radius r (anti-aliased) and blended with `alpha`. */
+void gfx_blit_scaled(GfxSurface *s, const uint32_t *src, int src_pitch, int src_x, int src_y, int src_w, int src_h,
+                     int x, int y, int w, int h, int r, uint8_t alpha);
 /* Bilinear-filtered RGBA image (straight alpha, bytes R,G,B,A), scaled into
  * the destination rectangle and blended with an overall `alpha`. */
 void gfx_draw_rgba_scaled(GfxSurface *s, const uint8_t *rgba, int src_w, int src_h,

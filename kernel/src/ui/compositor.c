@@ -354,6 +354,16 @@ static int ctx_menu_y = 0;
 static uint64_t last_frame_ms = 0;
 
 static int ease_out(int t);
+static bool draw_window_bare;      /* layer rendering: skip the drop shadow */
+typedef struct {
+    int count, hover;
+    int x[APP_REGISTRY_MAX], size[APP_REGISTRY_MAX];
+    int base, bottom;           /* icon baseline (bottom edge) */
+    int bg_x, bg_y, bg_w, bg_h;
+} DockLayout;
+static void dock_layout(DockLayout *L);
+static const char *app_name_from_type(AppType type);
+static void draw_window(int idx);
 static void draw_search_glyph(int x, int y, int size, Color c, uint8_t a);
 static void draw_icon_id(IconId id, int x, int y, int size, uint8_t alpha);
 static void draw_app_icon(const AppInfo *app, int x, int y, int size);
@@ -1827,19 +1837,18 @@ static void draw_window(int idx)
     uint8_t opacity = theme->glass.opacity[win->glass_level];
     uint8_t highlight = theme->glass.highlight[win->glass_level];
 
-    int anim = win->anim_open;
-    if (anim < 0) anim = 0;
-    if (anim > 1000) anim = 1000;
-
-    int scale = 920 + (ease_out(anim) * 80) / 1000;
-    int draw_w = (win->w * scale) / 1000;
-    int draw_h = (win->h * scale) / 1000;
-    int draw_x = win->x + (win->w - draw_w) / 2;
-    int draw_y = win->y + (win->h - draw_h) / 2;
+    /* Animations scale/fade a layer copy (draw_window_animated); the window
+     * itself always renders at its real geometry. */
+    int draw_w = win->w;
+    int draw_h = win->h;
+    int draw_x = win->x;
+    int draw_y = win->y;
 
     bool focused = idx == window_count - 1;
-    if (focused) gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 34, 14, theme->shadow, 105);
-    else gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 20, 6, theme->shadow, 60);
+    if (!draw_window_bare) {
+        if (focused) gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 34, 14, theme->shadow, 105);
+        else gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 20, 6, theme->shadow, 60);
+    }
 
     if (settings_get()->reduced_transparency) {
         Color solid = blend(theme->dock_tint, theme->glass_aqua, 215);
@@ -1968,6 +1977,162 @@ static void draw_window(int idx)
     /* Hairline edge (light catches the glass) */
     gfx_round_rect_stroke(surface(), draw_x, draw_y, draw_w, draw_h, r, COLOR_WHITE,
                           settings_get()->dark_mode ? 36 : 120);
+}
+
+/* ------------------------------------------------------------------ */
+/* Animation layers                                                    */
+/* Opening windows render into an off-screen layer that is scaled and  */
+/* faded in. Closing / minimising windows leave a "ghost" snapshot that */
+/* shrinks and fades (or flies into the Dock) while the real window is  */
+/* already gone, so app state never waits on an animation.             */
+/* ------------------------------------------------------------------ */
+typedef enum { GHOST_NONE, GHOST_CLOSE, GHOST_MINIMIZE, GHOST_SCREEN } GhostKind;
+static struct {
+    GhostKind kind;
+    uint64_t start;
+    int dur;
+    int x, y, w, h;          /* logical rect the snapshot came from */
+    int tx, ty, tw, th;      /* minimise target (Dock icon) */
+    int pw, ph;              /* stored physical size */
+    int radius;
+} ghost;
+static uint32_t *layer_buf, *ghost_buf;
+static uint64_t anim_keepalive_until;
+
+static bool layers_ready(void)
+{
+    size_t px = (size_t)fb_physical_width() * fb_physical_height();
+    if (!px) return false;
+    if (!layer_buf) layer_buf = (uint32_t *)pmm_alloc_bytes(px * sizeof(uint32_t));
+    if (!ghost_buf) ghost_buf = (uint32_t *)pmm_alloc_bytes(px * sizeof(uint32_t));
+    return layer_buf && ghost_buf;
+}
+
+/* Ease-in-out cubic, 0..1000 */
+static int ease_in_out(int t)
+{
+    if (t <= 0) return 0;
+    if (t >= 1000) return 1000;
+    if (t < 500) return (int)((int64_t)4 * t * t * t / 1000000);
+    int u = 2000 - 2 * t;
+    return 1000 - (int)((int64_t)u * u * u / 2000000);
+}
+
+static bool window_on_screen(const CompositorWindow *w)
+{
+    return w->x >= 0 && w->y >= 0 && w->x + w->w <= (int)comp_width && w->y + w->h <= (int)comp_height;
+}
+
+/* Draw window idx (no shadow) into layer_buf over a glass-coloured base. */
+static void render_window_to_layer(int idx)
+{
+    CompositorWindow *win = &windows[idx];
+    int k = fb_ui_scale(), pw = (int)fb_physical_width();
+    for (int y = win->y * k; y < (win->y + win->h) * k; y++) {
+        uint32_t *dst = layer_buf + (size_t)y * pw;
+        const uint32_t *src = wp_cache_valid ? wp_glass + (size_t)y * pw : NULL;
+        for (int x = win->x * k; x < (win->x + win->w) * k; x++) dst[x] = src ? src[x] : theme->dock_tint;
+    }
+    fb_redirect(layer_buf);
+    draw_window_bare = true;
+    draw_window(idx);
+    draw_window_bare = false;
+    fb_redirect(NULL);
+}
+
+static void ghost_capture(int idx, GhostKind kind)
+{
+    if (idx < 0 || idx >= window_count || settings_get()->reduced_motion) return;
+    CompositorWindow *win = &windows[idx];
+    if (win->minimized || !window_on_screen(win) || !layers_ready()) return;
+    render_window_to_layer(idx);
+    int k = fb_ui_scale(), pw = (int)fb_physical_width();
+    ghost.pw = win->w * k;
+    ghost.ph = win->h * k;
+    for (int y = 0; y < ghost.ph; y++)
+        memcpy(ghost_buf + (size_t)y * ghost.pw, layer_buf + (size_t)(win->y * k + y) * pw + win->x * k,
+               (size_t)ghost.pw * sizeof(uint32_t));
+    ghost.x = win->x; ghost.y = win->y; ghost.w = win->w; ghost.h = win->h;
+    ghost.radius = theme->glass.corner_radius[win->corner_level];
+    ghost.kind = kind;
+    ghost.start = timer_get_ticks();
+    ghost.dur = kind == GHOST_MINIMIZE ? 340 : 190;
+    ghost.tw = ghost.th = 48;
+    ghost.tx = (int)comp_width / 2 - 24;
+    ghost.ty = (int)comp_height - 60;
+    if (kind == GHOST_MINIMIZE) {
+        DockLayout L;
+        dock_layout(&L);
+        int a = app_registry_find_by_name(app_name_from_type(app_states[idx].type));
+        if (a >= 0 && a < L.count) {
+            ghost.tx = L.x[a]; ghost.ty = L.bottom - L.size[a];
+            ghost.tw = ghost.th = L.size[a];
+        }
+    }
+    mark_dirty();
+}
+
+/* Snapshot the whole current frame (login -> desktop cross-fade). */
+static void ghost_capture_screen(void)
+{
+    if (settings_get()->reduced_motion || !layers_ready() || !fb_backbuffer()) return;
+    ghost.pw = (int)fb_physical_width();
+    ghost.ph = (int)fb_physical_height();
+    memcpy(ghost_buf, fb_backbuffer(), (size_t)ghost.pw * ghost.ph * sizeof(uint32_t));
+    ghost.x = ghost.y = 0;
+    ghost.w = (int)comp_width; ghost.h = (int)comp_height;
+    ghost.radius = 0;
+    ghost.kind = GHOST_SCREEN;
+    ghost.start = timer_get_ticks();
+    ghost.dur = 420;
+}
+
+static void draw_ghost(GhostKind which, uint64_t now)
+{
+    if (ghost.kind != which) return;
+    int t = (int)MIN((uint64_t)1000, (now - ghost.start) * 1000 / (uint64_t)MAX(1, ghost.dur));
+    if (t >= 1000) { ghost.kind = GHOST_NONE; mark_dirty(); return; }
+    int x = ghost.x, y = ghost.y, w = ghost.w, h = ghost.h, r = ghost.radius;
+    uint8_t alpha = 255;
+    if (which == GHOST_CLOSE) {
+        int e = ease_out(t);
+        int sc = 1000 - 70 * e / 1000;
+        w = ghost.w * sc / 1000; h = ghost.h * sc / 1000;
+        x = ghost.x + (ghost.w - w) / 2; y = ghost.y + (ghost.h - h) / 2;
+        alpha = (uint8_t)(255 * (1000 - e) / 1000);
+    } else if (which == GHOST_MINIMIZE) {
+        int e = ease_in_out(t);
+        x = ghost.x + (ghost.tx - ghost.x) * e / 1000;
+        y = ghost.y + (ghost.ty - ghost.y) * e / 1000;
+        w = ghost.w + (ghost.tw - ghost.w) * e / 1000;
+        h = ghost.h + (ghost.th - ghost.h) * e / 1000;
+        r = r + (12 - r) * e / 1000;
+        alpha = (uint8_t)(255 - 170 * e / 1000);
+    } else {
+        alpha = (uint8_t)(255 * (1000 - ease_out(t)) / 1000);
+    }
+    gfx_blit_scaled(surface(), ghost_buf, ghost.pw, 0, 0, ghost.pw, ghost.ph, x, y, MAX(1, w), MAX(1, h), r, alpha);
+}
+
+/* Opening windows: scale 94% -> 100%, rise 8 px, fade in (layer blit). */
+static void draw_window_animated(int idx)
+{
+    CompositorWindow *win = &windows[idx];
+    if (win->anim_open >= 1000 || settings_get()->reduced_motion || !window_on_screen(win) || !layers_ready()) {
+        draw_window(idx);
+        return;
+    }
+    int e = ease_out(win->anim_open);
+    int sc = 940 + 60 * e / 1000;
+    int dw = win->w * sc / 1000, dh = win->h * sc / 1000;
+    int dx = win->x + (win->w - dw) / 2, dy = win->y + (win->h - dh) / 2 + 8 * (1000 - e) / 1000;
+    uint8_t alpha = (uint8_t)(255 * MIN(1000, e * 4 / 3) / 1000);
+    int r = theme->glass.corner_radius[win->corner_level];
+    render_window_to_layer(idx);
+    gfx_shadow(surface(), dx, dy, dw, dh, r, 34, 14, theme->shadow, (uint8_t)(105 * alpha / 255));
+    int k = fb_ui_scale();
+    gfx_blit_scaled(surface(), layer_buf, (int)fb_physical_width(), win->x * k, win->y * k, win->w * k, win->h * k,
+                    dx, dy, dw, dh, r, alpha);
 }
 
 static void draw_wallpaper(void)
@@ -2160,22 +2325,34 @@ static int menu_panel_width(const char **items, int count)
     return MAX(200, w + 40);
 }
 
-static void draw_menu_panel(int x, int y, const char **items, int count, int w)
+static int menu_open_key;            /* 0 = no menu shown (reset in the tick) */
+static void draw_menu_panel(int x, int y, const char **items, int count, int w, int key)
 {
+    /* Fade + 6 px slide over 140 ms whenever a different menu opens. */
+    int open_key = menu_open_key;
+    static uint64_t open_at;
+    uint64_t now = timer_get_ticks();
+    if (key != open_key) { menu_open_key = key; open_at = now; }
+    int t = (int)MIN((uint64_t)1000, (now - open_at) * 1000 / 140);
+    int e = settings_get()->reduced_motion ? 1000 : ease_out(t);
+    if (e < 1000) anim_keepalive_until = now + 30;
+    uint8_t fade = (uint8_t)(255 * e / 1000);
+    y -= 6 * (1000 - e) / 1000;
     int h = count * MENU_ROW_H + 12;
-    draw_shadow(x, y, w, h, 10);
-    ui_glass(x, y, w, h, 10, 205);
+    gfx_shadow(surface(), x, y, w, h, 10, 22, 8, theme->shadow, (uint8_t)(90 * fade / 255));
+    ui_glass_fade(x, y, w, h, 10, 205, fade);
     for (int i = 0; i < count; i++) {
         int iy = y + 6 + i * MENU_ROW_H;
         bool hot = cursor_x >= x + 4 && cursor_x <= x + w - 4 && cursor_y >= iy && cursor_y < iy + MENU_ROW_H;
-        if (hot) draw_rounded_rect_blend(x + 5, iy, w - 10, MENU_ROW_H, 6, theme->accent, 235);
+        if (hot) draw_rounded_rect_blend(x + 5, iy, w - 10, MENU_ROW_H, 6, theme->accent, (uint8_t)(235 * fade / 255));
         const char *sc;
         int n = menu_label_len(items[i], &sc);
         Color fg = hot ? COLOR_WHITE : theme->text;
-        text_draw_n(surface(), x + 14, text_y_center(iy, MENU_ROW_H, TEXT_BODY), items[i], n, TEXT_BODY, fg, 255);
+        text_draw_n(surface(), x + 14, text_y_center(iy, MENU_ROW_H, TEXT_BODY), items[i], n, TEXT_BODY, fg, fade);
         if (sc) {
             int sw = text_width(sc, TEXT_BODY);
-            ui_text_mid(x + w - 14 - sw, iy, MENU_ROW_H, sc, TEXT_BODY, hot ? COLOR_WHITE : theme->text_muted);
+            text_draw_n(surface(), x + w - 14 - sw, text_y_center(iy, MENU_ROW_H, TEXT_BODY), sc, -1, TEXT_BODY,
+                        hot ? COLOR_WHITE : theme->text_muted, fade);
         }
     }
 }
@@ -2186,7 +2363,7 @@ static void draw_menu_dropdown(void)
     const char *items[8];
     int x;
     int count = menu_items(active_menu, items, &x);
-    draw_menu_panel(x, MENU_BAR_HEIGHT + 4, items, count, menu_panel_width(items, count));
+    draw_menu_panel(x, MENU_BAR_HEIGHT + 4, items, count, menu_panel_width(items, count), active_menu);
 }
 
 static const char *const ctx_items[7] = {
@@ -2214,7 +2391,7 @@ static void draw_context_menu(void)
     if (!ctx_menu_open) return;
     int x, y, w, h;
     ctx_menu_rect(&x, &y, &w, &h);
-    draw_menu_panel(x, y, (const char **)ctx_items, 7, w);
+    draw_menu_panel(x, y, (const char **)ctx_items, 7, w, 100 + ctx_menu_x * 7 + ctx_menu_y);
 }
 
 static bool login_screen_visible(void)
@@ -2441,12 +2618,17 @@ static int icon_for_bundle(const char *bundle_id)
     return -1;
 }
 
-static void draw_app_icon(const AppInfo *app, int x, int y, int size)
+static void draw_app_icon_a(const AppInfo *app, int x, int y, int size, uint8_t alpha)
 {
     int id = icon_for_bundle(app->bundle_id);
-    if (id >= 0) draw_icon_id((IconId)id, x, y, size, 255);
+    if (id >= 0) draw_icon_id((IconId)id, x, y, size, alpha);
     else if (app->icon.valid)
-        gfx_draw_rgba_scaled(surface(), app->icon.pixels, BUNDLE_ICON_SIZE, BUNDLE_ICON_SIZE, x, y, size, size, 255);
+        gfx_draw_rgba_scaled(surface(), app->icon.pixels, BUNDLE_ICON_SIZE, BUNDLE_ICON_SIZE, x, y, size, size, alpha);
+}
+
+static void draw_app_icon(const AppInfo *app, int x, int y, int size)
+{
+    draw_app_icon_a(app, x, y, size, 255);
 }
 
 static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x, int y, int w, int h)
@@ -2470,15 +2652,13 @@ static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x
 /* Dock layout (macOS-style magnification): icons near the pointer grow
  * and push their neighbours apart, so nothing overlaps; the glass plate
  * widens with them. Shared by drawing and clicks. */
-typedef struct {
-    int count, hover;
-    int x[APP_REGISTRY_MAX], size[APP_REGISTRY_MAX];
-    int base, bottom;           /* icon baseline (bottom edge) */
-    int bg_x, bg_y, bg_w, bg_h;
-} DockLayout;
+
 
 #define DOCK_GAP     10
 #define DOCK_PAD     12
+
+/* 0..1000: how far the Dock magnification has eased in (draw_dock). */
+static int dock_hover_amt;
 
 static void dock_layout(DockLayout *L)
 {
@@ -2508,7 +2688,7 @@ static void dock_layout(DockLayout *L)
             if (d < reach) {
                 int t = 1000 - d * 1000 / reach;              /* 1 at the pointer -> 0 */
                 t = t * t / 1000;
-                size = base + (max - base) * t / 1000;
+                size = base + (max - base) * t / 1000 * dock_hover_amt / 1000;
             }
         }
         L->size[i] = size;
@@ -2530,6 +2710,20 @@ static void dock_layout(DockLayout *L)
 
 static void draw_dock(uint64_t now_ms)
 {
+    /* Ease the magnification in/out (~150 ms) instead of snapping. */
+    {
+        static uint64_t last;
+        int dt = last ? (int)MIN(now_ms - last, 100) : 16;
+        last = now_ms;
+        int base = MAX(40, MIN(64, (int)settings_get()->dock_size));
+        int dock_top = (int)comp_height - (base + 2 * DOCK_PAD) - 10;
+        bool near = !login_screen_visible() && cursor_y >= dock_top - 30 && overlay == OVERLAY_NONE;
+        int target = near ? 1000 : 0;
+        if (settings_get()->reduced_motion) dock_hover_amt = target;
+        else if (dock_hover_amt < target) dock_hover_amt = MIN(target, dock_hover_amt + dt * 1000 / 150);
+        else if (dock_hover_amt > target) dock_hover_amt = MAX(target, dock_hover_amt - dt * 1000 / 200);
+        if (dock_hover_amt != target) anim_keepalive_until = now_ms + 50;
+    }
     DockLayout L;
     dock_layout(&L);
     if (!L.count) return;
@@ -2876,12 +3070,14 @@ static void draw_launchpad(int anim)
             int ix = start_x + col * (LAUNCHPAD_ICON_SIZE + 40);
             int iy = start_y + row * (LAUNCHPAD_ICON_SIZE + 48);
 
-            if (app->icon.valid) {
-                draw_app_icon(app, ix, iy, LAUNCHPAD_ICON_SIZE);
-            } else {
-                fb_fill_rect(ix, iy, LAUNCHPAD_ICON_SIZE, LAUNCHPAD_ICON_SIZE, theme->accent);
-            }
-            {
+            /* Staggered entrance: each icon grows from 80% and fades in a
+             * little after the previous one. */
+            int p = (anim - idx * 30) * 1000 / MAX(1, 1000 - 12 * 30);
+            int e = ease_out(p < 0 ? 0 : p > 1000 ? 1000 : p);
+            int sz = LAUNCHPAD_ICON_SIZE * (800 + 200 * e / 1000) / 1000;
+            int off = (LAUNCHPAD_ICON_SIZE - sz) / 2;
+            draw_app_icon_a(app, ix + off, iy + off, sz, (uint8_t)(255 * e / 1000));
+            if (e > 300) {
                 int lw = MIN(text_width(app->name, TEXT_BODY_MEDIUM), LAUNCHPAD_ICON_SIZE + 36);
                 int lx = ix + LAUNCHPAD_ICON_SIZE / 2 - lw / 2, ly = iy + LAUNCHPAD_ICON_SIZE + 10;
                 text_draw_n(surface(), lx, ly + 1, app->name, -1, TEXT_BODY_MEDIUM, COLOR_BLACK, 90);
@@ -3753,6 +3949,7 @@ static int destroy_window_internal(int id)
             break;
         }
     }
+    if (idx >= 0 && users_is_authenticated()) ghost_capture(idx, GHOST_CLOSE);
     if (idx < 0) return -1;
 
     AppType closed_type = app_states[idx].type;
@@ -5421,6 +5618,10 @@ static int app_open_window(AppType type, const char *title)
     if (app_window_index[type] >= 0 && app_window_index[type] < window_count) {
         int idx = app_window_index[type];
         /* Restore if minimized, then bring to front */
+        if (windows[idx].minimized) {
+            windows[idx].anim_open = 0; windows[idx].animating = true;
+            windows[idx].anim_start_ms = 0; windows[idx].anim_frames = 0;
+        }
         windows[idx].minimized = false;
         raise_window_to_top(idx);
         CompositorWindow *top = &windows[window_count - 1];
@@ -6653,6 +6854,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     }
                 } else if (menu == 5) {
                     if (item == 0 && active_window_index >= 0 && active_window_index < window_count) {
+                        ghost_capture(active_window_index, GHOST_MINIMIZE);
                         windows[active_window_index].minimized = true;
                     } else if (item == 1 && active_window_index >= 0 && active_window_index < window_count) {
                         CompositorWindow *win = &windows[active_window_index];
@@ -6814,6 +7016,10 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 int cx, cy, cw, ch;
                 mission_control_card_rect(i, window_count, &cx, &cy, &cw, &ch);
                 if (x >= cx && x <= cx + cw && y >= cy && y <= cy + ch) {
+                    if (windows[i].minimized) {
+                        windows[i].anim_open = 0; windows[i].animating = true;
+                        windows[i].anim_start_ms = 0; windows[i].anim_frames = 0;
+                    }
                     windows[i].minimized = false;
                     strncpy(active_app_name, app_name_from_type(app_states[i].type),
                             sizeof(active_app_name) - 1);
@@ -6914,6 +7120,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         }
                         return;
                     } else if (hit_traffic_light(win, 1, x, y)) {
+                        ghost_capture((int)(win - windows), GHOST_MINIMIZE);
                         win->minimized = true;
                         return;
                     } else if (hit_traffic_light(win, 2, x, y)) {
@@ -7742,12 +7949,17 @@ void compositor_tick(uint64_t now_ms)
     /* Dirty tracking: skip the frame entirely when nothing changed.
      * This is what keeps the software-rendered desktop from
      * flashing a full-screen repaint sweep under emulation. */
-    bool animating = anim_changed || any_dock_bounce(now_ms);
+    bool animating = anim_changed || any_dock_bounce(now_ms) || ghost.kind != GHOST_NONE ||
+                     now_ms < anim_keepalive_until;
     if (!need_redraw && !animating) {
         return;
     }
     need_redraw = false;
     uint64_t frame_start = timer_get_ticks();
+
+    /* Login -> desktop: the back buffer still holds the last login frame;
+     * keep it as a full-screen ghost that fades out over the desktop. */
+    if (login_frame_visible && !login_screen_visible()) ghost_capture_screen();
 
     draw_wallpaper();
 
@@ -7765,23 +7977,25 @@ void compositor_tick(uint64_t now_ms)
     } else if (mission_control_active || anim_mission_control > 0) {
         for (int i = 0; i < window_count; i++) {
             if (!windows[i].minimized) {
-                draw_window(i);
+                draw_window_animated(i);
             }
         }
         draw_mission_control(anim_mission_control);
     } else {
         for (int i = 0; i < window_count; i++) {
             if (!windows[i].minimized) {
-                draw_window(i);
+                draw_window_animated(i);
             }
         }
     }
+    draw_ghost(GHOST_CLOSE, now_ms);
 
     draw_menu_bar();
 
     if (anim_launchpad == 0) {
         draw_dock(now_ms);
     }
+    draw_ghost(GHOST_MINIMIZE, now_ms);
 
     if (anim_spotlight > 0) {
         draw_spotlight(anim_spotlight);
@@ -7793,8 +8007,10 @@ void compositor_tick(uint64_t now_ms)
         draw_app_switcher(anim_app_switcher);
     }
 
+    if (active_menu <= 0 && !ctx_menu_open) menu_open_key = 0;
     draw_menu_dropdown();
     draw_context_menu();
+    draw_ghost(GHOST_SCREEN, now_ms);
 
     fb_present();
     perf_record_frame(frame_start, timer_get_ticks());

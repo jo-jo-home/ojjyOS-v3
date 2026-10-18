@@ -237,6 +237,51 @@ void gfx_round_rect_stroke(GfxSurface *s, int x, int y, int w, int h, int r, uin
     }
 }
 
+void gfx_blit_scaled(GfxSurface *s, const uint32_t *src, int src_pitch, int src_x, int src_y, int src_w, int src_h,
+                     int x, int y, int w, int h, int r, uint8_t alpha)
+{
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
+    if (w <= 0 || h <= 0 || src_w <= 0 || src_h <= 0 || !alpha) return;
+    if (r * 2 > w) r = w / 2;
+    if (r * 2 > h) r = h / 2;
+    int y1 = y < s->clip_y1 ? s->clip_y1 : y, y2 = y + h > s->clip_y2 ? s->clip_y2 : y + h;
+    int x1 = x < s->clip_x1 ? s->clip_x1 : x, x2 = x + w > s->clip_x2 ? s->clip_x2 : x + w;
+    bool same = w == src_w && h == src_h;
+    for (int py = y1; py < y2; py++) {
+        uint32_t *row = s->pixels + py * s->pitch;
+        bool corner_row = py < y + r || py >= y + h - r;
+        int fy = same ? 0 : (int)(((int64_t)((py - y) * 2 + 1) * src_h * 128) / h) - 128;
+        if (fy < 0) fy = 0;
+        int iy = same ? py - y : fy >> 8, ty = fy & 255;
+        if (iy >= src_h) iy = src_h - 1;
+        int iy2 = iy + 1 < src_h ? iy + 1 : src_h - 1;
+        const uint32_t *r0 = src + (size_t)(src_y + iy) * (size_t)src_pitch + src_x;
+        const uint32_t *r1 = src + (size_t)(src_y + iy2) * (size_t)src_pitch + src_x;
+        for (int px = x1; px < x2; px++) {
+            uint32_t cov = 256;
+            if (corner_row && (px < x + r || px >= x + w - r)) {
+                cov = corner_cov(px, py, x, y, w, h, r);
+                if (!cov) continue;
+            }
+            uint32_t c;
+            if (same) {
+                c = r0[px - x];
+            } else {
+                int fx = (int)(((int64_t)((px - x) * 2 + 1) * src_w * 128) / w) - 128;
+                if (fx < 0) fx = 0;
+                int ix = fx >> 8, tx = fx & 255;
+                if (ix >= src_w) ix = src_w - 1;
+                int ix2 = ix + 1 < src_w ? ix + 1 : src_w - 1;
+                uint32_t top = gfx_blend(r0[ix], r0[ix2], (uint32_t)tx * 255 / 256);
+                uint32_t bot = gfx_blend(r1[ix], r1[ix2], (uint32_t)tx * 255 / 256);
+                c = gfx_blend(top, bot, (uint32_t)ty * 255 / 256);
+            }
+            uint32_t a = (alpha * cov) >> 8;
+            row[px] = a >= 255 ? (c | 0xFF000000u) : gfx_blend(row[px], c, a);
+        }
+    }
+}
+
 void gfx_arc_up(GfxSurface *s, int cx, int cy, int r_in, int r_out, int half_angle_deg,
                 uint32_t color, uint8_t alpha)
 {

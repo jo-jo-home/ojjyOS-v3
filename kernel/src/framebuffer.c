@@ -63,6 +63,15 @@ void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h)) { flush_hook = 
 void fb_flush_all(void) { if (flush_hook) flush_hook(0, 0, (int)fb_width, (int)fb_height); }
 bool fb_backbuffer_active(void) { return fb_back_active; }
 
+void fb_redirect(uint32_t *target)
+{
+    if (!fb_back_active) return;
+    fb_base = target ? target : fb_back;
+    fb_pitch = fb_width;
+}
+
+uint32_t *fb_backbuffer(void) { return fb_back_active ? fb_back : NULL; }
+
 void fb_get_surface(GfxSurface *s)
 {
     s->pixels = fb_base;

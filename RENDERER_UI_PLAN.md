@@ -210,3 +210,17 @@ Results are appended to the log below.
   only switches after the window exists.
   Live: TCG + HVF(--protected) smoke, pointer, apps, browser, files PASS;
   tour `build/design/t4`.
+- Phase 5 done — animations (`tests/qemu_anim_check.py`, `build/anim/a1`):
+  * Layer system: `fb_redirect()` draws a window into an off-screen layer;
+    `gfx_blit_scaled()` (bilinear, AA rounded mask, alpha; host-tested) puts
+    it back scaled/faded. Windows always lay out at real size now.
+  * Window open: 94% -> 100%, rises 8 px, fades in (ease-out, 240 ms).
+  * Close: "ghost" snapshot shrinks and fades (190 ms) after the real window
+    is already destroyed. Minimise: ghost flies into the app's Dock icon
+    (ease-in-out, 340 ms); restore replays the open animation.
+  * Login -> desktop: full-screen ghost of the last login frame fades out.
+  * Menus / context menu: fade + 6 px slide (140 ms). Dock magnification
+    eases in/out (~150/200 ms). Launchpad icons enter staggered (80% -> 100%).
+  * Reduce Motion turns all of it off. Live: TCG + HVF(--protected) smoke,
+    pointer, apps, browser, files, network UI PASS; 2x perf drag 29 ms avg
+    with 7 VMs running in parallel.

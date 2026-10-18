@@ -80,6 +80,10 @@ void fb_present(void);
 /* Current draw target + clip as a gfx surface (see gfx.h). */
 #include "gfx.h"
 void fb_get_surface(GfxSurface *s);
+/* Layers (animations): while the back buffer is active, draw into another
+ * full-screen PHYSICAL-size buffer instead (NULL = back to the back buffer). */
+void fb_redirect(uint32_t *target);
+uint32_t *fb_backbuffer(void);
 /* Displays that need an explicit "show this rectangle" step (virtio-gpu)
  * register a hook; fb_present/the cursor call it with changed areas. */
 void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h));

@@ -230,3 +230,17 @@ Results are appended to the log below.
   logs `[ATA] write lba N sector i/n: error|device fault|timeout (status)`.
   Afterwards 9/9 Intel smokes passed (6 in parallel under load); root cause
   of the single failure not yet confirmed — the new log line will show it.
+- Phase 4.3 done (2026-10-18, branch browser-inter) — web pages in Inter:
+  `html.c` takes pluggable `WebMetrics` (width/line height/has_glyph); runs
+  store measured w/h and heading level; wrapping, long-word breaking, list
+  numbers, button widths and hit tests use real widths; merged runs are
+  re-measured (per-word rounding drift opened visible gaps); mixed sizes on a
+  line are bottom-aligned; code/<pre> stay monospace; drawable UTF-8 (Latin-1,
+  curly quotes, dashes, euro, TM) is kept instead of transliterated (page font
+  styles gained those glyphs; glyph data 1145 KB). Without metrics the engine
+  keeps fixed 8x16 cells, so the 54 old layout tests are unchanged; 10 new
+  checks with a fake proportional font (64 total, ASan/UBSan clean).
+  `tests/qemu_browser.py` is now HiDPI-aware. Live: browser test PASS at 1x
+  (TCG) and 2x (HVF, --internet: Wikipedia, NPR, HN, 68k.news, CERN, Wiby),
+  ARM smoke --protected, apps check, Intel smoke PASS. Evidence:
+  build/web-inter-evidence/ (copied from the worktree build/web-live/).

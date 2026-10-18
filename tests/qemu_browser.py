@@ -29,6 +29,7 @@ def run(args):
         vm.wait('Entering main loop'); vm.wait('[NET] DHCP lease', timeout=30); time.sleep(2)
         shot = out / 'setup.png'; vm.screenshot(shot)
         width, height = Image.open(shot).size
+        if width >= 2560: width, height = width // 2, height // 2   # HiDPI: logical coordinates
 
         def move(x, y):
             vm.qmp('input-send-event', {'events': [

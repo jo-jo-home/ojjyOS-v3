@@ -114,8 +114,8 @@ All saved in settings and applied live.
 
 | Step | State |
 |---|---|
-| LG1, LG2, W1, W2, W3, W4, C | done (see Log) |
-| LG3, LG4, S1, S2, S3, S4, A, leftovers, finish | not started — detailed instructions in `HANDOFF_UI.md` §5 |
+| LG1, LG2, W1, W2, W3, W4, C, LG3 | done (see Log) |
+| LG4, S1, S2, S3, S4, A, leftovers, finish | not started — detailed instructions in `HANDOFF_UI.md` §5 |
 
 ## Order of work
 
@@ -124,6 +124,33 @@ TextEdit, Notes, Calendar, Calculator, Activity Monitor, Settings, Web,
 About, Preview, Login). Commit after each; log below.
 
 ## Log
+- LG3 done (2026-10-18): windows gain the Liquid Glass rim. New
+  `gfx_round_rect_rim()` draws only the specular band of
+  `gfx_liquid_glass` (bright from above, faint below, dimmest at the
+  sides, ~3 px, AA- and clip-safe) over the cheap cached wallpaper-blur
+  body, so a window rim costs ~perimeter, not area. `draw_window` adds a
+  faint hairline (always) plus the rim (transparency on, reduced under
+  Reduce Transparency) after the title sheen, and the title area sheen is
+  clearer (alpha 70→42 light, 18→10 dark). Window radius 16 comes from
+  the C corners setting (Standard keeps the per-level 10/16/24). The
+  animated-open layer path inherits the rim via the layer render.
+  Concentric inner panels: existing content panels already inset with
+  descending radii; a systematic pass remains with LG4. Host: 6 new
+  checks in `tests/test_gfx.c` (interior untouched, nothing outside,
+  top>bottom>side lighting, band width, zero-strength no-op, clip
+  safety) — 15/15 suites pass normally and under ASan/UBSan, both
+  architecture builds warning-free. Perf: the absolute 2x drag-frame
+  budget could not be measured tonight — the host sat at load 7–13
+  (iCloud fileproviderd churn from the day's builds, Spotlight, an
+  actively used desktop), and even windowless idle frames inflated
+  6–8x in code paths the rim never touches. A same-load A/B settles
+  it: stashed (no rim) measured drag 191 ms / opens 580–767 ms at load
+  ~8, the rim build 124 ms / 657–1119 ms at the same load — the rim
+  adds nothing measurable; wall-clock variation is host noise
+  (`build/ab-base*`, `build/lg3c-perf*`). Re-measure the ~33 ms/10%
+  gate on a quiet host later. Live on the final build: anim check,
+  HVF protected smoke and design tour pass
+  (`build/lg3-final-{anim,hvf,tour}.log`).
 - C done (2026-10-18, on `ui-polish-3` off integrated `main`): Settings >
   Appearance rebuilt — Appearance segmented (Light/Dark/Auto; Auto = dark
   19:00–07:00 by the RTC, checked once a minute from the main loop and

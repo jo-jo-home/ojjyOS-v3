@@ -67,6 +67,12 @@ typedef struct {
 } GfxGlass;
 void gfx_set_scratch(uint32_t *pixels, size_t count);
 void gfx_liquid_glass(GfxSurface *s, int x, int y, int w, int h, int r, const GfxGlass *g);
+/* Liquid Glass rim alone, over already-drawn pixels: the specular band of
+ * gfx_liquid_glass (bright from above, faint below) just inside the
+ * rounded-rect edge. Only pixels within ~3 px of the edge are touched, so
+ * it costs ~perimeter, not area - for window bodies that keep a cheap
+ * cached-glass fill. */
+void gfx_round_rect_rim(GfxSurface *s, int x, int y, int w, int h, int r, uint8_t strength);
 
 /* Anti-aliased ring segment centred at (cx, cy): radii [r_in, r_out],
  * limited to directions within `half_angle_deg` of straight up (90 = a

@@ -247,7 +247,13 @@ scroll approach or use two columns. Add a live test (extend
 accent + glass + corners, screenshots, reboots and checks they persisted
 (serial log lines like `[UI] Appearance ...` make this easy).
 
-### LG3 — Window glass rims
+### LG3 — Window glass rims — DONE (2026-10-18)
+
+`gfx_round_rect_rim()` (specular band only, ~perimeter cost) over the
+cached-glass body + hairline in `draw_window`; clearer title sheen; radius
+16 via the C corners setting. See `LIQUID_GLASS_APPS_PLAN.md` log. A
+systematic concentric-inner-panel pass folds into LG4. The remaining items
+below are still open, in this order.
 
 Windows keep their cheap cached wallpaper-blur body (`wp_glass`), but gain the
 Liquid Glass rim (refraction band + specular highlight) and a clearer title

@@ -2396,6 +2396,7 @@ static void draw_window(int idx)
     int draw_y = win->y;
 
     bool focused = idx == window_count - 1;
+    bool dark = settings_get()->dark_mode;
     if (!draw_window_bare) {
         if (focused) gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 34, 14, theme->shadow, 105);
         else gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 20, 6, theme->shadow, 60);
@@ -2416,9 +2417,18 @@ static void draw_window(int idx)
         (void)blur_px;
     }
 
-    /* Title bar: a soft sheen instead of a solid band, then the title. */
+    /* Title bar: a soft sheen instead of a solid band, then the title.
+     * LG3 keeps the title area clearer than the old solid band. */
     gfx_round_rect_vgradient(surface(), draw_x, draw_y, draw_w, 38, r,
-                             COLOR_WHITE, theme->glass_aqua, settings_get()->dark_mode ? 18 : 70);
+                             COLOR_WHITE, theme->glass_aqua, dark ? 10 : 42);
+
+    /* LG3: Liquid Glass rim - the specular band of the floating chrome,
+     * drawn over the cached-glass body and the title sheen so the edge
+     * stays crisp. Hairline always; rim only with transparency on. */
+    gfx_round_rect_stroke(surface(), draw_x, draw_y, draw_w, draw_h, r,
+                          dark ? COLOR_WHITE : theme->midnight, dark ? 26 : 16);
+    if (!settings_get()->reduced_transparency)
+        gfx_round_rect_rim(surface(), draw_x, draw_y, draw_w, draw_h, r, dark ? 120 : 170);
     (void)highlight;
     {
         const char *title = state->type == APP_WEB ? browser_title() : win->title;

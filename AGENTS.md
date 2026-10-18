@@ -1,6 +1,6 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-18, later): UI job resumed — C (Appearance) DONE
+## LATEST (2026-10-18, later): UI job resumed — C (Appearance) + LG3 (window rims) DONE
 
 Work continues on branch `ui-polish-3` (off integrated `main`), ff'd to
 `main` per green step. Settings > Appearance is rebuilt: Light/Dark/Auto
@@ -10,10 +10,12 @@ Corners Standard/Round, Terminal theme row (stored; S4 wires colours) plus
 the moved Reduce/24h switches. All live + persisted (`appearance= accent=
 glass= menubar= corners= termtheme=`), every change logs `[UI] Appearance
 key=value` and boot logs a summary line. Live test `tests/qemu_appearance.py`
-passes incl. cold-boot persistence. Next per TODO.md: LG3 window rims,
-LG4 glass controls, S1 notifications, S2 snapping, S3 live resize, S4
-terminal themes, then per-app polish. `tests/qemu_wallpapers.py` still
-passes (Control Center toggle path unchanged).
+passes incl. cold-boot persistence. LG3: new `gfx_round_rect_rim()` gives
+windows the Liquid Glass specular rim over the cached-glass body (hairline
+always, rim when transparency is on), title sheen clearer, radius from the
+corners setting; `tests/test_gfx.c` covers it (15/15 host suites).
+Next per TODO.md: LG4 glass controls, S1 notifications, S2 snapping,
+S3 live resize, S4 terminal themes, then per-app polish.
 
 ## >>> START HERE (2026-10-18, latest): read `TODO.md` <<<
 

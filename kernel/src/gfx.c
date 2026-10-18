@@ -518,3 +518,57 @@ void gfx_liquid_glass(GfxSurface *s, int x, int y, int w, int h, int r, const Gf
         }
     }
 }
+
+void gfx_round_rect_rim(GfxSurface *s, int x, int y, int w, int h, int r, uint8_t strength)
+{
+    if (!strength || w <= 0 || h <= 0) return;
+    SCALE_IN(s); x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
+    if (r * 2 > w) r = w / 2;
+    if (r * 2 > h) r = h / 2;
+    int x1 = x < s->clip_x1 ? s->clip_x1 : x, x2 = x + w > s->clip_x2 ? s->clip_x2 : x + w;
+    int y1 = y < s->clip_y1 ? s->clip_y1 : y, y2 = y + h > s->clip_y2 ? s->clip_y2 : y + h;
+    int cx16 = x * 16 + w * 8, cy16 = y * 16 + h * 8;
+    int hw16 = w * 8 - r * 16, hh16 = h * 8 - r * 16;
+    int rim16 = (k_ * 3) * 16;              /* band width ~3 logical px */
+    int band = (rim16 + 15) / 16;           /* physical px */
+    for (int py = y1; py < y2; py++) {
+        uint32_t *row = s->pixels + (size_t)py * s->pitch;
+        int dy = py - y < (y + h - 1) - py ? py - y : (y + h - 1) - py;
+        bool horiz = dy < band;             /* within the straight top/bottom rim */
+        bool corners = py < y + r || py >= y + h - r;
+        /* Rows outside the horizontal rim only need the side segments;
+         * corner rows need wider segments for the arcs. */
+        int segw = corners ? r + band : band;
+        for (int pass = 0; pass < (horiz ? 1 : 2); pass++) {
+            int px1 = horiz ? x1 : (pass == 0 ? x1 : x + w - segw);
+            int px2 = horiz ? x2 : (pass == 0 ? x + segw : x2);
+            if (pass == 1 && x + segw >= x2) continue;   /* pass 0 covered the row */
+            if (px2 <= px1) continue;
+            if (px1 < x1) px1 = x1;
+            if (px2 > x2) px2 = x2;
+            for (int px = px1; px < px2; px++) {
+            int d = rr_sdf16(px, py, x, y, w, h, r);    /* > 0 outside */
+            if (d >= 8) continue;
+            uint32_t cov = d <= -8 ? 256 : (uint32_t)(8 - d) * 16;
+            int t16 = -d < 0 ? 0 : -d;                  /* depth inside, 1/16 px */
+            if (t16 >= rim16) continue;
+            int pcx = px * 16 + 8 - cx16, pcy = py * 16 + 8 - cy16;
+            int qx = (pcx < 0 ? -pcx : pcx) - hw16, qy = (pcy < 0 ? -pcy : pcy) - hh16;
+            int ny = 0;
+            if (qx > 0 && qy > 0) {
+                int len = (int)gfx_isqrt((uint32_t)(qx * qx + qy * qy));
+                if (len < 1) len = 1;
+                ny = qy * 16 / len;
+            } else if (qy > 0) {
+                ny = 16;
+            }
+            if (pcy < 0) ny = -ny;
+            int up = -ny;                                /* +16 on the top edge */
+            int lit = up > 0 ? 6 + up * 10 / 16 : 6 + (-up) * 3 / 16;
+            uint32_t a = (uint32_t)strength * (uint32_t)(rim16 - t16) / (uint32_t)rim16
+                       * (uint32_t)lit / 16 * cov >> 8;
+            if (a) row[px] = gfx_blend(row[px], 0xFFFFFF, a > 255 ? 255 : a);
+            }
+        }
+    }
+}

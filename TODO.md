@@ -64,9 +64,11 @@ live resize, Terminal themes.
   [x] W3 wallpaper library, [x] W4 Settings grid + Preview viewer,
   [x] C Appearance (Light/Dark/Auto, 8 accents, Clear/Tinted glass,
   Glass/Solid menu bar, Standard/Round corners, Terminal theme row;
-  `tests/qemu_appearance.py`).
+  `tests/qemu_appearance.py`),
+  [x] LG3 window glass rims (`gfx_round_rect_rim`, clearer title sheen,
+  radius from the corners setting).
 - Remaining, in order:
-  - [ ] **LG3** Liquid Glass rims on windows, radius 16, concentric panels.
+  - [ ] **LG4** Liquid Glass rims on windows, radius 16, concentric panels.
   - [ ] **LG4** glass toolbar buttons / segmented controls / switches.
   - [ ] **S1** notification banners (+ posts from apps).
   - [ ] **S2** window snapping (left/right half, top = maximise, preview).

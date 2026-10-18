@@ -71,6 +71,21 @@ int main(void)
           "vertical gradient spans its colours");
 
     reset(0x000000);
+    gfx_round_rect_rim(&surf, 8, 8, 40, 30, 10, 0);            /* zero strength: no-op */
+    CHECK(at(28, 8) == 0x000000 && at(28, 22) == 0x000000, "rim with zero strength changes nothing");
+    gfx_round_rect_rim(&surf, 8, 8, 40, 30, 10, 255);
+    CHECK(at(28, 22) == 0x000000, "rim leaves the deep interior untouched");
+    CHECK(at(7, 22) == 0 && at(28, 7) == 0 && at(28, 39) == 0 && at(49, 22) == 0,
+          "rim never writes outside the shape");
+    int rim_top = red(at(28, 8)), rim_bottom = red(at(28, 37)), rim_side = red(at(8, 22));
+    CHECK(rim_top > rim_bottom && rim_bottom > rim_side && rim_side > 0,
+          "rim lit from above, faint at the bottom, dimmest at the sides");
+    CHECK(rim_top >= 195 && rim_top <= 235, "top rim reaches its expected edge strength");
+    CHECK(red(at(28, 13)) == 0, "rim band ends a few pixels in");
+    gfx_round_rect_rim(&surf, -30, -30, 100, 100, 20, 200);    /* mostly outside: clip safety */
+    CHECK(guard_intact(), "rim stays inside the surface under clipping");
+
+    reset(0x000000);
     static uint32_t src[W * H];
     for (int i = 0; i < W * H; i++) src[i] = (uint32_t)i & 0xFFFFFF;
     gfx_round_rect_image(&surf, 4, 4, 30, 20, 0, src, 255);

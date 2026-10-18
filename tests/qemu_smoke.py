@@ -19,6 +19,10 @@ import tempfile
 import time
 
 
+# Same display as scripts/run-qemu.sh; OJJY_DISPLAY=ramfb tests the 4:3 firmware path.
+DISPLAY_DEVICE = os.environ.get("OJJY_DISPLAY", "virtio-gpu-device,xres=1440,yres=900")
+
+
 class VM:
     def __init__(self, arch, disk, output, run):
         self.log = output / f"serial-{run}.log"
@@ -46,7 +50,7 @@ class VM:
             command += ["-bios", str(firmware)]
         if arch == "aarch64":
             command += ["-M", "virt,gic-version=2", "-cpu", "cortex-a72",
-                        "-global", "virtio-mmio.force-legacy=false", "-device", "ramfb",
+                        "-global", "virtio-mmio.force-legacy=false", "-device", DISPLAY_DEVICE,
                         "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
                         "-drive", f"file={disk},format=raw,if=none,id=hd,cache=writeback",
                         "-device", "virtio-blk-device,drive=hd",

@@ -250,3 +250,14 @@ See `ROADMAP.md` (kept current).
   (`build/apps-1`), `tests/qemu_apps_check.py` (`build/appscheck-3`).
 - Gate: host 1200+ C asserts normal + sanitized, both builds 0 warnings,
   smoke both arches, browser test PASS.
+
+## 2026-10-18 — full-screen display fix
+
+Jonas asked how to fill his whole screen. Measured: edk2 ramfb offers only
+640x480/800x600/1024x768 (4:3), the cause of the bars. Added a kernel
+virtio-gpu 2D driver (`arch/aarch64/virtio_gpu.c`), bootloader fallback
+without a linear GOP, `run-qemu.sh` 1440x900 + zoom-to-fit default
+(`OJJY_RES`, `OJJY_FULLSCREEN`, `OJJY_DISPLAY=ramfb`). Receipts in
+`build/gpu-live/`: smoke ARM (virtio-gpu, --protected), smoke ARM ramfb,
+smoke x86, browser and apps check all PASS; host suite passes.
+Follow-up idea: honour virtio-gpu display-change events to resize live.

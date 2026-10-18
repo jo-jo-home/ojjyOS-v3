@@ -148,11 +148,20 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     Print(L"[BOOT] Initializing framebuffer...\n");
     status = SetupFramebuffer(boot_info);
     if (EFI_ERROR(status)) {
+#ifdef __aarch64__
+        /* virtio-gpu's firmware GOP has no linear framebuffer; the kernel
+         * drives that device itself. Boot with no firmware display. */
+        Print(L"[WARN] No linear GOP framebuffer (%r); kernel display driver takes over\n", status);
+        boot_info->fb_addr = 0;
+        boot_info->fb_width = boot_info->fb_height = boot_info->fb_pitch = 0;
+#else
         Print(L"[FAIL] Could not initialize framebuffer: %r\n", status);
         goto error;
+#endif
+    } else {
+        Print(L"[OK]   Framebuffer: %dx%d @ 0x%lx\n",
+              boot_info->fb_width, boot_info->fb_height, boot_info->fb_addr);
     }
-    Print(L"[OK]   Framebuffer: %dx%d @ 0x%lx\n",
-          boot_info->fb_width, boot_info->fb_height, boot_info->fb_addr);
 
     /* Step 2: Find ACPI RSDP (optional, for later) */
     Print(L"[BOOT] Locating ACPI tables...\n");

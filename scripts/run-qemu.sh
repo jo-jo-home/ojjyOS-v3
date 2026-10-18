@@ -9,6 +9,11 @@
 # Usage:
 #   bash scripts/run-qemu.sh [aarch64|x86_64]
 #
+# ARM display size: OJJY_RES=WIDTHxHEIGHT (default 1440x900, 16:10 = the
+# full-screen area of a notched MacBook). Use 1600x900 on a 16:9 monitor.
+# OJJY_DISPLAY=ramfb restores the old 4:3-only firmware display.
+# OJJY_FULLSCREEN=1 starts in macOS full screen (Zoom To Fit is always on).
+#
 # ojjyOS - Created by Jonas Lee
 #
 
@@ -81,16 +86,32 @@ if [ "$ARCH" = "aarch64" ]; then
     ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "1")
     ACCEL_DESC="MTTCG (ARM64 JIT, 1 vCPU)"
 
+    # virtio-gpu takes any screen size, so the guest can match the Mac's
+    # screen shape; ramfb firmware only offers 4:3 modes (black bars).
+    RES="${OJJY_RES:-1440x900}"
+    if [[ ! "$RES" =~ ^[0-9]+x[0-9]+$ ]]; then
+        echo -e "${RED}Error: OJJY_RES must look like 1440x900${NC}"; exit 1
+    fi
+    if [ "${OJJY_DISPLAY:-gpu}" = "ramfb" ]; then
+        GPU_DEVICE="ramfb"; RES="1024x768"
+    else
+        GPU_DEVICE="virtio-gpu-device,xres=${RES%x*},yres=${RES#*x}"
+    fi
+
     # One visible pointer: the guest's fast scanout overlay. Absolute tablet
     # coordinates remain 1:1; do not show a second host pointer over it.
     if [ "$(uname -s)" = "Darwin" ]; then
-        DISPLAY_ARGS=(-display "cocoa,show-cursor=off")
+        # zoom-to-fit scales the guest to the window/screen; OJJY_FULLSCREEN=1
+        # starts in full screen right away.
+        FULL="off"; [ "${OJJY_FULLSCREEN:-0}" = "1" ] && FULL="on"
+        DISPLAY_ARGS=(-display "cocoa,show-cursor=off,zoom-to-fit=on,full-screen=$FULL")
     else
         DISPLAY_ARGS=()
     fi
 
     echo -e "  Architecture: ${GREEN}aarch64 (virt, GICv2 + virtio-mmio v2)${NC}"
     echo -e "  Accelerator:  ${GREEN}$ACCEL_DESC${NC}"
+    echo -e "  Display:      ${GREEN}$RES ($GPU_DEVICE)${NC}"
     echo -e "  UEFI BIOS:    ${BLUE}$FIRMWARE${NC}"
     echo -e "  Disk Image:   ${BLUE}$IMAGE${NC}"
     echo -e "  Serial Log:   ${BLUE}$SERIAL_LOG${NC}"
@@ -99,8 +120,10 @@ if [ "$ARCH" = "aarch64" ]; then
     echo -e "  ${YELLOW}tail -f $SERIAL_LOG${NC}"
     echo
     echo -e "${YELLOW}Display tips (macOS):${NC}"
-    echo    "  - QEMU menu: View -> Zoom To Fit, then View -> Enter Full Screen (Ctrl-Cmd-F)"
-    echo    "  - The guest runs at 1024x768; Zoom To Fit scales it to your screen"
+    echo    "  - Fill the screen: QEMU menu View -> Enter Fullscreen (Zoom To Fit is"
+    echo    "    already on). Or start that way: OJJY_FULLSCREEN=1 bash scripts/run-qemu.sh"
+    echo    "  - Guest is $RES; set OJJY_RES=1600x900 for a 16:9 monitor"
+    echo    "  - Release a captured mouse/keyboard: Ctrl-Option-G"
     echo
 
     exec qemu-system-aarch64 \
@@ -110,7 +133,7 @@ if [ "$ARCH" = "aarch64" ]; then
         "${DISPLAY_ARGS[@]}" \
         -bios "$FIRMWARE" \
         -global virtio-mmio.force-legacy=false \
-        -device ramfb \
+        -device "$GPU_DEVICE" \
         -device virtio-keyboard-device \
         -device virtio-tablet-device \
         -drive file="$IMAGE",format=raw,if=none,id=hd \

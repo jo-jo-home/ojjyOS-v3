@@ -39,6 +39,12 @@ void fb_reset_clip(void)
     clip_x2 = (int)fb_width; clip_y2 = (int)fb_height;
 }
 
+static void (*flush_hook)(int x, int y, int w, int h);
+
+void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h)) { flush_hook = hook; }
+void fb_flush_all(void) { if (flush_hook) flush_hook(0, 0, (int)fb_width, (int)fb_height); }
+bool fb_backbuffer_active(void) { return fb_back_active; }
+
 static int cursor_x, cursor_y;
 static uint64_t full_presents, cursor_updates;
 
@@ -72,9 +78,18 @@ void fb_cursor_move(int x, int y)
     if (!fb_back_active || !fb_screen || !fb_width || !fb_height) return;
     x = MAX(0, MIN(x, (int)fb_width - 1)); y = MAX(0, MIN(y, (int)fb_height - 1));
     if (cursor_visible && x == cursor_x && y == cursor_y) return;
-    if (cursor_visible && fb_back_valid) cursor_restore();
+    int old_x = cursor_x, old_y = cursor_y;
+    bool was_visible = cursor_visible && fb_back_valid;
+    if (was_visible) cursor_restore();
     cursor_x = x; cursor_y = y; cursor_visible = true;
-    if (fb_back_valid) { cursor_draw(); cursor_updates++; }
+    if (fb_back_valid) {
+        cursor_draw(); cursor_updates++;
+        if (flush_hook) {
+            int x1 = was_visible ? MIN(old_x, x) : x, y1 = was_visible ? MIN(old_y, y) : y;
+            int x2 = was_visible ? MAX(old_x, x) : x, y2 = was_visible ? MAX(old_y, y) : y;
+            flush_hook(x1, y1, x2 - x1 + 16, y2 - y1 + 24);
+        }
+    }
 }
 
 void fb_get_present_stats(uint64_t *frames, uint64_t *updates)
@@ -149,6 +164,7 @@ void fb_present(void)
     fb_back_valid = true;
     full_presents++;
     if (cursor_visible) cursor_draw();
+    fb_flush_all();
 }
 
 /*

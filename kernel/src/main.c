@@ -31,6 +31,7 @@
 #include "drivers/block_cache.h"
 #else
 #include "arch/aarch64/arch64.h"
+#include "arch/aarch64/virtio_devices.h"
 #endif
 
 /* Filesystem */
@@ -900,6 +901,13 @@ void kernel_main(BootInfo *boot_info)
 #endif
     user_arch_init();
     kheap_init();
+#ifndef __x86_64__
+    /* Prefer virtio-gpu (any screen shape) over the 4:3-only ramfb. */
+    if (virtio_gpu_display_init(boot_info)) {
+        console_init();
+        console_set_colors(COLOR_TEXT, COLOR_CREAM);
+    }
+#endif
     timer_init();
     splash_render("Bringing up drivers...", 38);
 

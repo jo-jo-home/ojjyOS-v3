@@ -73,6 +73,11 @@ void fb_set_clip(int x, int y, int w, int h);
 void fb_reset_clip(void);
 void fb_draw_text_scaled(int x, int y, const char *s, int n, Color fg, int scale, bool bold);
 void fb_present(void);
+/* Displays that need an explicit "show this rectangle" step (virtio-gpu)
+ * register a hook; fb_present/the cursor call it with changed areas. */
+void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h));
+void fb_flush_all(void);
+bool fb_backbuffer_active(void);
 /* Cursor-free backbuffer + tiny scanout overlay. Full presents reapply it. */
 void fb_cursor_move(int x, int y);
 void fb_get_present_stats(uint64_t *frames, uint64_t *cursor_updates);

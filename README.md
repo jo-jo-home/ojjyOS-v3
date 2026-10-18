@@ -86,7 +86,7 @@ Outputs are isolated under `build/aarch64/` and `build/x86_64/`. Shut down a VM 
 ```bash
 ./scripts/run-qemu.sh aarch64
 ```
-`scripts/run-qemu.sh` locates firmware, uses TCG with one vCPU, attaches the devices above, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. A 1024x768 guest still has aspect-ratio bars on widescreen displays; VNC stretching has not been verified or added.
+`scripts/run-qemu.sh` locates firmware, uses TCG with one vCPU, attaches the devices above, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. The ARM display is now `virtio-gpu` at 1440x900 (16:10, the full-screen area of a notched MacBook), with QEMU Zoom To Fit on by default: View -> Enter Fullscreen fills the screen with no bars. `OJJY_RES=1600x900` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display.
 
 The VirtualBox runner preserves an existing VDI rather than recreating it and refuses to force-stop a running VM. A VDI has its own saved data; rebuilding a raw QEMU image does not update that VDI.
 

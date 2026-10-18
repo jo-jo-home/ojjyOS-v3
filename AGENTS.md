@@ -3,7 +3,13 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## LATEST (2026-10-17): networking, browser with HTTPS, real Wi-Fi tile, apps pass DONE
+## LATEST (2026-10-18): full-screen fix — virtio-gpu display (see §4.7)
+
+ARM runner now uses a kernel virtio-gpu driver at 1440x900 (16:10) with
+Zoom To Fit on, so macOS full screen has no black bars. All live suites pass
+on virtio-gpu and on the ramfb fallback; x86 unchanged. Nothing pushed.
+
+## (2026-10-17): networking, browser with HTTPS, real Wi-Fi tile, apps pass DONE
 
 Commits c07af3a (network), 11cbdbd (browser), 9adb978 (TLS 1.3/HTTPS),
 5887bf9 (Wi-Fi tile + Settings > Network), 305fc9e (apps pass). Next ideas
@@ -524,7 +530,24 @@ do not claim every possible cause of apparent freezing has been eliminated.
 
 ---
 
-## 4.7. Display scaling (still separate follow-up work)
+## 4.7. Display scaling — FIXED 2026-10-18 (virtio-gpu)
+
+Root cause measured: Homebrew edk2's ramfb GOP lists only 640x480, 800x600
+and 1024x768 (all 4:3), so no firmware path could fill a 16:10 screen.
+`kernel/src/arch/aarch64/virtio_gpu.c` now drives `virtio-gpu-device` (2D:
+one B8G8R8X8 resource in PMM memory, TRANSFER_TO_HOST_2D + RESOURCE_FLUSH via
+`fb_set_flush_hook`; fb_present flushes the frame, the cursor flushes its
+rectangle, direct console drawing is flushed every 50 ms from the main loop,
+panic paths call `fb_flush_all()`). It is probed right after `kheap_init()`
+and takes the host's preferred size (QEMU xres/yres; Retina sizes are halved
+to stay <= 1920x1200). The ARM bootloader now boots without a linear GOP
+(virtio-gpu's firmware GOP is BltOnly). `run-qemu.sh` defaults to 1440x900 +
+cocoa `zoom-to-fit=on`; `OJJY_RES`, `OJJY_FULLSCREEN=1`, `OJJY_DISPLAY=ramfb`.
+Live tests use the same device (`OJJY_DISPLAY` env in `tests/qemu_smoke.py`).
+Not done: live resize when the host window changes (virtio-gpu display
+events are ignored; Zoom To Fit scales instead).
+
+### Historical notes (before the fix)
 
 Jonas: "Zoom to Fit + fullscreen — screen is bigger but not filling
 the whole screen."

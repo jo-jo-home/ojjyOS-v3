@@ -43,7 +43,7 @@ This produces:
 What `scripts/run-qemu.sh` configures automatically:
 - `-M virt,gic-version=2 -cpu host -accel hvf -m 2048` (falls back to `-cpu cortex-a72 -accel tcg` on non-Apple-Silicon hosts)
 - UEFI firmware (`edk2-aarch64-code.fd` from Homebrew `/opt/homebrew/share/qemu/`)
-- `-device ramfb` (UEFI GOP framebuffer at 1024x768x32)
+- `-device virtio-gpu-device,xres=1440,yres=900` (kernel virtio-gpu driver; `OJJY_DISPLAY=ramfb` for the old 1024x768 GOP framebuffer)
 - `-device virtio-keyboard-device` and `-device virtio-tablet-device`
 - `-device virtio-blk-device` backed by `build/ojjyos3.img`
 - `-serial file:/tmp/ojjyos-serial.log`

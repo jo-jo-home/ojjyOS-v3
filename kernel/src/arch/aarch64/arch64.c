@@ -85,6 +85,7 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
         console_printf("  ELR_EL1:  0x%x\n", (unsigned int)elr);
         console_printf("  SPSR_EL1: 0x%x\n\n", (unsigned int)spsr);
         console_printf("  System halted.\n");
+        fb_flush_all();
     }
 
     while (1) {
@@ -103,4 +104,5 @@ void a64_poll_input(void)
     virtio_input_poll();
     virtio_net_poll();
     virtio_rng_poll();
+    virtio_gpu_poll();
 }

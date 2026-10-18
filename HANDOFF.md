@@ -188,7 +188,7 @@ checkpoints, a heap allocator, and process/syscall bookkeeping.
 - `qemu-system-aarch64`, QEMU `virt`, GICv2, one vCPU, TCG emulation.
 - PL011 serial, PL031 RTC, ARM generic timer, ramfb, virtio-mmio keyboard/tablet/block.
 - Kernel linked at `0x41000000`; guest RAM starts at `0x40000000`.
-- Current tested ramfb mode: **1024x768**.
+- Display: virtio-gpu at **1440x900** by default (ramfb 1024x768 still works with `OJJY_DISPLAY=ramfb`).
 - The kernel still relies on UEFI's ARM64 mappings. It does not own a complete
   protected userspace mapping scheme yet.
 - This is **not bare-metal Apple Silicon support**, and the runner does **not** use HVF.

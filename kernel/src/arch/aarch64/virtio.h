@@ -63,6 +63,7 @@ static inline void virtio_memory_barrier(void)
 #define VIRTIO_ID_NET           1
 #define VIRTIO_ID_BLOCK         2
 #define VIRTIO_ID_RNG           4
+#define VIRTIO_ID_GPU           16
 #define VIRTIO_ID_INPUT         18
 
 /* Descriptor flags */

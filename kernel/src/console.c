@@ -75,6 +75,7 @@ void console_putc(char c)
 {
     /* Also output to serial */
     serial_putc(c);
+    if (!con_cols || !con_rows) return;     /* no display (yet) */
 
     if (c == '\n') {
         con_col = 0;

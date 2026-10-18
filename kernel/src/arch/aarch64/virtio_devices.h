@@ -11,6 +11,7 @@
 #define _OJJY_ARCH_VIRTIO_DEVICES_H
 
 #include "types.h"
+#include "boot_info.h"
 
 /* Device attach hooks called by the transport during bus scan.
  * Return 0 on success. */
@@ -20,6 +21,14 @@ void virtio_input_handle_key(uint16_t code, int32_t value);
 
 /* Finalize device bring-up (set DRIVER_OK). */
 void virtio_dev_ready(uint32_t base);
+/* Reset + feature negotiation (up to FEATURES_OK) for early drivers. */
+int virtio_dev_begin(uint32_t base, uint32_t features);
+
+/* virtio-gpu display: probed before the rest of the bus, right after the
+ * page allocator exists. Replaces info's framebuffer on success. */
+bool virtio_gpu_display_init(BootInfo *info);
+bool virtio_gpu_owns(uint32_t base);
+void virtio_gpu_poll(void);
 
 /* Poll all input devices for pending events (called each main-loop
  * iteration by a64_poll_input). */

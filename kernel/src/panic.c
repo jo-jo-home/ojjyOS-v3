@@ -137,6 +137,8 @@ void panic(const char *message)
     draw_panic_screen(message);
 #endif
 
+    fb_flush_all();     /* virtio-gpu shows nothing until flushed */
+
     /* Halt forever */
     while (1) {
         hlt();
@@ -169,6 +171,8 @@ void panic_with_frame(const char *message, InterruptFrame *frame)
 
     /* Draw panic screen */
     draw_panic_screen(message, frame);
+
+    fb_flush_all();     /* virtio-gpu shows nothing until flushed */
 
     /* Halt forever */
     while (1) {

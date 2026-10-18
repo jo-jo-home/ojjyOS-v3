@@ -66,6 +66,11 @@ static int virtio_dev_start(uint32_t base, uint32_t features)
     return 0;
 }
 
+int virtio_dev_begin(uint32_t base, uint32_t features)
+{
+    return virtio_dev_start(base, features);
+}
+
 int virtio_queue_init(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem)
 {
     return virtio_queue_init_index(vq, mmio_base, mem, 0);
@@ -201,6 +206,12 @@ void virtio_mmio_init(void)
         uint32_t dev_id = vio_read(base, VIO_DEVICE_ID);
         if (dev_id == 0) {
             continue;     /* Empty slot */
+        }
+
+        if (dev_id == VIRTIO_ID_GPU) {
+            /* Brought up early as the display; never reset it here. */
+            if (virtio_gpu_owns(base)) found++;
+            continue;
         }
 
         vio_write(base, VIO_DEVFEAT_SEL, 0);

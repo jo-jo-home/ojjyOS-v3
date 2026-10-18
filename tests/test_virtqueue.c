@@ -17,6 +17,7 @@ int virtio_blk_attach(uint32_t base, bool flush) { (void)base; (void)flush; retu
 int virtio_input_attach(uint32_t base) { (void)base; return -1; }
 int virtio_net_attach(uint32_t base, bool mac) { (void)base; (void)mac; return -1; }
 int virtio_rng_attach(uint32_t base) { (void)base; return -1; }
+bool virtio_gpu_owns(uint32_t base) { (void)base; return false; }
 
 int main(void)
 {

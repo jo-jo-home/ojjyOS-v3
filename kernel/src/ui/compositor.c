@@ -595,17 +595,44 @@ static int ui_text_mid(int x, int top, int h, const char *s, TextStyle st, Color
 }
 
 /* Frosted glass panel: blurred wallpaper + theme tint + hairline rim. */
+/* Liquid Glass (Tahoe): the live frame behind the panel - windows included -
+ * is blurred, saturated and bent at the rim, with a specular edge. `tint`
+ * is the old frosted opacity; Liquid Glass is clearer, so it is scaled down.
+ * Reduce Transparency keeps a solid panel. */
+static uint32_t *glass_scratch;
+
+static void glass_params(GfxGlass *g, uint8_t tint, uint8_t fade)
+{
+    bool dark = settings_get()->dark_mode;
+    g->tint = dark ? RGB(28, 34, 46) : COLOR_WHITE;
+    g->tint_alpha = (uint8_t)(dark ? 70 + tint * 45 / 100 : 30 + tint * 40 / 100);
+    g->blur = 10;
+    g->refract = 7;
+    g->band = 12;
+    g->specular = dark ? 120 : 200;
+    g->saturate = 80;
+    g->alpha = fade;
+}
+
 static void ui_glass_fade(int x, int y, int w, int h, int r, uint8_t tint, uint8_t fade)
 {
     if (!fade) return;
-    if (wp_cache_valid && !settings_get()->reduced_transparency) {
-        gfx_round_rect_image(surface(), x, y, w, h, r, wp_blur, fade);
-        draw_rounded_rect_blend(x, y, w, h, r, theme->dock_tint, (uint8_t)(tint * fade / 255));
+    if (!settings_get()->reduced_transparency) {
+        if (!glass_scratch) {
+            size_t px = (size_t)fb_physical_width() * fb_physical_height();
+            glass_scratch = (uint32_t *)pmm_alloc_bytes(px * sizeof(uint32_t));
+            gfx_set_scratch(glass_scratch, glass_scratch ? px : 0);
+        }
+        GfxGlass g;
+        glass_params(&g, tint, fade);
+        gfx_liquid_glass(surface(), x, y, w, h, r, &g);
+        gfx_round_rect_stroke(surface(), x, y, w, h, r, settings_get()->dark_mode ? COLOR_WHITE : COLOR_BLACK,
+                              (uint8_t)((settings_get()->dark_mode ? 30 : 18) * fade / 255));
     } else {
         draw_rounded_rect_blend(x, y, w, h, r, theme->dock_tint, (uint8_t)(245 * fade / 255));
+        gfx_round_rect_stroke(surface(), x, y, w, h, r, COLOR_WHITE,
+                              (uint8_t)((settings_get()->dark_mode ? 40 : 110) * fade / 255));
     }
-    gfx_round_rect_stroke(surface(), x, y, w, h, r, COLOR_WHITE,
-                          (uint8_t)((settings_get()->dark_mode ? 40 : 110) * fade / 255));
 }
 
 static void ui_glass(int x, int y, int w, int h, int r, uint8_t tint)
@@ -2366,9 +2393,9 @@ static void draw_menu_bar(void)
     MenuBarLayout L;
     menu_bar_layout(&L);
     int H = MENU_BAR_HEIGHT;
-    if (wp_cache_valid && !settings_get()->reduced_transparency) {
-        gfx_round_rect_image(surface(), 0, 0, (int)comp_width, H, 0, wp_blur, 255);
-        draw_rounded_rect_blend(0, 0, (int)comp_width, H, 0, theme->dock_tint, 165);
+    if (!settings_get()->reduced_transparency) {
+        /* Tahoe: an almost clear glass strip, no refraction or rim */
+        ui_glass(0, 0, (int)comp_width, H, 0, 150);
     } else {
         draw_rounded_rect_blend(0, 0, (int)comp_width, H, 0, theme->dock_tint, 245);
     }
@@ -2377,7 +2404,8 @@ static void draw_menu_bar(void)
     /* ojjy logo */
     if (active_menu == 1)
         draw_rounded_rect_blend(L.logo_x - 7, 3, L.logo_w + 14, H - 6, 5, theme->accent, 220);
-    ui_text_mid(L.logo_x, 0, H, "ojjy", TEXT_BODY_BOLD, active_menu == 1 ? COLOR_WHITE : theme->accent);
+    ui_text_mid(L.logo_x, 0, H, "ojjy", TEXT_BODY_BOLD,
+                active_menu == 1 ? COLOR_WHITE : settings_get()->dark_mode ? theme->accent : theme->text);
     ui_text_mid(L.app_x, 0, H, active_app_name, TEXT_BODY_BOLD, theme->text);
 
     for (int i = 0; i < 4; i++) {

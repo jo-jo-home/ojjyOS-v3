@@ -244,3 +244,13 @@ Results are appended to the log below.
   (TCG) and 2x (HVF, --internet: Wikipedia, NPR, HN, 68k.news, CERN, Wiby),
   ARM smoke --protected, apps check, Intel smoke PASS. Evidence:
   build/web-inter-evidence/ (copied from the worktree build/web-live/).
+- UI polish pass 2a (2026-10-18, branch ui-polish-2): dark-mode audit with
+  `tests/qemu_design_tour.py --dark` — everything read well except the
+  browser (light page with light text, white address bar): page, address bar
+  and form fields now follow the appearance. Settings: Wallpaper page shows
+  real rendered thumbnails with a selection ring; Dock page has Size
+  (40/48/56) and Magnification (Off/Some/More) segmented controls (the old
+  control cycled 32-44 px, which the new Dock ignores below 40); Keyboard page
+  has a shortcuts switch + reference list; Mouse page has a 4-step speed
+  control and says honestly it only affects relative mice. Live: TCG + HVF
+  smoke, pointer, apps, browser, network UI, x86 smoke PASS (build/ui2-live).

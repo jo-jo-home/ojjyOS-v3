@@ -936,6 +936,83 @@ static void draw_wifi_glyph(int x, int y, Color c, bool off)
         for (int i = 0; i < 15; i++) draw_rounded_rect_blend(x + i, y + i - 1, 2, 2, 1, c, 255);
 }
 
+/* ---- Settings controls shared by drawing and clicks ---- */
+#define SEG_W   240
+#define SEG_H   24
+
+/* Segmented control right-aligned in a settings row. */
+static int seg_x(int main_x, int main_w) { return main_x + main_w - 16 - SEG_W; }
+
+static void draw_segmented(int x, int y, const char *const *labels, int n, int selected)
+{
+    bool dark = settings_get()->dark_mode;
+    draw_rounded_rect_blend(x, y, SEG_W, SEG_H, 7, dark ? COLOR_WHITE : theme->midnight, dark ? 26 : 18);
+    int cw = SEG_W / n;
+    for (int i = 0; i < n; i++) {
+        int cx = x + i * cw;
+        if (i == selected) {
+            gfx_shadow(surface(), cx + 2, y + 2, cw - 4, SEG_H - 4, 6, 3, 1, COLOR_BLACK, 50);
+            draw_rounded_rect_blend(cx + 2, y + 2, cw - 4, SEG_H - 4, 6, dark ? RGB(96, 106, 124) : COLOR_WHITE, 255);
+        }
+        int tw = text_width(labels[i], i == selected ? TEXT_BODY_MEDIUM : TEXT_BODY);
+        ui_text_mid(cx + (cw - tw) / 2, y, SEG_H, labels[i], i == selected ? TEXT_BODY_MEDIUM : TEXT_BODY,
+                    i == selected ? theme->text : theme->text_muted);
+    }
+}
+
+/* Index of the segment under (px, py), or -1. */
+static int segmented_hit(int x, int y, int n, int px, int py)
+{
+    if (px < x || px >= x + SEG_W || py < y || py >= y + SEG_H) return -1;
+    return (px - x) / (SEG_W / n);
+}
+
+/* Dock: size presets and magnification levels (relative to the size). */
+static const uint8_t dock_sizes[3] = { 40, 48, 56 };
+static int dock_size_index(void)
+{
+    int s = settings_get()->dock_size;
+    return s < 44 ? 0 : s < 52 ? 1 : 2;
+}
+static int dock_magnify_level(void)
+{
+    int d = (int)settings_get()->dock_magnify - (int)MAX(40, settings_get()->dock_size);
+    return d < 8 ? 0 : d < 24 ? 1 : 2;
+}
+static void dock_apply(int size_index, int level)
+{
+    SettingsState *st = settings_get();
+    st->dock_size = dock_sizes[size_index];
+    st->dock_magnify = (uint8_t)MIN(96, st->dock_size + level * 16);
+    settings_save();
+}
+
+/* Wallpaper thumbnails (rendered once at physical size). */
+#define WP_THUMB_W  160
+#define WP_THUMB_H  100
+static uint32_t *wp_thumbs[2];
+
+static void draw_wallpaper_thumb(int which, int x, int y, bool selected)
+{
+    int k = fb_ui_scale();
+    if (!wp_thumbs[which]) {
+        wp_thumbs[which] = (uint32_t *)pmm_alloc_bytes((size_t)WP_THUMB_W * k * WP_THUMB_H * k * sizeof(uint32_t));
+        if (wp_thumbs[which]) wallpaper_render_tahoe(wp_thumbs[which], WP_THUMB_W * k, WP_THUMB_H * k, which == 1);
+    }
+    if (selected) gfx_round_rect_stroke(surface(), x - 3, y - 3, WP_THUMB_W + 6, WP_THUMB_H + 6, 13, theme->accent, 255),
+                  gfx_round_rect_stroke(surface(), x - 2, y - 2, WP_THUMB_W + 4, WP_THUMB_H + 4, 12, theme->accent, 255);
+    gfx_shadow(surface(), x, y, WP_THUMB_W, WP_THUMB_H, 10, 10, 3, COLOR_BLACK, 70);
+    if (wp_thumbs[which])
+        gfx_blit_scaled(surface(), wp_thumbs[which], WP_THUMB_W * k, 0, 0, WP_THUMB_W * k, WP_THUMB_H * k,
+                        x, y, WP_THUMB_W, WP_THUMB_H, 10, 255);
+}
+
+static void draw_settings_row(int main_x, int main_w, int ry, int i, const char *label)
+{
+    if (i) draw_rounded_rect_blend(main_x + 16, ry - 4, main_w - 32, 1, 0, theme->text_muted, 50);
+    ui_text_mid(main_x + 16, ry, 26, label, TEXT_BODY, theme->text);
+}
+
 static void draw_settings_window(SettingsStateUi *state, int content_x, int content_y, int content_w, int content_h)
 {
     int sidebar_w = 160;
@@ -1052,23 +1129,57 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         ui_text(main_x + 248, by + 6, "Switch User", TEXT_BODY, theme->text);
     } else if (state->page == SETTINGS_PAGE_WALLPAPER) {
         ui_text(main_x + 16, content_y + 12, "Wallpaper", TEXT_HEADLINE, theme->text);
-        fb_fill_rect(main_x + 16, content_y + 48, 80, 50, theme->accent_soft);
-        ui_text(main_x + 20, content_y + 104, "Tahoe Light", TEXT_BODY, theme->text_muted);
-        fb_fill_rect(main_x + 120, content_y + 48, 80, 50, theme->accent);
-        ui_text(main_x + 124, content_y + 104, "Tahoe Dark", TEXT_BODY, theme->text_muted);
+        static const char *const names[2] = { "Tahoe Light", "Tahoe Dark" };
+        for (int i = 0; i < 2; i++) {
+            int tx = main_x + 16 + i * (WP_THUMB_W + 24), ty = content_y + 48;
+            bool sel = !wallpaper_loaded && wp_tahoe_dark == (i == 1);
+            draw_wallpaper_thumb(i, tx, ty, sel);
+            int nw = text_width(names[i], sel ? TEXT_BODY_MEDIUM : TEXT_BODY);
+            ui_text(tx + (WP_THUMB_W - nw) / 2, ty + WP_THUMB_H + 10, names[i], sel ? TEXT_BODY_MEDIUM : TEXT_BODY,
+                    sel ? theme->text : theme->text_muted);
+        }
+        ui_text(main_x + 16, content_y + 48 + WP_THUMB_H + 40, "The dark wallpaper also switches on Dark Mode.",
+                TEXT_SMALL, theme->text_muted);
     } else if (state->page == SETTINGS_PAGE_DOCK) {
         ui_text(main_x + 16, content_y + 12, "Dock & Menu Bar", TEXT_HEADLINE, theme->text);
-        ui_text(main_x + 16, content_y + 42, "Dock Size", TEXT_BODY, theme->text_muted);
-        fb_fill_rect(main_x + 120, content_y + 38, settings->dock_size, 10, theme->accent_soft);
-        ui_text(main_x + 16, content_y + 64, "Magnification", TEXT_BODY, theme->text_muted);
-        fb_fill_rect(main_x + 120, content_y + 60, settings->dock_magnify, 10, theme->accent);
+        static const char *const sizes[3] = { "Small", "Medium", "Large" };
+        static const char *const mags[3] = { "Off", "Some", "More" };
+        int ry0 = content_y + APPEARANCE_ROW_Y(0), ry1 = content_y + APPEARANCE_ROW_Y(1);
+        draw_settings_row(main_x, main_w, ry0, 0, "Size");
+        draw_segmented(seg_x(main_x, main_w), ry0 + 1, sizes, 3, dock_size_index());
+        draw_settings_row(main_x, main_w, ry1, 1, "Magnification");
+        draw_segmented(seg_x(main_x, main_w), ry1 + 1, mags, 3, dock_magnify_level());
+        ui_text(main_x + 16, ry1 + 40, "Point at the Dock to see it magnify.",
+                TEXT_SMALL, theme->text_muted);
     } else if (state->page == SETTINGS_PAGE_KEYBOARD) {
         ui_text(main_x + 16, content_y + 12, "Keyboard", TEXT_HEADLINE, theme->text);
-        ui_text(main_x + 16, content_y + 42, settings->shortcuts_enabled ? "Shortcuts: On" : "Shortcuts: Off", TEXT_BODY, theme->text_muted);
+        int ry = content_y + APPEARANCE_ROW_Y(0);
+        draw_settings_row(main_x, main_w, ry, 0, "Keyboard shortcuts");
+        draw_switch(main_x + main_w - 58, ry + 3, settings->shortcuts_enabled);
+        static const char *const keys[][2] = {
+            { "Spotlight", "\xE2\x8C\x98 Space" }, { "Switch apps", "\xE2\x8C\x98 Tab" },
+            { "Mission Control", "\xE2\x8C\x98 M" }, { "Launchpad", "\xE2\x8C\x98 L" },
+            { "Close window", "\xE2\x8C\x98 Q" }, { "Lock screen", "\xE2\x8C\x83 \xE2\x8C\x98 Q" },
+            { "Save (TextEdit)", "\xE2\x8C\x98 S" }, { "Console", "\xE2\x87\xA7 Esc" },
+        };
+        int ky = ry + 44;
+        ui_text(main_x + 16, ky - 4, "Shortcuts", TEXT_SMALL_BOLD, theme->text_muted);
+        for (unsigned i = 0; i < ARRAY_SIZE(keys); i++) {
+            int col = (int)(i % 2), rowi = (int)(i / 2);
+            int cw = (main_w - 32) / 2, cx = main_x + 16 + col * cw, cy = ky + 14 + rowi * 24;
+            ui_text(cx, cy, keys[i][0], TEXT_BODY, settings->shortcuts_enabled ? theme->text : theme->text_muted);
+            int kw = text_width(keys[i][1], TEXT_BODY_MEDIUM);
+            draw_rounded_rect_blend(cx + cw - kw - 24, cy - 2, kw + 12, 20, 5, settings_get()->dark_mode ? COLOR_WHITE : theme->midnight, 20);
+            ui_text(cx + cw - kw - 18, cy, keys[i][1], TEXT_BODY_MEDIUM, theme->text_muted);
+        }
     } else if (state->page == SETTINGS_PAGE_MOUSE) {
-        ui_text(main_x + 16, content_y + 12, "Mouse/Trackpad", TEXT_HEADLINE, theme->text);
-        ui_text(main_x + 16, content_y + 42, "Tracking Speed", TEXT_BODY, theme->text_muted);
-        fb_fill_rect(main_x + 140, content_y + 38, settings->mouse_speed * 20, 10, theme->accent_soft);
+        ui_text(main_x + 16, content_y + 12, "Mouse & Trackpad", TEXT_HEADLINE, theme->text);
+        static const char *const speeds[4] = { "Slow", "Normal", "Fast", "Fastest" };
+        int ry = content_y + APPEARANCE_ROW_Y(0);
+        draw_settings_row(main_x, main_w, ry, 0, "Tracking speed");
+        draw_segmented(seg_x(main_x, main_w), ry + 1, speeds, 4, MAX(1, MIN(settings->mouse_speed, 4)) - 1);
+        ui_text(main_x + 16, ry + 40, "Applies to relative mice (Intel PS/2). In a VM the pointer follows", TEXT_SMALL, theme->text_muted);
+        ui_text(main_x + 16, ry + 56, "the Mac cursor exactly, so speed is set on the Mac.", TEXT_SMALL, theme->text_muted);
     } else if (state->page == SETTINGS_PAGE_NETWORK) {
         const NetInfo *ni = net_info();
         char line[80], a[20], b[20];
@@ -7378,13 +7489,14 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             }
                         }
                         if (state->settings.page == SETTINGS_PAGE_WALLPAPER) {
-                            if (x >= main_x + 16 && x <= main_x + 96 && y >= content_y + 48 && y <= content_y + 98) {
+                            int tx0 = main_x + 16, tx1 = main_x + 16 + WP_THUMB_W + 24, ty = content_y + 48;
+                            if (x >= tx0 && x < tx0 + WP_THUMB_W && y >= ty && y < ty + WP_THUMB_H) {
                                 compositor_set_wallpaper("/System/Wallpapers/Tahoe Light.raw");
                                 settings_get()->dark_mode = false;
                                 compositor_set_dark_mode(false);
                                 settings_save();
                             }
-                            if (x >= main_x + 120 && x <= main_x + 200 && y >= content_y + 48 && y <= content_y + 98) {
+                            if (x >= tx1 && x < tx1 + WP_THUMB_W && y >= ty && y < ty + WP_THUMB_H) {
                                 compositor_set_wallpaper("/System/Wallpapers/Tahoe Dark.raw");
                                 settings_get()->dark_mode = true;
                                 compositor_set_dark_mode(true);
@@ -7392,29 +7504,19 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             }
                         }
                         if (state->settings.page == SETTINGS_PAGE_DOCK) {
-                            if (x >= main_x + 120 && x <= main_x + 220 && y >= content_y + 34 && y <= content_y + 52) {
-                                settings_get()->dock_size += 4;
-                                if (settings_get()->dock_size > 44) settings_get()->dock_size = 32;
-                                settings_save();
-                            }
-                            if (x >= main_x + 120 && x <= main_x + 240 && y >= content_y + 58 && y <= content_y + 76) {
-                                settings_get()->dock_magnify += 4;
-                                if (settings_get()->dock_magnify > 72) settings_get()->dock_magnify = 48;
-                                settings_save();
-                            }
+                            int sx = seg_x(main_x, main_w);
+                            int si = segmented_hit(sx, content_y + APPEARANCE_ROW_Y(0) + 1, 3, x, y);
+                            int mi = segmented_hit(sx, content_y + APPEARANCE_ROW_Y(1) + 1, 3, x, y);
+                            if (si >= 0) dock_apply(si, dock_magnify_level());
+                            if (mi >= 0) dock_apply(dock_size_index(), mi);
                         }
-                        if (state->settings.page == SETTINGS_PAGE_KEYBOARD) {
-                            if (y >= content_y + 38 && y <= content_y + 56) {
-                                settings_get()->shortcuts_enabled = !settings_get()->shortcuts_enabled;
-                                settings_save();
-                            }
+                        if (state->settings.page == SETTINGS_PAGE_KEYBOARD && row == 0) {
+                            settings_get()->shortcuts_enabled = !settings_get()->shortcuts_enabled;
+                            settings_save();
                         }
                         if (state->settings.page == SETTINGS_PAGE_MOUSE) {
-                            if (x >= main_x + 140 && x <= main_x + 240 && y >= content_y + 34 && y <= content_y + 52) {
-                                settings_get()->mouse_speed++;
-                                if (settings_get()->mouse_speed > 4) settings_get()->mouse_speed = 1;
-                                settings_save();
-                            }
+                            int mi = segmented_hit(seg_x(main_x, main_w), content_y + APPEARANCE_ROW_Y(0) + 1, 4, x, y);
+                            if (mi >= 0) { settings_get()->mouse_speed = (uint8_t)(mi + 1); settings_save(); }
                         }
                     }
                 } else if (state->type == APP_CALCULATOR) {

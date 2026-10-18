@@ -503,6 +503,11 @@ const char *browser_title(void)
 
 
 
+/* Dark appearance = light text tokens. Fields and the page follow it. */
+static bool dark_ui(const ThemeTokens *t) { return ((t->text >> 16) & 0xFF) > 128; }
+static Color field_bg(const ThemeTokens *t) { return dark_ui(t) ? RGB(20, 26, 38) : COLOR_WHITE; }
+static Color field_fg(const ThemeTokens *t) { return dark_ui(t) ? t->text : COLOR_TEXT; }
+
 static GfxSurface *surf(void)
 {
     static GfxSurface s;
@@ -588,7 +593,7 @@ static void draw_field(const WebBox *b, int ox, int oy)
                       TEXT_BODY_MEDIUM, t->text, b->w - 8);
         return;
     }
-    ui_rounded_rect(x, y, b->w, b->h, 4, COLOR_WHITE, 235);
+    ui_rounded_rect(x, y, b->w, b->h, 4, field_bg(t), 235);
     ui_rounded_rect(x, y + b->h - 2, b->w, 2, 1, focused ? t->accent : t->text_muted, focused ? 255 : 120);
     if (f->kind == FIELD_CHECKBOX) {
         if (f->checked) ui_rounded_rect(x + 3, y + 3, b->w - 6, b->h - 6, 2, t->accent, 255);
@@ -607,7 +612,7 @@ static void draw_field(const WebBox *b, int ox, int oy)
     int room = b->w - 12;
     while (*p && text_width(p, TEXT_BODY) > room) p++;
     int ty = text_y_center(y, b->h, TEXT_BODY);
-    int tw = text_draw(surf(), x + 5, ty, p, TEXT_BODY, placeholder ? t->text_muted : COLOR_TEXT);
+    int tw = text_draw(surf(), x + 5, ty, p, TEXT_BODY, placeholder ? t->text_muted : field_fg(t));
     if (focused) ui_rounded_rect(x + 6 + tw, y + 3, 1, b->h - 6, 0, t->accent, 255);
 }
 
@@ -632,7 +637,7 @@ void browser_draw(int x, int y, int w, int h)
     int ax = x + 122, aw = w - 128;
     bool editing = B.focus == FOCUS_ADDRESS;
     GfxSurface *s = surf();
-    ui_rounded_rect(ax, by, aw, 24, 8, COLOR_WHITE, editing ? 245 : 170);
+    ui_rounded_rect(ax, by, aw, 24, 8, field_bg(t), editing ? 245 : (dark_ui(t) ? 200 : 170));
     if (editing) {
         gfx_round_rect_stroke(s, ax - 1, by - 1, aw + 2, 26, 9, t->accent, 255);
         gfx_round_rect_stroke(s, ax - 2, by - 2, aw + 4, 28, 10, t->accent, 90);
@@ -646,7 +651,7 @@ void browser_draw(int x, int y, int w, int h)
         fb_set_clip(ax, by, aw - 4, 24);
         int tw = text_width(a, TEXT_BODY);
         if (B.select_all && *a) ui_rounded_rect(tx - 2, by + 4, tw + 4, 16, 3, t->accent_soft, 170);
-        text_draw(s, tx, ty, a, TEXT_BODY, COLOR_TEXT);
+        text_draw(s, tx, ty, a, TEXT_BODY, field_fg(t));
         if (!B.select_all) ui_rounded_rect(tx + tw + 1, by + 4, 2, 16, 1, t->accent, 255);
         fb_reset_clip();
     } else {
@@ -673,7 +678,7 @@ void browser_draw(int x, int y, int w, int h)
 
     /* Page */
     int px = page_x(), py = page_y(), pw = page_w(), ph = page_h();
-    ui_rounded_rect(px, py, pw, ph, 8, ui_blend(t->dock_tint, COLOR_WHITE, 120), 238);
+    ui_rounded_rect(px, py, pw, ph, 8, dark_ui(t) ? RGB(24, 30, 42) : ui_blend(t->dock_tint, COLOR_WHITE, 120), 238);
     fb_set_clip(px, py, pw, ph);
     int ox = px + PAD, oy = py + 8 - B.scroll;
     for (int i = 0; i < doc.box_count; i++) {

@@ -24,7 +24,8 @@ fi
 "$HOST_CC" "${FLAGS[@]}" tests/test_acpi_aml.c kernel/src/drivers/acpi_aml.c kernel/src/string.c -o "$OUT/test_acpi_aml"
 "$HOST_CC" "${FLAGS[@]}" tests/test_user.c kernel/src/{user,user_image,string}.c -o "$OUT/test_user"
 "$HOST_CC" "${FLAGS[@]}" tests/test_framebuffer.c kernel/src/{framebuffer,string}.c -o "$OUT/test_framebuffer"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer; do
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_net.c kernel/src/net/{net,tcp}.c kernel/src/{random,string}.c -o "$OUT/test_net"
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer test_net; do
     echo "Running $test"
     "$OUT/$test"
 done

@@ -68,6 +68,17 @@ static int virtio_dev_start(uint32_t base, uint32_t features)
 
 int virtio_queue_init(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem)
 {
+    return virtio_queue_init_index(vq, mmio_base, mem, 0);
+}
+
+void virtio_notify(const VirtQueue *vq)
+{
+    virtio_memory_barrier();
+    vio_write(vq->mmio, VIO_QUEUE_NOTIFY, vq->index);
+}
+
+int virtio_queue_init_index(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem, uint16_t index)
+{
     memset(mem, 0, sizeof(*mem));
 
     vq->mem = mem;
@@ -75,8 +86,9 @@ int virtio_queue_init(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem)
     vq->avail_idx = 0;
     vq->used_idx = 0;
     vq->mmio = mmio_base;
+    vq->index = index;
 
-    vio_write(mmio_base, VIO_QUEUE_SEL, 0);
+    vio_write(mmio_base, VIO_QUEUE_SEL, index);
     uint32_t max = vio_read(mmio_base, VIO_QUEUE_NUM_MAX);
     if (max == 0) {
         return -1;
@@ -143,7 +155,7 @@ void virtio_submit(VirtQueue *vq, uint16_t head)
     virtio_memory_barrier();
 
     /* Kick the device */
-    vio_write(vq->mmio, VIO_QUEUE_NOTIFY, 0);
+    vio_write(vq->mmio, VIO_QUEUE_NOTIFY, vq->index);
 }
 
 int virtio_poll_used(VirtQueue *vq, uint32_t *out_len)
@@ -192,8 +204,10 @@ void virtio_mmio_init(void)
         }
 
         vio_write(base, VIO_DEVFEAT_SEL, 0);
-        uint32_t features = dev_id == VIRTIO_ID_BLOCK ?
-            (vio_read(base, VIO_DEVFEAT) & (1u << 9)) : 0; /* BLK_F_FLUSH */
+        uint32_t offered = vio_read(base, VIO_DEVFEAT);
+        uint32_t features = dev_id == VIRTIO_ID_BLOCK ? (offered & (1u << 9))  /* BLK_F_FLUSH */
+                          : dev_id == VIRTIO_ID_NET   ? (offered & (1u << 5))  /* NET_F_MAC */
+                          : 0;
         if (virtio_dev_start(base, features) != 0) {
             continue;
         }
@@ -204,6 +218,12 @@ void virtio_mmio_init(void)
                 break;
             case VIRTIO_ID_INPUT:
                 if (virtio_input_attach(base) == 0) found++;
+                break;
+            case VIRTIO_ID_NET:
+                if (virtio_net_attach(base, features != 0) == 0) found++;
+                break;
+            case VIRTIO_ID_RNG:
+                if (virtio_rng_attach(base) == 0) found++;
                 break;
             default:
                 serial_printf("[VIRTIO] Slot %d: device id %d not supported\n",

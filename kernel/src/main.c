@@ -45,6 +45,7 @@
 #include "arch_power.h"
 #include "drivers/blockdev.h"
 #include "users.h"
+#include "net/net.h"
 #include "proc.h"
 #include "user.h"
 
@@ -904,6 +905,7 @@ void kernel_main(BootInfo *boot_info)
     /* Driver subsystem */
     driver_subsystem_init();
     input_init();
+    net_init();     /* before device discovery: drivers attach to it */
     input_set_mouse_bounds(fb_get_width(), fb_get_height());
 
 #ifdef __x86_64__
@@ -1068,6 +1070,7 @@ void kernel_main(BootInfo *boot_info)
 #ifndef __x86_64__
         a64_poll_input();
 #endif
+        net_poll(timer_get_ticks());   /* DHCP/ARP/DNS/TCP timers */
 
         /* Process input events */
         for (unsigned budget = 0; budget < 128 && input_has_event(); budget++) {

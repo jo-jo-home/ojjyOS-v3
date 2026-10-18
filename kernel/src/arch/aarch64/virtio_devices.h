@@ -24,6 +24,15 @@ void virtio_dev_ready(uint32_t base);
 /* Poll all input devices for pending events (called each main-loop
  * iteration by a64_poll_input). */
 void virtio_input_poll(void);
+
+/* virtio-net (device 1): attach, then poll from the main loop. */
+int virtio_net_attach(uint32_t base, bool has_mac);
+void virtio_net_poll(void);
+
+/* virtio-rng (device 4): fills the kernel entropy pool. */
+int virtio_rng_attach(uint32_t base);
+void virtio_rng_poll(void);
+void virtio_rng_request(void);
 #ifdef OJJY_HOST_TEST
 void virtio_input_test_pointer_init(int32_t min_x, int32_t max_x, int32_t min_y, int32_t max_y);
 void virtio_input_test_pointer_event(uint16_t type, uint16_t code, int32_t value);

@@ -3,13 +3,20 @@
 #include "arch/aarch64/virtio_devices.h"
 #include "test_support.h"
 
-static uint32_t offered, selected;
+static uint32_t offered, selected, queue_sel = 99, notified = 99;
 uint32_t virtio_host_mmio_read(uint32_t base, uint32_t off)
 { (void)base; return off == VIO_QUEUE_NUM_MAX ? offered : 0; }
 void virtio_host_mmio_write(uint32_t base, uint32_t off, uint32_t value)
-{ (void)base; if (off == VIO_QUEUE_NUM) selected = value; }
+{
+    (void)base;
+    if (off == VIO_QUEUE_NUM) selected = value;
+    if (off == VIO_QUEUE_SEL) queue_sel = value;
+    if (off == VIO_QUEUE_NOTIFY) notified = value;
+}
 int virtio_blk_attach(uint32_t base, bool flush) { (void)base; (void)flush; return -1; }
 int virtio_input_attach(uint32_t base) { (void)base; return -1; }
+int virtio_net_attach(uint32_t base, bool mac) { (void)base; (void)mac; return -1; }
+int virtio_rng_attach(uint32_t base) { (void)base; return -1; }
 
 int main(void)
 {
@@ -43,5 +50,13 @@ int main(void)
     }
     offered = 0;
     CHECK(virtio_queue_init(&queue, 0, &memory) == -1, "absent queue rejected");
+    offered = 64;
+    CHECK(virtio_queue_init_index(&queue, 0, &memory, 1) == 0 && queue_sel == 1 && queue.index == 1,
+          "multi-queue init selects the requested queue (net TX = 1)");
+    uint16_t head = virtio_desc_add(&queue, 0x1000, 64, 0);
+    virtio_submit(&queue, head);
+    CHECK(notified == 1, "submit notifies the queue's own index, not queue 0");
+    virtio_notify(&queue);
+    CHECK(notified == 1, "explicit notify uses the queue index");
     return finish();
 }

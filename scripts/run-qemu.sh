@@ -115,6 +115,9 @@ if [ "$ARCH" = "aarch64" ]; then
         -device virtio-tablet-device \
         -drive file="$IMAGE",format=raw,if=none,id=hd \
         -device virtio-blk-device,drive=hd \
+        -netdev user,id=net0 \
+        -device virtio-net-device,netdev=net0 \
+        -device virtio-rng-device \
         -serial file:"$SERIAL_LOG"
 
 elif [ "$ARCH" = "x86_64" ]; then

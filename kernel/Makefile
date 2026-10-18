@@ -52,7 +52,13 @@ COMMON_C_SOURCES = src/main.c \
                    src/fs/persist.c \
                    src/ui/compositor.c \
                    src/ui/services.c \
-                   src/ui/theme.c
+                   src/ui/theme.c \
+                   src/random.c \
+                   src/net/net.c \
+                   src/net/tcp.c \
+                   src/web/url.c \
+                   src/web/http.c \
+                   src/ui/netcmd.c
 
 ifeq ($(ARCH),aarch64)
 TARGET_TRIPLE = aarch64-unknown-none-elf
@@ -69,6 +75,8 @@ ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
                  src/arch/aarch64/virtio.c \
                  src/arch/aarch64/virtio_input.c \
                  src/arch/aarch64/virtio_blk.c \
+                 src/arch/aarch64/virtio_net.c \
+                 src/arch/aarch64/virtio_rng.c \
                  src/arch/aarch64/psci.c
 
 ASM_SOURCES = src/arch/aarch64/entry.S src/arch/aarch64/user_entry.S
@@ -119,6 +127,7 @@ ALL_CLEAN_OBJECTS = $(COMMON_C_SOURCES:.c=.o) \
                     src/arch/aarch64/timer_a64.o src/arch/aarch64/pl011.o \
                     src/arch/aarch64/pl031.o src/arch/aarch64/virtio.o \
                     src/arch/aarch64/virtio_input.o src/arch/aarch64/virtio_blk.o \
+                    src/arch/aarch64/virtio_net.o src/arch/aarch64/virtio_rng.o \
                     src/arch/aarch64/psci.o src/arch/aarch64/entry.o
 ALL_CLEAN_DEPS = $(ALL_CLEAN_OBJECTS:.o=.d)
 

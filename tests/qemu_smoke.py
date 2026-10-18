@@ -49,7 +49,9 @@ class VM:
                         "-global", "virtio-mmio.force-legacy=false", "-device", "ramfb",
                         "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
                         "-drive", f"file={disk},format=raw,if=none,id=hd,cache=writeback",
-                        "-device", "virtio-blk-device,drive=hd"]
+                        "-device", "virtio-blk-device,drive=hd",
+                        "-netdev", "user,id=net0", "-device", "virtio-net-device,netdev=net0",
+                        "-device", "virtio-rng-device"]
         else:
             command += ["-M", "pc", "-vga", "std", "-drive", f"file={disk},format=raw,cache=writeback"]
         self.stderr = (output / f"qemu-{run}.log").open("wb")
@@ -112,11 +114,12 @@ class VM:
 
     def type(self, text, pace=0.08):
         for char in text:
-            shifted = {"_": "minus", ">": "dot"}.get(char) or (char.lower() if char.isupper() else None)
+            shifted = {"_": "minus", ">": "dot", ":": "semicolon", "?": "slash"}.get(char) or (char.lower() if char.isupper() else None)
             if shifted:
                 self.key("shift", True); self.press(shifted, pace); self.key("shift", False)
                 continue
-            code = {" ": "spc", "\n": "ret", "\t": "tab", "/": "slash", "-": "minus", ".": "dot"}.get(char, char)
+            code = {" ": "spc", "\n": "ret", "\t": "tab", "/": "slash", "-": "minus", ".": "dot",
+                    "=": "equal", ";": "semicolon"}.get(char, char)
             self.press(code, pace)
 
     def console(self):

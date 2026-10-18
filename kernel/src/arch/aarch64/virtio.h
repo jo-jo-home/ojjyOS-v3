@@ -60,7 +60,9 @@ static inline void virtio_memory_barrier(void)
 #define VIO_STATUS_FAILED       0x80
 
 /* virtio device IDs */
+#define VIRTIO_ID_NET           1
 #define VIRTIO_ID_BLOCK         2
+#define VIRTIO_ID_RNG           4
 #define VIRTIO_ID_INPUT         18
 
 /* Descriptor flags */
@@ -115,6 +117,7 @@ typedef struct {
     uint16_t used_idx;        /* last processed used index */
     uint16_t size;            /* negotiated ring size, not storage capacity */
     uint32_t mmio;            /* device MMIO base address */
+    uint16_t index;           /* queue number (net: 0 = RX, 1 = TX) */
 } VirtQueue;
 
 /*
@@ -127,6 +130,10 @@ void virtio_mmio_init(void);
  * statically-allocated queue memory. Returns 0 on success.
  */
 int virtio_queue_init(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem);
+/* Same, for queue number `index` (multi-queue devices such as virtio-net). */
+int virtio_queue_init_index(VirtQueue *vq, uint32_t mmio_base, VirtQueueMem *mem, uint16_t index);
+/* Tell the device that queue `vq` has new available buffers. */
+void virtio_notify(const VirtQueue *vq);
 
 /*
  * Begin building a descriptor chain: adds one descriptor and returns

@@ -18,6 +18,7 @@
 #include "../users.h"
 #include "../proc.h"
 #include "../user.h"
+#include "netcmd.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -3981,9 +3982,23 @@ static void terminal_cat(TerminalState *term, const char *path)
 
 static const char *app_name_from_type(AppType type);
 
+/* Network command output goes to the (single) Terminal window, wherever
+ * it currently sits in the window stack, and keeps the view at the end. */
+static void terminal_net_print(const char *line)
+{
+    int idx = app_window_index[APP_TERMINAL];
+    if (idx < 0 || idx >= window_count) return;
+    TerminalState *term = &app_states[idx].terminal;
+    terminal_append_line(term, line);
+    term->scroll = TERMINAL_MAX_LINES;      /* clamped to the end when drawn */
+    mark_dirty();
+}
+
 static void terminal_exec(TerminalState *term, const char *cmd)
 {
     if (!term || !cmd) return;
+
+    if (netcmd_exec(cmd, terminal_net_print)) return;
 
     if (strcmp(cmd, "run") == 0 || strncmp(cmd, "run ", 4) == 0) {
         static UserResult result;
@@ -4017,6 +4032,9 @@ static void terminal_exec(TerminalState *term, const char *cmd)
         terminal_append_line(term, "  mkdir, rm, mv, cp, open, clear, sync,");
         terminal_append_line(term, "  ps, top, kill, heap, whoami, users,");
         terminal_append_line(term, "  adduser, passwd, su, lock, run <name>");
+        terminal_append_line(term, "Network: ifconfig, net on|off|renew,");
+        terminal_append_line(term, "  ping <host> [n], nslookup <host>, curl [-I] <url>");
+        terminal_append_line(term, "  (Ctrl+C stops a running network command)");
         return;
     }
 
@@ -5637,6 +5655,10 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
     if (overlay == OVERLAY_NONE && active_window_index >= 0 && active_window_index < window_count) {
         AppWindowState *state = &app_states[active_window_index];
         if (state->type == APP_TERMINAL) {
+            if ((modifiers & INPUT_MOD_CTRL) && keycode == KEY_C) {
+                netcmd_cancel(terminal_net_print);
+                return;
+            }
             terminal_handle_key(&state->terminal, ascii, keycode);
         } else if (state->type == APP_TEXTEDIT) {
             /* Cmd shortcuts were already handled by handle_app_shortcut */
@@ -7283,6 +7305,7 @@ void compositor_tick(uint64_t now_ms)
     static bool login_frame_visible;
     /* Pointer overlay is independent of the 30fps scene/animation budget. */
     fb_cursor_move(cursor_x, cursor_y);
+    if (netcmd_busy()) netcmd_poll(terminal_net_print);
     uint64_t delta = now_ms - last_frame_ms;
     if (delta < 33) {
         return;

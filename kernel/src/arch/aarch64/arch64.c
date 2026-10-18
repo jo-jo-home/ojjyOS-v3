@@ -101,4 +101,6 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr)
 void a64_poll_input(void)
 {
     virtio_input_poll();
+    virtio_net_poll();
+    virtio_rng_poll();
 }

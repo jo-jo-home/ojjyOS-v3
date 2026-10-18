@@ -105,7 +105,7 @@ void user_arch_run(uint64_t entry, uint64_t stack)
 uint64_t user_arch_millis(void)
 {
     uint64_t counter, frequency;
-    __asm__ volatile("mrs %0, cntpct_el0; mrs %1, cntfrq_el0" : "=r"(counter), "=r"(frequency));
+    __asm__ volatile("isb; mrs %0, cntvct_el0; mrs %1, cntfrq_el0" : "=r"(counter), "=r"(frequency));
     if (!frequency) return 0;
     return (counter / frequency) * 1000 + ((counter % frequency) * 1000) / frequency;
 }

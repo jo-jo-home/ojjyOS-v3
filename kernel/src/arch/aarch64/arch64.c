@@ -14,6 +14,8 @@
 #include "timer.h"
 #include "drivers/rtc.h"
 #include "types.h"
+#include "platform.h"
+#include "pci.h"
 
 /* Implemented in timer_a64.c: re-arms the EL1 physical timer and
  * advances the millisecond tick counter. */
@@ -29,10 +31,11 @@ void a64_init(BootInfo *boot_info)
     /* Interrupt controller: only the generic timer uses it. */
     gicv2_init();
 
-    /* Discover virtio-mmio devices (block + input). */
-    virtio_mmio_init();
+    /* QEMU virt: fixed virtio-mmio slots. Apple VZ: PCIe devices. */
+    if (platform.qemu) virtio_mmio_init();
+    if (platform.ecam) pci_init();
 
-    /* Real-time clock */
+    /* Real-time clock (PL031 on QEMU; boot-time clock elsewhere) */
     rtc_init();
 }
 
@@ -43,7 +46,7 @@ void a64_irq_handler(void)
 {
     uint32_t intid = gicv2_ack();
 
-    if (intid == 30) {
+    if (intid == platform.vtimer_ppi) {
         /* EL1 physical timer PPI: advance the tick and re-arm */
         a64_timer_isr();
     } else if (intid != 1023 /* spurious */) {

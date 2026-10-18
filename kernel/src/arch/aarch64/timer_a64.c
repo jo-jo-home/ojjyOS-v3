@@ -12,8 +12,10 @@
 #include "types.h"
 #include "serial.h"
 #include "gicv2.h"
+#include "platform.h"
 
-#define TIMER_PPI_INTID     30      /* Non-secure EL1 physical timer */
+/* The EL1 *virtual* timer (PPI from the platform, 27 on both machines):
+ * Apple's hypervisor exposes it natively; the physical timer may trap. */
 
 static volatile uint64_t timer_ms_ticks = 0;
 static uint64_t timer_freq = 0;
@@ -26,14 +28,23 @@ static inline uint64_t read_cntfrq(void)
     return v;
 }
 
+static uint64_t counter_start;
+
+static inline uint64_t read_cntvct(void)
+{
+    uint64_t v;
+    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(v));
+    return v;
+}
+
 static inline void write_cntp_tval(uint64_t v)
 {
-    __asm__ volatile("msr cntp_tval_el0, %0" : : "r"(v));
+    __asm__ volatile("msr cntv_tval_el0, %0" : : "r"(v));
 }
 
 static inline void enable_cntp(void)
 {
-    __asm__ volatile("msr cntp_ctl_el0, %0" : : "r"((uint64_t)1));
+    __asm__ volatile("msr cntv_ctl_el0, %0" : : "r"((uint64_t)1));
 }
 
 void timer_init(void)
@@ -46,6 +57,7 @@ void timer_init(void)
     if (tick_interval == 0) tick_interval = 1;
 
     timer_ms_ticks = 0;
+    counter_start = read_cntvct();
 
     /* Arm + enable the EL1 physical timer; interrupts stay masked
      * in DAIF until the kernel enables them. */
@@ -53,15 +65,18 @@ void timer_init(void)
     enable_cntp();
 
     /* Route the timer PPI through the GIC */
-    gicv2_enable_intid(TIMER_PPI_INTID);
+    gicv2_enable_intid(platform.vtimer_ppi);
 
     serial_printf("[TIMER] Generic timer at %d Hz (tick = %d counts)\n",
         (int)timer_freq, (int)tick_interval);
 }
 
+/* Milliseconds since timer_init, straight from the counter: never drifts
+ * when interrupts are late (or masked during long operations). */
 uint64_t timer_get_ticks(void)
 {
-    return timer_ms_ticks;
+    if (!tick_interval) return timer_ms_ticks;
+    return (read_cntvct() - counter_start) / tick_interval;
 }
 
 /*
@@ -70,8 +85,8 @@ uint64_t timer_get_ticks(void)
  */
 void timer_sleep(uint64_t ms)
 {
-    uint64_t start = timer_ms_ticks;
-    while (timer_ms_ticks - start < ms) {
+    uint64_t start = timer_get_ticks();
+    while (timer_get_ticks() - start < ms) {
         __asm__ volatile("wfi");
     }
 }

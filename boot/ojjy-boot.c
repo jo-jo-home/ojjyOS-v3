@@ -36,6 +36,10 @@ typedef struct {
 
     /* ACPI RSDP address (for later use) */
     UINT64 rsdp_addr;
+
+    /* Wall clock at boot (Unix seconds from EFI GetTime; 0 = unknown).
+     * Machines without an RTC device (Apple VZ) start their clock here. */
+    UINT64 boot_epoch;
 } __attribute__((packed)) BootInfo;
 
 /* Kernel entry point signature */
@@ -112,6 +116,7 @@ EFI_STATUS GetMemoryMap(BootInfo *info, UINTN *map_key);
 UINT64 FindRSDP(void);
 static void SaveBootLog(EFI_HANDLE ImageHandle);
 static void DumpPlatform(void);
+static UINT64 BootEpoch(void);
 
 /*
  * EFI entry point
@@ -175,6 +180,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     }
 
     DumpPlatform();
+    boot_info->boot_epoch = BootEpoch();
+    Print(L"[BOOT] Clock: %d (Unix seconds)\n", boot_info->boot_epoch);
 
     /* Step 3: Load kernel from disk */
     Print(L"[BOOT] Loading kernel from %s...\n", KERNEL_PATH);
@@ -713,4 +720,20 @@ static void DumpPlatform(void)
             }
         }
     }
+}
+
+/* Unix time from the firmware clock (UTC assumed), 0 if unavailable. */
+static UINT64 BootEpoch(void)
+{
+    EFI_TIME t;
+    if (!RT || !RT->GetTime || EFI_ERROR(RT->GetTime((void *)&t, NULL)) || t.Year < 1970) return 0;
+    /* days from civil (Howard Hinnant) */
+    long long y = t.Year - (t.Month <= 2);
+    long long era = (y >= 0 ? y : y - 399) / 400;
+    UINT64 yoe = (UINT64)(y - era * 400);
+    UINT64 mp = t.Month > 2 ? t.Month - 3 : t.Month + 9;
+    UINT64 doy = (153 * mp + 2) / 5 + t.Day - 1;
+    UINT64 doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    long long days = era * 146097 + (long long)doe - 719468;
+    return (UINT64)(days * 86400 + t.Hour * 3600 + t.Minute * 60 + t.Second);
 }

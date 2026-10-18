@@ -12,7 +12,7 @@
 #include "mmio.h"
 
 /* QEMU virt GICv3 Redistributor base (CPU 0) */
-#define GICR_BASE       0x080A0000UL
+#define GICR_BASE       (platform.gicr)
 #define GICR_SGI_BASE   (GICR_BASE + 0x10000UL)
 #define GICR_WAKER      0x0014
 #define GICR_IGROUPR0   0x0080
@@ -67,7 +67,8 @@ void gicv2_init(void)
      * GICv2's 4 KB distributor faults on GICv3's PIDR2 offset. */
     uint64_t midr = 0;
     __asm__ volatile("mrs %0, midr_el1" : "=r"(midr));
-    if (((pfr0 >> 24) & 0xF) != 0 || ((midr >> 24) & 0xFF) == 0x61) {
+    if (platform.gic_version >= 3 ||
+        (platform.gic_version == 0 && (((pfr0 >> 24) & 0xF) != 0 || ((midr >> 24) & 0xFF) == 0x61))) {
         gic_version = 3;
     } else {
         gic_version = 2;

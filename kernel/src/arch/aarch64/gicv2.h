@@ -14,8 +14,10 @@
 #include "types.h"
 
 /* QEMU virt machine GICv2 bases */
-#define GICD_BASE   0x08000000UL     /* Distributor */
-#define GICC_BASE   0x08010000UL     /* CPU interface */
+/* Bases come from the platform description (ACPI MADT or QEMU defaults). */
+#include "platform.h"
+#define GICD_BASE   (platform.gicd)  /* Distributor */
+#define GICC_BASE   (platform.gicc)  /* CPU interface (GICv2) */
 
 /* Distributor register offsets */
 #define GICD_CTLR       0x000

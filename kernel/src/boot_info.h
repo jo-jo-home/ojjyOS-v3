@@ -29,6 +29,7 @@ typedef struct {
 
     /* ACPI */
     uint64_t rsdp_addr;     /* ACPI RSDP address */
+    uint64_t boot_epoch;    /* Unix seconds at boot (EFI GetTime), 0 = unknown */
 } PACKED BootInfo;
 
 /*

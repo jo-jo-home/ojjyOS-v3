@@ -33,7 +33,7 @@ static inline uint64_t virtio_now_ms(void)
     return fake++;
 #else
     uint64_t cnt, frq;
-    __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(cnt));
+    __asm__ volatile("isb; mrs %0, cntvct_el0" : "=r"(cnt));
     __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frq));
     return frq ? cnt / (frq / 1000) : 0;
 #endif

@@ -149,7 +149,7 @@ typedef VOID (EFIAPI *EFI_RESET_SYSTEM)(
 
 typedef struct {
     EFI_TABLE_HEADER Hdr;
-    VOID            *GetTime;
+    EFI_STATUS (EFIAPI *GetTime)(VOID *Time, VOID *Capabilities);
     VOID            *SetTime;
     VOID            *GetWakeupTime;
     VOID            *SetWakeupTime;

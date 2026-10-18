@@ -24,10 +24,18 @@
 #define RTC_ICR         0x1C    /* Interrupt clear */
 
 #include "mmio.h"
-#define RTC(off) ((uintptr_t)RTC_BASE + (off))
+#include "platform.h"
+#include "timer.h"
+#include "boot_info.h"
+#define RTC(off) ((uintptr_t)platform.rtc + (off))
 
 void rtc_init(void)
 {
+    if (!platform.rtc) {
+        serial_printf("[RTC] No RTC device; clock starts from the firmware time %d\n",
+                      g_boot_info ? (int)g_boot_info->boot_epoch : 0);
+        return;
+    }
     /* Clear any pending interrupt; the RTC is polled */
     mmio_write32(RTC(RTC_IMSC), 0);
     mmio_write32(RTC(RTC_CR), 1);            /* Start counting */
@@ -78,7 +86,8 @@ void rtc_read_time(RtcTime *time)
 {
     if (!time) return;
 
-    uint64_t secs = mmio_read32(RTC(RTC_DR));
+    uint64_t secs = platform.rtc ? mmio_read32(RTC(RTC_DR))
+                                 : (g_boot_info ? g_boot_info->boot_epoch : 0) + timer_get_ticks() / 1000;
 
     int64_t days = (int64_t)(secs / 86400);
     uint64_t rem = secs % 86400;

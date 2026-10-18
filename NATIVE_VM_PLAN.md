@@ -73,3 +73,11 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
   (build/n2-tcg), HVF smoke --protected PASS (build/n2-hvf), pointer test
   PASS with 1.9-3.4 ms overlay latency and zero scene repaints for desktop
   moves (build/n2-ptr).
+- N3 done: user_arch_init maps the low 4 GiB at 2 MiB granularity with RAM
+  blocks classified from the UEFI memory map (QEMU 0x40000000.., VZ
+  0x70000000..0xF0000000), everything else Device; 4-8 GiB mapped as Device
+  1 GiB blocks for VZ's 64-bit virtio BARs; IPS set to 40 bits when
+  ID_AA64MMFR0.PARange >= 2; user pages still rejected >= 4 GiB physical.
+  Evidence: builds 0 warnings (build/n3-build-*), tests pass (build/n3-tests),
+  QEMU TCG + HVF smoke --protected PASS (build/n3-tcg, build/n3-hvf),
+  pointer PASS (build/n3-ptr).

@@ -1,10 +1,11 @@
-/* Owned EL1/EL0 mappings for the supported QEMU virt machine. Jonas Lee. */
+/* Owned EL1/EL0 mappings for QEMU virt and Apple Virtualization. Jonas Lee. */
 #include "user_arch.h"
 #include "arch64.h"
 #include "serial.h"
 #include "string.h"
 #include "panic.h"
 #include "memory.h"
+#include "boot_info.h"
 
 #define TABLE 3ULL
 #define AF (1ULL << 10)
@@ -15,6 +16,10 @@
 typedef uint64_t Table[512];
 static Table kernel_l0 __attribute__((aligned(4096)));
 static Table kernel_l1 __attribute__((aligned(4096)));
+/* 2 MiB-granule mappings for the low 4 GiB: RAM ranges differ between
+ * QEMU (0x40000000..) and Apple VZ (0x70000000..0xF0000000), so blocks
+ * are classified from the UEFI memory map instead of fixed ranges. */
+static Table kernel_l2[4] __attribute__((aligned(4096)));
 static Table app_l0 __attribute__((aligned(4096)));
 static Table app_l1 __attribute__((aligned(4096)));
 static Table app_l2 __attribute__((aligned(4096)));
@@ -25,6 +30,27 @@ extern void a64_user_enter(uint64_t entry, uint64_t stack, uint64_t kernel_stack
 
 static uint64_t descriptor(const void *table) { return (uint64_t)(uintptr_t)table | TABLE; }
 
+/* Is any byte of this 2 MiB block DRAM according to the UEFI memory map?
+ * Types 1-7, 9 and 10 are real memory; 8 is explicitly unusable, 11+ is
+ * device/MMIO. Both machines report big, aligned RAM ranges, so the
+ * any-byte rule matches the actual topology. */
+static bool block_is_ram(uint64_t block_base)
+{
+    const BootInfo *info = g_boot_info;
+    if (!info || !info->mmap_addr || !info->mmap_desc_size) return false;
+    uint64_t entries = info->mmap_size / info->mmap_desc_size;
+    uint64_t block_end = block_base + (2ULL << 20);
+    for (uint64_t i = 0; i < entries; i++) {
+        const EfiMemoryDescriptor *d =
+            (const EfiMemoryDescriptor *)(uintptr_t)(info->mmap_addr + i * info->mmap_desc_size);
+        if (d->type < 1 || d->type == 8 || d->type > 10) continue;
+        uint64_t start = d->phys_addr;
+        uint64_t end = start + d->num_pages * 4096;
+        if (start < block_end && block_base < end) return true;
+    }
+    return false;
+}
+
 static void switch_root(uint64_t root)
 {
     __asm__ volatile("dsb ishst; msr ttbr0_el1, %0; isb; tlbi vmalle1; dsb ish; isb"
@@ -34,18 +60,38 @@ static void switch_root(uint64_t root)
 void user_arch_init(void)
 {
     kernel_l0[0] = descriptor(kernel_l1);
-    /* EL1-only identity map: device MMIO/ROM below 1GiB, RAM up to 4GiB.
-     * User code never receives these privileged aliases. */
-    kernel_l1[0] = 1 | AF | PXN | UXN;
-    for (unsigned i = 1; i < 4; i++) kernel_l1[i] = ((uint64_t)i << 30) | 1 | AF | SH_INNER | NORMAL | UXN;
+
+    /* Low 4 GiB: 2 MiB blocks from the UEFI map. Below RAM this maps the
+     * GIC, ECAM and the 32-bit MMIO BARs as Device; RAM itself is Normal.
+     * User code never receives these privileged aliases (UXN everywhere). */
+    for (unsigned l1 = 0; l1 < 4; l1++) {
+        kernel_l1[l1] = descriptor(kernel_l2[l1]);
+        for (unsigned b = 0; b < 512; b++) {
+            uint64_t base = ((uint64_t)l1 << 30) | ((uint64_t)b << 21);
+            kernel_l2[l1][b] = block_is_ram(base)
+                ? base | 1 | AF | SH_INNER | NORMAL | UXN
+                : base | 1 | AF | PXN | UXN;
+        }
+    }
+    /* 4-8 GiB: Device blocks for the 64-bit virtio BARs on Apple VZ
+     * (0x1_000x_0000). User copies of this table never point here into
+     * RAM, and user_arch_prepare() overrides app_l1[4] with the user region. */
+    for (unsigned l1 = 4; l1 < 8; l1++) {
+        kernel_l1[l1] = ((uint64_t)l1 << 30) | 1 | AF | PXN | UXN;
+    }
+
     uint64_t old, cpacr;
     __asm__ volatile("mrs %0, sctlr_el1; mrs %1, cpacr_el1" : "=r"(old), "=r"(cpacr));
     uint64_t off = old & ~1ULL;
     uint64_t mair = 0xFF00; /* index 0 Device-nGnRnE, index 1 normal WB/WA */
     /* T0SZ=16 (48-bit VA), 4 KiB granule, WB/WA walks, inner shareable,
-     * IPS=0 (32-bit physical), EPD1=1. User VAs above 4GiB are not PAs. */
+     * EPD1=1. IPS grows to 40 bits when the CPU supports it: Apple VZ
+     * places virtio BARs just above 4 GiB. */
+    uint64_t parange = 0;
+    __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(parange));
+    uint64_t ips = ((parange & 0xF) >= 2) ? 2 : 0;
     uint64_t tcr = 16 | (1ULL << 8) | (1ULL << 10) | (3ULL << 12) |
-                   (16ULL << 16) | (1ULL << 23);
+                   (16ULL << 16) | (1ULL << 23) | (ips << 32);
     /* Preserve architectural RES1 bits. Little-endian, no EL0 cache/DAIF
      * control or WFI/WFE escape, no strict unaligned-data trapping. */
     uint64_t on = old | 1 | (1ULL << 2) | (1ULL << 12) | (1ULL << 3) | (1ULL << 4);
@@ -58,7 +104,8 @@ void user_arch_init(void)
                      : : "r"(off), "r"(mair), "r"(tcr), "r"((uint64_t)(uintptr_t)kernel_l0),
                          "r"(on), "r"(cpacr) : "memory");
     ready = true;
-    serial_printf("[USER] Owned ARM64 tables ready; kernel/MMIO EL1-only\n");
+    serial_printf("[USER] Owned ARM64 tables ready (IPS=%d bits, RAM 2MiB-mapped)\n",
+                  (int)(ips ? 40 : 32));
 }
 
 bool user_arch_supported(void) { return ready; }

@@ -60,6 +60,39 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- N9/N10 complete evidence: `build/vz-resume/native-complete/report.json`
+  passes three native cold boots with click-based setup (uppercase/spaces),
+  pixel-confirmed absolute pointer, Retina CG captures, full-screen entry/exit,
+  256 editing cycles, sync/shutdown, saved-password login and damaged-newest-
+  checkpoint fallback. Window-only full-screen/desktop captures visually
+  reviewed; branding, blue theme, sharp menu/Dock preserved. Headless boot
+  clock/IRQ evidence plus live clock/animation frames establish N4/N7 visual
+  acceptance. Live disk+builder lock retention checks pass. 102 host guard
+  checks pass; final host/sanitizer suites and ARM/Intel builds are clean.
+  Kernel hashes before/after final builds are identical (pre/post-final-kernel-
+  hashes.txt), so previous live QEMU TCG/HVF/Intel receipts remain applicable.
+  Limits: fixed 2880x1800 scanout with aspect-preserving view scaling, no live
+  guest mode changes, US-ASCII control text, no exhaustive manual focus-loss
+  testing. Guest calendar uses UTC. Next is N11 regression/docs/data-preserving
+  installed-image update and local merge; nothing pushed or installed yet.
+
+- N9/N10 implementation underway: AppKit host + VZVirtualMachineView, native
+  menus/fullscreen, 2880x1800 scanout, same 2GiB/1vCPU/NAT/virtio configuration,
+  disk and builder locks, EFI store and serial paths. Explicit owner-only Unix
+  control socket sends events only to this VM's view and captures this window
+  via CGWindowListCreateImage (Metal contents verified in images). Host unit
+  safeguards verify ASCII mappings, hard-link alias rejection and separate-
+  process lock exclusion. `native-guards/report.json` passes native setup,
+  uppercase/Shift+Esc, 256 editing cycles, sync/shutdown and cold login; live
+  disk+builder locks were checked while VZ ran. New pointer/fullscreen/fallback
+  smoke is pending (`native-complete*`). No installed disk touched yet.
+  Host bugs fixed: flagsChanged must include NX_DEVICE left/right bits, not
+  just aggregate Shift/Cmd flags; iCloud restores FinderInfo between xattr
+  removal and signing, so sign outside iCloud then install the signed bundle.
+  Controlled test view ignores ordinary physical input to isolate events.
+  A pixel pointer assertion initially compared bitmap shadow origin with the
+  hotspot; fixed its geometry using CURSOR_HOT_X/Y=2, not a looser threshold.
+
 - N8 kernel component verified (native interaction acceptance pending N9):
   `xhci.c` / `usb_hid.c` implement bounded polling rings, direct-port HID
   enumeration, boot keyboard transitions, absolute X/Y report parsing with

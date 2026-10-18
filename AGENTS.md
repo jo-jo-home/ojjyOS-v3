@@ -1,5 +1,33 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## CURRENT WORK (N9/N10 verified, N11 next; 2026-10-18)
+
+N8 kernel component committed `91bf20d`. Native app implementation:
+`vmapp/main.swift`, `scripts/{build-vmapp,run-vm,test-vmapp}.sh`,
+`tests/{test_vmapp.swift,vz_smoke.py}`. `build/ojjyOS.app` builds/signs and
+runs VZ at 2880x1800. `native-guards/report.json` proves setup with uppercase
+text, 256 editing cycles, sync/shutdown and cold password login, plus actual
+live disk/builder lock retention. Own-window CG captures contain Retina GPU
+pixels. Full native pointer/click/full-screen/fallback smoke now PASSES
+(`build/vz-resume/native-complete/report.json`): setup populated via clicks,
+pixel pointer hotspot at (100,100), native full-screen entry/exit, 256 editing
+cycles, sync/shutdown, cold login and corrupted-newest-checkpoint fallback.
+Full-screen capture reviewed: real blue desktop, sharp text, menu bar and Dock.
+102 native-host guard checks pass; both kernel builds warning-free, host and
+sanitizer suites pass. Rebuilt kernel hashes match tested artifacts exactly.
+
+Gotchas: synthesized flagsChanged needs physical left/right NX_DEVICE bits
+as well as aggregate modifiers; otherwise Shift+Esc and uppercase fail.
+Sign the app in non-iCloud temporary staging before ditto installation:
+FileProvider restores FinderInfo too quickly for remove-then-sign in build/.
+`--control` now ignores physical input in its test view to prevent desktop
+mouse tracking from contaminating scripted coordinates. Normal launches
+keep physical input. Pixel cursor tests must account for its 2px hotspot.
+
+Next: N9/N10 local commit, renderer/performance regressions,
+N11 installed-image data hash preservation,
+docs/merge to main only when green. Never push. Installed disks untouched so far.
+
 ## LATEST (2026-10-18): N8 USB driver implemented; native app is next
 
 `native-vm`: N5/N6 boot fixes committed as `a094d68`, N4/N7 timer/clock

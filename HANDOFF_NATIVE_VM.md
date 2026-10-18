@@ -2,6 +2,13 @@
 
 ## Current correction (2026-10-18 resumed session)
 
+N9/N10 is now implemented and native three-boot smoke passes, including
+click-based setup, pointer alignment, full screen, saved login and checkpoint
+fallback. `build/ojjyOS.app` exists; see README for running it. N11 final
+regressions/install/merge are the remaining stage. The paragraphs below are
+historical checkpoints, not the current TODO. Read the newest AGENTS.md and
+NATIVE_VM_PLAN.md log entries first.
+
 N8 kernel USB component now exists and passes full QEMU xHCI input/persistence
 smoke and pointer QA; VZ enumerates keyboard + absolute pointer. Native input
 acceptance awaits the not-yet-built N9/N10 app/control channel. Read the newest

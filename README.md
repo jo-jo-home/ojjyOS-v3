@@ -6,7 +6,7 @@
 
 - **100% Original Custom Kernel:** Not based on Linux, BSD, Windows, or macOS. Host operating systems are used strictly as build/VM hosts.
 - **Native Dual-Architecture Support (`aarch64` + `x86_64`):**
-  - **ARM64 guest on Apple Silicon (`aarch64`):** Runs in QEMU's `virt` machine using TCG emulation, `ramfb` GOP display, PL011 UART, PL031 RTC, `virtio-mmio` v2 (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), ARM Generic Timer, and PSCI power management. This is not bare-metal Mac support; HVF acceleration is not enabled by the current runner.
+  - **ARM64 guest on Apple Silicon (`aarch64`):** Native `ojjyOS.app` uses Apple's Virtualization.framework, Metal-backed display, GICv3, PCI virtio GPU/disk/network/console/RNG, xHCI USB keyboard/absolute pointer, virtual timer and PSCI. QEMU remains supported with HVF hardware acceleration or TCG emulation, virtio-MMIO input and optional ramfb. This is a VM, not bare-metal Mac support; the guest remains Jonas's custom kernel.
   - **Intel/AMD (`x86_64`):** Runs in QEMU or VirtualBox via UEFI GOP, GDT/IDT/4-level paging, 8259 PIC + PIT, PS/2 keyboard & scroll mouse, PIIX4 ATA/IDE + LRU block cache, CMOS RTC, and ACPI S5 power management.
 - **macOS Tahoe Blue Glass Desktop:** Translucent blue glass windows, multi-sample wallpaper blur, First-Boot Account Setup Assistant, Tahoe Lock/Login Screen with salted SHA-256 credentials, traffic-light window controls (close, minimize, maximize/zoom), bottom-right drag resizing, Dock with hover magnification, interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`), Desktop right-click context menu, Spotlight, Launchpad, Control Center, Mission Control, App Switcher, Desktop icons, and 11 built-in apps.
 
@@ -21,7 +21,7 @@ Per project documentation standards, features are categorized into **Implemented
   - Dual-architecture UEFI application (`BOOTAA64.EFI` for `aarch64`, `BOOTX64.EFI` for `x86_64`).
   - Parses ELF64 program headers (`PT_LOAD`), validates `e_machine` (`183` / `62`), zeroes BSS tail, sets up GOP 32-bpp BGRx framebuffer, queries UEFI memory map, and jumps to `e_entry`.
 - **Dual-Architecture Kernel Core:**
-  - **`aarch64` (`kernel/src/arch/aarch64/`):** EL3/EL2 $\rightarrow$ EL1 transition (`entry.S`), `VBAR_EL1` exception vectors with visual framebuffer crash diagnostics, GICv2 interrupt controller, 1 kHz ARM Generic Timer (PPI 30), PL011 serial UART, PL031 RTC, `virtio-mmio` v2 transport (`virtio-blk`, `virtio-keyboard`, `virtio-tablet`), and PSCI (`hvc`/`smc`) shutdown & reboot. Own supervisor page tables replace the firmware mappings.
+   - **`aarch64` (`kernel/src/arch/aarch64/`):** EL3/EL2 $\rightarrow$ EL1 entry, owned page tables, exception diagnostics, ACPI-described GICv2/v3 and virtual timer PPI, PCI and virtio-MMIO transports, virtio GPU/block/net/console/RNG, polled xHCI USB HID, and PSCI shutdown/reboot. QEMU's UART/RTC are optional; VZ logs through virtio-console and advances firmware wall time with the architectural counter.
   - **`x86_64` (`kernel/src/`):** 64-bit long mode entry (`entry.asm`), GDT/TSS, IDT (256 vectors + visual panic screen), 4-level paging with on-demand `paging_map()` (including high-MMIO framebuffers above 4 GB), 8259 PIC with automatic IRQ2 cascade unmasking, 1 kHz PIT timer, 16550 UART, PS/2 keyboard (with `0xE0` extended scancodes & Super/Cmd keys) and 3-button scroll mouse, ATA PIO (LBA28/LBA48) + 64-sector LRU block cache, CMOS RTC, and ACPI S5 power-off + 8042 reset.
   - **Physical Memory Manager (`memory.c`):** Bitmap page allocator initialized from the UEFI memory map, dynamically reserving `[_kernel_start .. _kernel_end)` and the GOP framebuffer.
 - **Bounded ARM64 Protected Apps:** Authenticated `run <name>` loads separate
@@ -65,9 +65,64 @@ Per project documentation standards, features are categorized into **Implemented
 
 ---
 
-## Running on Apple Silicon (macOS + QEMU ARM64)
+## Running on Apple Silicon (native Mac app)
 
-The current runner uses one ARM64 vCPU under TCG, not Hypervisor.framework acceleration:
+Requires Apple Silicon, macOS 13+, Command Line Tools and `lld` (`brew install lld`).
+No Xcode project or Linux guest is needed.
+
+```bash
+# Quit an existing VM before rebuilding its disk. Saved accounts/files are preserved.
+ARCH=aarch64 bash scripts/build.sh
+bash scripts/build-vmapp.sh
+bash scripts/run-vm.sh
+```
+
+You can also double-click `build/ojjyOS.app`. It uses one ARM64 vCPU, 2 GiB RAM,
+a fixed 2880×1800 Retina scanout (1440×900 logical desktop), NAT networking,
+and native USB keyboard/absolute-pointer input. Use **View → Enter Full Screen**.
+The About panel credits Jonas Lee. This Mac app is only the VM host; ojjyOS is
+still the original custom kernel, not Linux or macOS inside the VM.
+
+The default saved disk is `build/aarch64/ojjyos3.img`, EFI variables are
+`build/aarch64/efi-vars.fd`, and logs are `build/aarch64/serial-vz.log`.
+**Shut down inside ojjyOS, then quit the Mac app before rebuilding or switching
+VM hosts.** Active disk/builder locks are refused, never bypassed. Force Stop
+requires confirmation and can lose unsaved guest changes.
+
+For development, use a private image and separate variables/logs:
+
+```bash
+bash scripts/run-vm.sh --image /absolute/path/test-disk.img \
+  --vars /absolute/path/test-vars.fd --serial /absolute/path/test-serial.log
+```
+
+Current limits: no live guest display-mode changes (the view scales the fixed
+scanout), no USB hubs/hot-plug enumeration, and no exhaustive manual focus-loss
+verification. The guest clock uses UTC; local timezone selection is not yet
+implemented. QEMU remains the Intel path and the ARM fallback/test platform.
+
+### Native host verification
+
+```bash
+bash scripts/test-vmapp.sh          # Mapping, file-alias and lock safeguards; no VM
+python3 -B tests/vz_boot.py --image build/aarch64/ojjyos3.img --output build/vz-boot-new
+python3 -B tests/vz_smoke.py --image build/aarch64/ojjyos3.img \
+  --output build/vz-smoke-new --fresh-data
+```
+
+Choose a new output directory each time. These tests copy the disk and use private
+EFI stores; `--fresh-data` only clears that test copy. The smoke uses the app's
+explicit `--control <unix-socket>` test mode, with owner-only socket permissions
+and view-local input (no global desktop event injection). It accepts `key <HID
+usage> <0|1>`, `text <US ASCII>`, `move x y`, `click x y`, `screenshot <new.png>`,
+`status`, `fullscreen`, `start`, and `quit`, one line per connection with a JSON
+reply. Coordinates use the 1440×900 logical guest desktop. Ordinary hardware input
+is disabled only in this explicitly controlled test view. Normal app launches
+accept normal keyboard/mouse input. Install Pillow for screenshot assertions.
+
+## QEMU ARM64 fallback (macOS)
+
+The runner defaults to HVF on Apple Silicon; `OJJY_ACCEL=tcg` selects emulation.
 
 ### 1. Install QEMU on macOS
 ```bash
@@ -86,7 +141,7 @@ Outputs are isolated under `build/aarch64/` and `build/x86_64/`. Shut down a VM 
 ```bash
 ./scripts/run-qemu.sh aarch64
 ```
-`scripts/run-qemu.sh` locates firmware, uses TCG with one vCPU, attaches the devices above, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. On Apple Silicon the runner uses Apple's hardware virtualization (HVF, GICv3) and a `virtio-gpu` display at 2880x1800, a Retina-density (2x) rendering of a 1440x900 desktop; `OJJY_ACCEL=tcg` falls back to emulation at 1440x900. QEMU Zoom To Fit is on by default: View -> Enter Fullscreen fills the screen with no bars. `OJJY_RES=3200x1800` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display. The UI uses the Inter typeface (SIL OFL, `fonts/Inter-OFL-LICENSE.txt`) and JetBrains Mono for terminals.
+`scripts/run-qemu.sh` locates firmware, uses one vCPU, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. On Apple Silicon the runner uses Apple's hardware virtualization (HVF, GICv3) and a `virtio-gpu` display at 2880x1800, a Retina-density (2x) rendering of a 1440x900 desktop; `OJJY_ACCEL=tcg` falls back to emulation at 1440x900. QEMU Zoom To Fit is on by default. `OJJY_RES=3200x1800` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display. The UI uses the Inter typeface (SIL OFL, `fonts/Inter-OFL-LICENSE.txt`) and JetBrains Mono for terminals.
 
 The VirtualBox runner preserves an existing VDI rather than recreating it and refuses to force-stop a running VM. A VDI has its own saved data; rebuilding a raw QEMU image does not update that VDI.
 

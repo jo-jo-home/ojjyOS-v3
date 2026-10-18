@@ -108,6 +108,15 @@ Results are appended to the log below.
 
 ## Log
 
+- Phase 6 native host implemented (2026-10-18): `build/ojjyOS.app` uses Apple
+  VZ with a 2880x1800 Retina GPU resource, native full-screen window, USB HID
+  keyboard/absolute pointer, PCI virtio disk/console/network/RNG. See
+  `NATIVE_VM_PLAN.md` and `build/vz-resume/native-complete/report.json` for
+  three-boot native setup/clicks/pointer/fullscreen/saved-login/fallback
+  evidence. Window-only Metal screenshots reviewed; blue Tahoe UI, fonts,
+  attribution and animations retained. Fixed scanout, not live guest resize;
+  manual focus-loss behavior is not exhaustively verified. QEMU preserved.
+
 - 2026-10-18: plan written; diagnosis above. HVF probe: GICv2 unsupported,
   GICv3 reaches virtio-gpu then `assert(isv)` in QEMU `hvf_handle_exception`.
 - Phase 1.1 done: `[PERF]` serial receipts + `tests/qemu_perf.py`. Baseline

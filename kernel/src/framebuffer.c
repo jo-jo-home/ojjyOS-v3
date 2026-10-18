@@ -7,6 +7,7 @@
 #include "framebuffer.h"
 #include "font.h"
 #include "string.h"
+#include "cursor_image.h"
 
 /* Framebuffer state: fb_base/fb_pitch describe the CURRENT draw target,
  * which is either the real screen or the off-screen back buffer. */
@@ -56,28 +57,29 @@ void fb_get_surface(GfxSurface *s)
 static int cursor_x, cursor_y;
 static uint64_t full_presents, cursor_updates;
 
+/* Anti-aliased pointer image (tools/mkcursor.py), blended over the frame. */
+#define CUR_X0 (cursor_x - CURSOR_HOT_X)
+#define CUR_Y0 (cursor_y - CURSOR_HOT_Y)
+
 static void cursor_draw(void)
 {
-    static const uint8_t mask[12] = {
-        0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC,
-        0xFE, 0xF0, 0xD8, 0x8C, 0x0C, 0x06
-    };
-    for (int row = 0; row < 12; row++) for (int col = 0; col < 8; col++) {
-        if (!(mask[row] & (0x80 >> col))) continue;
-        Color color = (row >= 1 && row < 11 && col >= 1 && col < 7 &&
-                       (mask[row] & (0x80 >> (col - 1)))) ? COLOR_WHITE : COLOR_BLACK;
-        for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
-            int x = cursor_x + col * 2 + dx, y = cursor_y + row * 2 + dy;
-            if (x >= 0 && y >= 0 && x < (int)fb_width && y < (int)fb_height)
-                fb_screen[y * fb_screen_pitch + x] = color;
+    for (int row = 0; row < CURSOR_H; row++) {
+        int y = CUR_Y0 + row;
+        if (y < 0 || y >= (int)fb_height) continue;
+        const uint8_t *src = cursor_rgba + row * CURSOR_W * 4;
+        for (int col = 0; col < CURSOR_W; col++, src += 4) {
+            int x = CUR_X0 + col;
+            if (!src[3] || x < 0 || x >= (int)fb_width) continue;
+            Color c = RGB(src[0], src[1], src[2]);
+            fb_screen[y * fb_screen_pitch + x] = src[3] == 255 ? c : gfx_blend(fb_back[y * fb_width + x], c, src[3]);
         }
     }
 }
 
 static void cursor_restore(void)
 {
-    for (int y = MAX(0, cursor_y); y < MIN((int)fb_height, cursor_y + 24); y++)
-        for (int x = MAX(0, cursor_x); x < MIN((int)fb_width, cursor_x + 16); x++)
+    for (int y = MAX(0, CUR_Y0); y < MIN((int)fb_height, CUR_Y0 + CURSOR_H); y++)
+        for (int x = MAX(0, CUR_X0); x < MIN((int)fb_width, CUR_X0 + CURSOR_W); x++)
             fb_screen[y * fb_screen_pitch + x] = fb_back[y * fb_width + x];
 }
 
@@ -95,7 +97,7 @@ void fb_cursor_move(int x, int y)
         if (flush_hook) {
             int x1 = was_visible ? MIN(old_x, x) : x, y1 = was_visible ? MIN(old_y, y) : y;
             int x2 = was_visible ? MAX(old_x, x) : x, y2 = was_visible ? MAX(old_y, y) : y;
-            flush_hook(x1, y1, x2 - x1 + 16, y2 - y1 + 24);
+            flush_hook(x1 - CURSOR_HOT_X, y1 - CURSOR_HOT_Y, x2 - x1 + CURSOR_W, y2 - y1 + CURSOR_H);
         }
     }
 }

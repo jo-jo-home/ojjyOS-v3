@@ -65,7 +65,7 @@ static inline uint32_t grad_pixel(uint32_t r16, uint32_t g16, uint32_t b16, int 
     if (r > 255) r = 255;
     if (g > 255) g = 255;
     if (b > 255) b = 255;
-    return (r << 16) | (g << 8) | b;
+    return 0xFF000000u | (r << 16) | (g << 8) | b;
 }
 
 static void fill_shape(GfxSurface *s, int x, int y, int w, int h, int r, Paint *p)
@@ -132,7 +132,7 @@ static void fill_shape(GfxSurface *s, int x, int y, int w, int h, int r, Paint *
                 uint32_t bg = row[px];
                 uint32_t rb = ((bg & 0xFF00FF) * ia + frb) >> 8;
                 uint32_t g = ((bg & 0x00FF00) * ia + fg) >> 8;
-                row[px] = (rb & 0xFF00FF) | (g & 0x00FF00);
+                row[px] = (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000u;
             }
         }
     }

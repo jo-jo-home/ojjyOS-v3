@@ -138,3 +138,17 @@ Results are appended to the log below.
 - Phases 1.4 (layer-based open animation) and 1.5 (damage rectangles) are
   folded into Phase 5 / deferred: at 7 ms per full frame they are no longer
   needed to remove the lag.
+- Phase 2 (smooth rendering) done, except 2x HiDPI which moves after fonts:
+  * AA primitives via gfx.c (rounded rects, circles, strokes, dithered
+    gradients, soft SDF shadows).
+  * `kernel/src/ui/wallpaper.c`: procedural Tahoe light/dark wallpaper drawn
+    at the real screen size (sky gradient, sun glow, 4 AA wave sheets with rim
+    light and cast shadows, ordered dither). The old `.raw` Tahoe files were
+    640x480 stretched with nearest-neighbour (the visible stair-steps). Other
+    image wallpapers now use bilinear + dither. Host preview:
+    `tools/preview/wallpaper_preview.c`.
+  * AA pointer: `tools/mkcursor.py` -> `kernel/src/cursor_image.c` (22x30
+    RGBA, 8x supersampled arrow with outline and soft shadow).
+  * Receipts: `build/perf/p2-wall` (HVF 7 ms frames), `build/p2-live/`
+    smoke (HVF) + pointer test (all corners exact, ~2.5 ms QMP-to-scanout, no
+    full repaint on motion). Pointer test now reads the cursor image source.

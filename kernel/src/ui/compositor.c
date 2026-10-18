@@ -22,6 +22,7 @@
 #include "calcmath.h"
 #include "browser.h"
 #include "draw.h"
+#include "wallpaper.h"
 #include "../net/net.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
@@ -72,6 +73,7 @@ static Color *wp_blur;
 static Color *wp_glass;        /* wp_blur pre-tinted with the window glass colour */
 static Color wp_line_tmp[WP_CACHE_MAX_DIM];
 static bool wp_cache_valid = false;
+static bool wp_tahoe_dark = false;
 static void wallpaper_rebuild_cache(void);
 
 static bool dragging = false;
@@ -538,13 +540,12 @@ static void wallpaper_rebuild_cache(void)
     if (!wp_glass) wp_glass = (Color *)pmm_alloc_bytes((size_t)w * h * sizeof(Color));
     if (!wp_cache || !wp_blur || !wp_glass) return;
 
-    for (uint32_t y = 0; y < h; y++) {
-        for (uint32_t x = 0; x < w; x++) {
-            Color c = wallpaper_sample_uncached((int)x, (int)y);
-            wp_cache[y * w + x] = c;
-            wp_blur[y * w + x] = c;
-        }
+    if (wallpaper_loaded) {
+        wallpaper_scale_rgba(wp_cache, (int)w, (int)h, wallpaper_data, (int)wallpaper_w, (int)wallpaper_h);
+    } else {
+        wallpaper_render_tahoe(wp_cache, (int)w, (int)h, wp_tahoe_dark);
     }
+    memcpy(wp_blur, wp_cache, (size_t)w * h * sizeof(Color));
 
     /* Separable box blur, two passes each way (approximates a Gaussian) */
     for (int pass = 0; pass < 2; pass++) {
@@ -5323,6 +5324,13 @@ static void wallpaper_load_file(const char *path)
 {
     if (!path) {
         wallpaper_loaded = false;
+        return;
+    }
+    /* The built-in Tahoe wallpapers are drawn procedurally at the screen's
+     * real size (sharp at any resolution); the .raw files are fallbacks. */
+    if (str_contains_ci(path, "Tahoe")) {
+        wallpaper_loaded = false;
+        wp_tahoe_dark = str_contains_ci(path, "Dark");
         return;
     }
 

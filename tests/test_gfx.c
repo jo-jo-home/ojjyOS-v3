@@ -16,7 +16,7 @@ static void reset(uint32_t color)
     surf.clip_x1 = surf.clip_y1 = 0; surf.clip_x2 = W; surf.clip_y2 = H;
     for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) surf.pixels[y * surf.pitch + x] = color;
 }
-static uint32_t at(int x, int y) { return surf.pixels[y * surf.pitch + x]; }
+static uint32_t at(int x, int y) { return surf.pixels[y * surf.pitch + x] & 0xFFFFFF; }
 static bool guard_intact(void)
 {
     for (int x = 0; x < W + 2; x++) if (px[x] != 0xDEADBE || px[(H + 1) * (W + 2) + x] != 0xDEADBE) return false;
@@ -29,7 +29,7 @@ int main(void)
 {
     CHECK(gfx_isqrt(0) == 0 && gfx_isqrt(1) == 1 && gfx_isqrt(99) == 9 && gfx_isqrt(100) == 10 &&
           gfx_isqrt(4000000000u) == 63245, "integer square root");
-    CHECK(gfx_blend(0x000000, 0xFFFFFF, 255) == 0xFFFFFF && gfx_blend(0x123456, 0xFFFFFF, 0) == 0x123456,
+    CHECK((gfx_blend(0x000000, 0xFFFFFF, 255) & 0xFFFFFF) == 0xFFFFFF && (gfx_blend(0x123456, 0xFFFFFF, 0) & 0xFFFFFF) == 0x123456,
           "blend endpoints exact");
     uint32_t half = gfx_blend(0x000000, 0xFF0000, 128);
     CHECK(red(half) >= 127 && red(half) <= 129, "blend midpoint");

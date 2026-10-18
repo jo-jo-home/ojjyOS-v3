@@ -13,16 +13,29 @@ from PIL import Image
 from qemu_smoke import VM
 
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def cursor_image():
+    """The anti-aliased pointer from kernel/src/cursor_image.{h,c}."""
+    header = (ROOT / 'kernel/src/cursor_image.h').read_text()
+    get = lambda name: int(re.search(rf'#define {name} (\d+)', header)[1])
+    w, h, hx, hy = get('CURSOR_W'), get('CURSOR_H'), get('CURSOR_HOT_X'), get('CURSOR_HOT_Y')
+    body = (ROOT / 'kernel/src/cursor_image.c').read_text().split('{', 1)[1]
+    data = [int(v) for v in re.findall(r'\b\d+\b', body)]
+    return w, h, hx, hy, data
+
+
 def template():
-    mask = [0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xF0, 0xD8, 0x8C, 0x0C, 0x06]
-    result = {}
-    for row, bits in enumerate(mask):
-        for col in range(8):
-            if not bits & (0x80 >> col): continue
-            white = 1 <= row < 11 and 1 <= col < 7 and bits & (0x80 >> (col - 1))
-            for sy in range(2):
-                for sx in range(2): result[col * 2 + sx, row * 2 + sy] = (255, 255, 255) if white else (0, 0, 0)
-    return result
+    """Fully opaque pointer pixels (exact colours), relative to the hotspot."""
+    w, h, hx, hy, data = cursor_image()
+    return {(x - hx, y - hy): tuple(data[(y * w + x) * 4:(y * w + x) * 4 + 3])
+            for y in range(h) for x in range(w) if data[(y * w + x) * 4 + 3] == 255}
+
+
+def probe():
+    """First solid white body pixel, relative to the hotspot."""
+    return next(k for k, v in sorted(template().items(), key=lambda kv: (kv[0][1], kv[0][0])) if v == (255, 255, 255))
 
 
 def run(args):
@@ -40,7 +53,8 @@ def run(args):
         vm.wait('Entering main loop'); time.sleep(1)
         first = out / 'setup-before.png'; vm.screenshot(first)
         width, height = Image.open(first).size
-        base = int(re.search(r'Framebuffer: \d+x\d+ @ 0x([0-9a-fA-F]+)', vm.text())[1], 16)
+        found = re.findall(r'(?:VIRTIO-GPU\] Display|Framebuffer:) \d+x\d+ @ (?:0x)+([0-9a-fA-F]+)', vm.text())
+        base = int([a for a in found if int(a, 16)][-1], 16)
         # ramfb is tightly packed in this platform. Discover dimensions/address
         # each boot; never use another VM's physical framebuffer address.
         def read(address, size):
@@ -77,13 +91,19 @@ def run(args):
         for i, (x, y) in enumerate(positions):
             started = time.monotonic(); x, y = move(x, y)
             deadline = started + 1
-            while struct.unpack('<I', read(base + (y * width + x) * 4, 4))[0] != 0xff000000:
+            # Wait for an opaque pointer pixel that is on screen (white body if visible).
+            visible = {k: v for k, v in template().items() if 0 <= x + k[0] < width and 0 <= y + k[1] < height}
+            px, py = probe() if probe() in visible else next(iter(visible))
+            r, g, b = visible[(px, py)]
+            want = (r << 16) | (g << 8) | b
+            while struct.unpack('<I', read(base + ((y + py) * width + x + px) * 4, 4))[0] & 0xffffff != want:
                 if time.monotonic() > deadline: raise AssertionError(f'cursor did not reach {(x, y)}')
             latencies.append((time.monotonic() - started) * 1000)
             path = out / f'position-{i}.png'; vm.screenshot(path)
             image = Image.open(path).convert('RGB')
             assert all(image.getpixel((x + dx, y + dy)) == color
-                       for (dx, dy), color in template().items() if x + dx < width and y + dy < height), (x, y)
+                       for (dx, dy), color in template().items()
+                       if 0 <= x + dx < width and 0 <= y + dy < height), (x, y)
         if before:
             after = stats()
             assert after[0] == before[0], f'cursor-only movement repainted the full scene: {before} -> {after}'

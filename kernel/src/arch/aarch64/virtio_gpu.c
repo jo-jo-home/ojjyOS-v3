@@ -190,7 +190,7 @@ bool virtio_gpu_display_init(BootInfo *info)
         info->fb_bpp = 32;
         fb_init(info);
         fb_set_flush_hook(gpu_update);
-        serial_printf("[VIRTIO-GPU] Display %dx%d attached (slot %d)\n", (int)w, (int)h, i);
+        serial_printf("[VIRTIO-GPU] Display %dx%d @ %p attached (slot %d)\n", (int)w, (int)h, pixels, i);
         return true;
 fail:
         serial_printf("[VIRTIO-GPU] Display setup failed (resp 0x%x)\n", gpu_resp.hdr.type);

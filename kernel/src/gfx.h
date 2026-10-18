@@ -25,7 +25,7 @@ static inline uint32_t gfx_blend(uint32_t bg, uint32_t fg, uint32_t alpha)
     uint32_t a = alpha + (alpha >> 7);          /* 0..256 */
     uint32_t rb = ((fg & 0xFF00FF) * a + (bg & 0xFF00FF) * (256 - a)) >> 8;
     uint32_t g = ((fg & 0x00FF00) * a + (bg & 0x00FF00) * (256 - a)) >> 8;
-    return (rb & 0xFF00FF) | (g & 0x00FF00);
+    return (rb & 0xFF00FF) | (g & 0x00FF00) | 0xFF000000u;   /* X byte set like RGB() */
 }
 
 uint32_t gfx_isqrt(uint32_t v);

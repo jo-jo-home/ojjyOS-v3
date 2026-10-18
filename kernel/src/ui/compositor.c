@@ -23,14 +23,14 @@
 #include "browser.h"
 #include "draw.h"
 #include "wallpaper.h"
+#include "../image/jpeg.h"
+#include "../image/wallpack.h"
 #include "../uifont.h"
 #include "icons.h"
 #include "../net/net.h"
 
 /* One window per app type at most (11 apps), so this never blocks a launch. */
 #define COMPOSITOR_MAX_WINDOWS  12
-#define WALLPAPER_MAX_W         1024
-#define WALLPAPER_MAX_H         1024
 
 #ifndef ABS
 #define ABS(v) ((v) < 0 ? -(v) : (v))
@@ -48,9 +48,6 @@
 #define LAUNCHPAD_COLS          4
 #define LAUNCHPAD_ROWS          3
 #define SEARCH_QUERY_MAX        48
-#define PREVIEW_THUMB_W         120
-#define PREVIEW_THUMB_H         80
-#define PREVIEW_RAW_MAX         (640 * 480 * 4)
 
 static uint32_t comp_width = 0;
 static uint32_t comp_height = 0;
@@ -61,10 +58,13 @@ static int window_count = 0;
 static const ThemeTokens *theme = NULL;
 static bool dark_mode = false;
 
-static bool wallpaper_loaded = false;
-static uint32_t wallpaper_w = 0;
-static uint32_t wallpaper_h = 0;
-static uint8_t wallpaper_data[WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4];
+/* Desktop pictures. Choices 0/1 are the built-in waves (drawn at any
+ * size); 2.. are the JPEG pack on disk (image/wallpack.h). */
+#define WP_BUILTIN 2
+static bool wallpaper_loaded = false;      /* a picture (not the waves) is shown */
+static int wp_choice = 0;
+static uint32_t *wp_src;                   /* decoded picture, 0x00RRGGBB */
+static int wp_src_w, wp_src_h;
 
 /* Screen-sized wallpaper caches, rebuilt only when the wallpaper or theme
  * changes. Per-frame sampling becomes a single array read instead of a
@@ -82,6 +82,7 @@ static Color wp_line_tmp[WP_CACHE_MAX_DIM];
 static bool wp_cache_valid = false;
 static bool wp_tahoe_dark = false;
 static void wallpaper_rebuild_cache(void);
+static void wallpaper_retint(void);
 
 static bool dragging = false;
 static int drag_index = -1;
@@ -177,6 +178,8 @@ typedef struct {
     char new_pw[32];
     char msg[48];
     bool msg_ok;
+    int wp_scroll;              /* Wallpaper grid scroll (logical px) */
+    int wp_scroll_max;          /* from the last layout */
 } SettingsStateUi;
 
 #define TERMINAL_MAX_LINES 200
@@ -216,11 +219,7 @@ typedef struct {
 static char text_clipboard[TEXTEDIT_LINE_MAX];
 
 typedef struct {
-    char current[64];
-    char options[2][64];
-    bool loaded;
-    uint8_t light_thumb[120 * 80 * 4];
-    uint8_t dark_thumb[120 * 80 * 4];
+    int index;                  /* desktop picture being viewed */
 } PreviewState;
 
 typedef enum {
@@ -381,7 +380,6 @@ static size_t str_append(char *dest, size_t size, const char *src);
 static const char *str_find(const char *haystack, const char *needle);
 static void terminal_make_prompt(const TerminalState *term, char *out, size_t size);
 static bool str_contains_ci(const char *haystack, const char *needle);
-static bool preview_load_thumbnail(const char *path, uint8_t *out);
 static void normalize_path(char *path, size_t size);
 static bool calendar_load(CalendarState *cal);
 static void calendar_save(CalendarState *cal);
@@ -459,24 +457,19 @@ static Color wallpaper_sample_procedural(int x, int y)
 
 static Color wallpaper_sample_uncached(int x, int y)
 {
-    if (!wallpaper_loaded || wallpaper_w == 0 || wallpaper_h == 0) {
+    if (!wallpaper_loaded || !wp_src) {
         return wallpaper_sample_procedural(x, y);
     }
 
-    int sx = (x * (int)wallpaper_w) / (int)comp_width;
-    int sy = (y * (int)wallpaper_h) / (int)comp_height;
+    int sx = (x * wp_src_w) / (int)comp_width;
+    int sy = (y * wp_src_h) / (int)comp_height;
 
     if (sx < 0) sx = 0;
     if (sy < 0) sy = 0;
-    if (sx >= (int)wallpaper_w) sx = (int)wallpaper_w - 1;
-    if (sy >= (int)wallpaper_h) sy = (int)wallpaper_h - 1;
+    if (sx >= wp_src_w) sx = wp_src_w - 1;
+    if (sy >= wp_src_h) sy = wp_src_h - 1;
 
-    uint32_t idx = (sy * wallpaper_w + sx) * 4;
-    uint8_t r = wallpaper_data[idx + 0];
-    uint8_t g = wallpaper_data[idx + 1];
-    uint8_t b = wallpaper_data[idx + 2];
-
-    return RGB(r, g, b);
+    return wp_src[(size_t)sy * wp_src_w + sx] & 0xFFFFFF;
 }
 
 static inline int clamp_coord(int v, int max)
@@ -548,7 +541,7 @@ static void wallpaper_rebuild_cache(void)
     if (!wp_cache || !wp_blur || !wp_glass) return;
 
     if (wallpaper_loaded) {
-        wallpaper_scale_rgba(wp_cache, (int)w, (int)h, wallpaper_data, (int)wallpaper_w, (int)wallpaper_h);
+        wallpaper_scale_cover(wp_cache, (int)w, (int)h, wp_src, wp_src_w, wp_src_h);
     } else {
         wallpaper_render_tahoe(wp_cache, (int)w, (int)h, wp_tahoe_dark);
     }
@@ -563,10 +556,147 @@ static void wallpaper_rebuild_cache(void)
             box_blur_line(&wp_blur[x], (int)h, (int)w, blur_radius);
         }
     }
-    for (uint32_t i = 0; i < w * h; i++)
-        wp_glass[i] = blend(wp_blur[i], theme->glass_aqua, theme->glass.opacity[1]);
-
     wp_cache_valid = true;
+    wallpaper_retint();
+}
+
+/* Window glass = blurred wallpaper + theme tint (redone on theme changes). */
+static void wallpaper_retint(void)
+{
+    if (!wp_cache_valid) return;
+    size_t n = (size_t)fb_physical_width() * fb_physical_height();
+    for (size_t i = 0; i < n; i++)
+        wp_glass[i] = blend(wp_blur[i], theme->glass_aqua, theme->glass.opacity[1]);
+}
+
+static int wallpaper_choice_count(void)
+{
+    return WP_BUILTIN + wallpack_count();
+}
+
+static const char *wallpaper_choice_name(int i)
+{
+    if (i == 0) return "ojjyOS Waves Light";
+    if (i == 1) return "ojjyOS Waves Dark";
+    const WallpackEntry *e = wallpack_entry(i - WP_BUILTIN);
+    return e ? e->name : "";
+}
+
+static int wallpaper_choice_kind(int i)
+{
+    if (i < WP_BUILTIN) return i ? WALLPACK_DARK : WALLPACK_LIGHT;
+    const WallpackEntry *e = wallpack_entry(i - WP_BUILTIN);
+    return e ? (int)e->kind : WALLPACK_ANY;
+}
+
+static int wallpaper_find(const char *name)
+{
+    if (!name || !name[0]) return -1;
+    for (int i = 0; i < wallpaper_choice_count(); i++)
+        if (strcmp(wallpaper_choice_name(i), name) == 0) return i;
+    return -1;
+}
+
+/* The same picture in the other appearance: "Tahoe Light" <-> "Tahoe Dark",
+ * "... Day" <-> "... Night", "... Dawn" <-> "... Dusk". */
+static int wallpaper_counterpart(int i, bool dark)
+{
+    int kind = wallpaper_choice_kind(i);
+    if (kind == WALLPACK_ANY || kind == (dark ? WALLPACK_DARK : WALLPACK_LIGHT)) return i;
+    static const char *const pairs[3][2] = { { "Light", "Dark" }, { "Day", "Night" }, { "Dawn", "Dusk" } };
+    const char *name = wallpaper_choice_name(i);
+    size_t len = strlen(name);
+    for (int p = 0; p < 3; p++) {
+        const char *from = pairs[p][dark ? 0 : 1], *to = pairs[p][dark ? 1 : 0];
+        size_t fl = strlen(from);
+        if (len <= fl || len - fl + strlen(to) >= 64 || strcmp(name + len - fl, from) != 0) continue;
+        char other[64];
+        memcpy(other, name, len - fl);
+        other[len - fl] = '\0';
+        memcpy(other + len - fl, to, strlen(to) + 1);
+        int j = wallpaper_find(other);
+        if (j >= 0) return j;
+    }
+    return i;
+}
+
+/* Decode pack picture `i` into wp_src. Buffers are sized once for the
+ * largest picture in the pack and then reused. */
+static bool wallpaper_decode(int i, uint32_t **dst, int *dw, int *dh)
+{
+    static uint8_t *jpeg_buf;
+    static size_t jpeg_cap;
+    const WallpackEntry *e = wallpack_entry(i - WP_BUILTIN);
+    if (!e) return false;
+    if (!jpeg_buf) {
+        for (int k = 0; k < wallpack_count(); k++) {
+            size_t need = ((size_t)wallpack_entry(k)->image_bytes + 511) & ~(size_t)511;
+            if (need > jpeg_cap) jpeg_cap = need;
+        }
+        jpeg_buf = (uint8_t *)pmm_alloc_bytes(jpeg_cap);
+        if (!jpeg_buf) return false;
+    }
+    int len = wallpack_read(i - WP_BUILTIN, false, jpeg_buf, jpeg_cap);
+    int w = 0, h = 0;
+    if (len <= 0 || !jpeg_info(jpeg_buf, (size_t)len, &w, &h) ||
+        (uint32_t)w != e->width || (uint32_t)h != e->height) return false;
+    if (!*dst) {
+        size_t most = 0;
+        for (int k = 0; k < wallpack_count(); k++) {
+            const WallpackEntry *o = wallpack_entry(k);
+            if ((size_t)o->width * o->height > most) most = (size_t)o->width * o->height;
+        }
+        *dst = (uint32_t *)pmm_alloc_bytes(most * sizeof(uint32_t));
+        if (!*dst) return false;
+    }
+    if (!jpeg_decode(jpeg_buf, (size_t)len, *dst, (size_t)w * h)) return false;
+    *dw = w;
+    *dh = h;
+    return true;
+}
+
+/* Show choice `i` (falls back to the waves if a picture can't be read). */
+static void wallpaper_show(int i)
+{
+    if (i < 0 || i >= wallpaper_choice_count()) i = dark_mode ? 1 : 0;
+    if (i >= WP_BUILTIN) {
+        uint64_t t0 = timer_get_ticks();
+        if (wallpaper_decode(i, &wp_src, &wp_src_w, &wp_src_h)) {
+            serial_printf("[UI] Desktop picture '%s' %dx%d (%d ms)\n", wallpaper_choice_name(i),
+                          wp_src_w, wp_src_h, (int)(timer_get_ticks() - t0));
+        } else {
+            serial_printf("[UI] Desktop picture '%s' unreadable\n", wallpaper_choice_name(i));
+            i = dark_mode ? 1 : 0;
+        }
+    }
+    wp_choice = i;
+    wallpaper_loaded = i >= WP_BUILTIN;
+    wp_tahoe_dark = i == 1;
+    wallpaper_rebuild_cache();
+    mark_dirty();
+}
+
+/* A choice made by the user: remembered, and Light/Dark pictures switch
+ * the appearance to match (as the dark Tahoe picture always did). */
+static void wallpaper_choose(int i)
+{
+    wallpaper_show(i);
+    SettingsState *st = settings_get();
+    strncpy(st->wallpaper, wallpaper_choice_name(wp_choice), sizeof(st->wallpaper) - 1);
+    st->wallpaper[sizeof(st->wallpaper) - 1] = '\0';
+    int kind = wallpaper_choice_kind(wp_choice);
+    if (kind != WALLPACK_ANY && (kind == WALLPACK_DARK) != dark_mode)
+        compositor_set_dark_mode(kind == WALLPACK_DARK);
+    settings_save();
+}
+
+/* Light/Dark toggle (menu, Control Center, Settings): paired pictures follow. */
+static void toggle_appearance(void)
+{
+    settings_toggle_dark_mode();
+    compositor_set_dark_mode(settings_get()->dark_mode);
+    int other = wallpaper_counterpart(wp_choice, dark_mode);
+    if (other != wp_choice) wallpaper_choose(other);
 }
 
 /* All shapes go through the anti-aliased span renderer (gfx.c). */
@@ -1013,24 +1143,126 @@ static void dock_apply(int size_index, int level)
     settings_save();
 }
 
-/* Wallpaper thumbnails (rendered once at physical size). */
-#define WP_THUMB_W  160
-#define WP_THUMB_H  100
-static uint32_t *wp_thumbs[2];
+/* Wallpaper thumbnails: the built-in waves are rendered at the thumbnail's
+ * physical size; pack pictures decode their 320x200 JPEG thumbnail once. */
+#define WP_THUMB_W  144
+#define WP_THUMB_H  90
+static uint32_t *wp_thumbs[WP_BUILTIN + WALLPACK_MAX];
+static int wp_thumb_px[WP_BUILTIN + WALLPACK_MAX][2];
+static bool wp_thumb_failed[WP_BUILTIN + WALLPACK_MAX];
+
+static void wallpaper_thumb_load(int which)
+{
+    int k = fb_ui_scale();
+    if (which < WP_BUILTIN) {
+        int w = WP_THUMB_W * k, h = WP_THUMB_H * k;
+        wp_thumbs[which] = (uint32_t *)pmm_alloc_bytes((size_t)w * h * sizeof(uint32_t));
+        if (!wp_thumbs[which]) { wp_thumb_failed[which] = true; return; }
+        wallpaper_render_tahoe(wp_thumbs[which], w, h, which == 1);
+        wp_thumb_px[which][0] = w;
+        wp_thumb_px[which][1] = h;
+        return;
+    }
+    static uint8_t *jpeg;
+    const size_t jpeg_cap = 256 * 1024;
+    if (!jpeg) jpeg = (uint8_t *)pmm_alloc_bytes(jpeg_cap);
+    int len = jpeg ? wallpack_read(which - WP_BUILTIN, true, jpeg, jpeg_cap) : -1;
+    int w = 0, h = 0;
+    if (len > 0 && jpeg_info(jpeg, (size_t)len, &w, &h) && w <= 1024 && h <= 1024) {
+        wp_thumbs[which] = (uint32_t *)pmm_alloc_bytes((size_t)w * h * sizeof(uint32_t));
+        if (wp_thumbs[which] && jpeg_decode(jpeg, (size_t)len, wp_thumbs[which], (size_t)w * h)) {
+            wp_thumb_px[which][0] = w;
+            wp_thumb_px[which][1] = h;
+            return;
+        }
+    }
+    wp_thumb_failed[which] = true;   /* don't retry every frame */
+}
 
 static void draw_wallpaper_thumb(int which, int x, int y, bool selected)
 {
-    int k = fb_ui_scale();
-    if (!wp_thumbs[which]) {
-        wp_thumbs[which] = (uint32_t *)pmm_alloc_bytes((size_t)WP_THUMB_W * k * WP_THUMB_H * k * sizeof(uint32_t));
-        if (wp_thumbs[which]) wallpaper_render_tahoe(wp_thumbs[which], WP_THUMB_W * k, WP_THUMB_H * k, which == 1);
-    }
-    if (selected) gfx_round_rect_stroke(surface(), x - 3, y - 3, WP_THUMB_W + 6, WP_THUMB_H + 6, 13, theme->accent, 255),
-                  gfx_round_rect_stroke(surface(), x - 2, y - 2, WP_THUMB_W + 4, WP_THUMB_H + 4, 12, theme->accent, 255);
-    gfx_shadow(surface(), x, y, WP_THUMB_W, WP_THUMB_H, 10, 10, 3, COLOR_BLACK, 70);
+    if (which < 0 || which >= WP_BUILTIN + WALLPACK_MAX) return;
+    if (!wp_thumbs[which] && !wp_thumb_failed[which]) wallpaper_thumb_load(which);
+    if (selected) gfx_round_rect_stroke(surface(), x - 3, y - 3, WP_THUMB_W + 6, WP_THUMB_H + 6, 11, theme->accent, 255),
+                  gfx_round_rect_stroke(surface(), x - 2, y - 2, WP_THUMB_W + 4, WP_THUMB_H + 4, 10, theme->accent, 255);
+    gfx_shadow(surface(), x, y, WP_THUMB_W, WP_THUMB_H, 8, 8, 3, COLOR_BLACK, 70);
     if (wp_thumbs[which])
-        gfx_blit_scaled(surface(), wp_thumbs[which], WP_THUMB_W * k, 0, 0, WP_THUMB_W * k, WP_THUMB_H * k,
-                        x, y, WP_THUMB_W, WP_THUMB_H, 10, 255);
+        gfx_blit_scaled(surface(), wp_thumbs[which], wp_thumb_px[which][0], 0, 0, wp_thumb_px[which][0],
+                        wp_thumb_px[which][1], x, y, WP_THUMB_W, WP_THUMB_H, 8, 255);
+    else
+        draw_rounded_rect_blend(x, y, WP_THUMB_W, WP_THUMB_H, 8, theme->text_muted, 60);
+}
+
+/* Settings > Wallpaper: a scrolling grid of every desktop picture. */
+typedef struct { int x, top, bottom, cols, step_x, step_y, max_scroll; } WpGrid;
+
+static void wallpaper_grid(int main_x, int main_w, int content_y, int content_h, WpGrid *g)
+{
+    int w = main_w - 32;
+    g->x = main_x + 16;
+    g->top = content_y + 60;
+    g->bottom = content_y + content_h - 8;
+    g->cols = MAX(1, (w + 16) / (WP_THUMB_W + 16));
+    g->step_x = g->cols > 1 ? (w - WP_THUMB_W) / (g->cols - 1) : 0;
+    g->step_y = WP_THUMB_H + 34;
+    int rows = (wallpaper_choice_count() + g->cols - 1) / g->cols;
+    g->max_scroll = MAX(0, rows * g->step_y + 8 - (g->bottom - g->top));
+}
+
+static void wallpaper_cell(const WpGrid *g, int scroll, int i, int *x, int *y)
+{
+    *x = g->x + (i % g->cols) * g->step_x;
+    *y = g->top + 6 + (i / g->cols) * g->step_y - scroll;
+}
+
+static void draw_wallpaper_page(SettingsStateUi *state, int main_x, int main_w, int content_y, int content_h)
+{
+    ui_text(main_x + 16, content_y + 12, "Wallpaper", TEXT_HEADLINE, theme->text);
+    ui_text(main_x + 16, content_y + 36, wallpack_count()
+            ? "Light and Dark pictures also switch the appearance to match."
+            : "Add the macOS Tahoe pictures: tools/import_wallpapers.py --fetch",
+            TEXT_SMALL, theme->text_muted);
+    WpGrid g;
+    wallpaper_grid(main_x, main_w, content_y, content_h, &g);
+    state->wp_scroll_max = g.max_scroll;
+    if (state->wp_scroll > g.max_scroll) state->wp_scroll = g.max_scroll;
+    if (state->wp_scroll < 0) state->wp_scroll = 0;
+    fb_set_clip(main_x, g.top, main_w, g.bottom - g.top);
+    for (int i = 0; i < wallpaper_choice_count(); i++) {
+        int x, y;
+        wallpaper_cell(&g, state->wp_scroll, i, &x, &y);
+        if (y + g.step_y < g.top || y > g.bottom) continue;
+        bool sel = i == wp_choice;
+        draw_wallpaper_thumb(i, x, y, sel);
+        const char *name = wallpaper_choice_name(i);
+        TextStyle st = sel ? TEXT_BODY_MEDIUM : TEXT_SMALL;
+        int nw = MIN(text_width(name, st), WP_THUMB_W);
+        ui_text(x + (WP_THUMB_W - nw) / 2, y + WP_THUMB_H + 8, name, st, sel ? theme->text : theme->text_muted);
+    }
+    fb_reset_clip();
+    if (g.max_scroll > 0) {             /* thin overlay scroll indicator */
+        int track = g.bottom - g.top - 8;
+        int bar = MAX(24, track * track / (track + g.max_scroll));
+        int by = g.top + 4 + (track - bar) * state->wp_scroll / g.max_scroll;
+        draw_rounded_rect_blend(main_x + main_w - 9, by, 5, bar, 2, theme->text_muted, 110);
+    }
+}
+
+static bool wallpaper_page_click(SettingsStateUi *state, int main_x, int main_w, int content_y, int content_h,
+                                 int px, int py)
+{
+    WpGrid g;
+    wallpaper_grid(main_x, main_w, content_y, content_h, &g);
+    if (py < g.top || py >= g.bottom) return false;
+    for (int i = 0; i < wallpaper_choice_count(); i++) {
+        int x, y;
+        wallpaper_cell(&g, state->wp_scroll, i, &x, &y);
+        if (px >= x && px < x + WP_THUMB_W && py >= y && py < y + WP_THUMB_H + 26) {
+            wallpaper_choose(i);
+            return true;
+        }
+    }
+    return false;
 }
 
 static void draw_settings_row(int main_x, int main_w, int ry, int i, const char *label)
@@ -1154,18 +1386,7 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         draw_rounded_rect_blend(main_x + 240, by, 98, 24, 8, theme->accent_soft, 180);
         ui_text(main_x + 248, by + 6, "Switch User", TEXT_BODY, theme->text);
     } else if (state->page == SETTINGS_PAGE_WALLPAPER) {
-        ui_text(main_x + 16, content_y + 12, "Wallpaper", TEXT_HEADLINE, theme->text);
-        static const char *const names[2] = { "Tahoe Light", "Tahoe Dark" };
-        for (int i = 0; i < 2; i++) {
-            int tx = main_x + 16 + i * (WP_THUMB_W + 24), ty = content_y + 48;
-            bool sel = !wallpaper_loaded && wp_tahoe_dark == (i == 1);
-            draw_wallpaper_thumb(i, tx, ty, sel);
-            int nw = text_width(names[i], sel ? TEXT_BODY_MEDIUM : TEXT_BODY);
-            ui_text(tx + (WP_THUMB_W - nw) / 2, ty + WP_THUMB_H + 10, names[i], sel ? TEXT_BODY_MEDIUM : TEXT_BODY,
-                    sel ? theme->text : theme->text_muted);
-        }
-        ui_text(main_x + 16, content_y + 48 + WP_THUMB_H + 40, "The dark wallpaper also switches on Dark Mode.",
-                TEXT_SMALL, theme->text_muted);
+        draw_wallpaper_page(state, main_x, main_w, content_y, content_h);
     } else if (state->page == SETTINGS_PAGE_DOCK) {
         ui_text(main_x + 16, content_y + 12, "Dock & Menu Bar", TEXT_HEADLINE, theme->text);
         static const char *const sizes[3] = { "Small", "Medium", "Large" };
@@ -1625,24 +1846,84 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
     }
 }
 
+/* Preview: a desktop picture viewer - full-resolution image, previous /
+ * next, and "Set as Desktop Picture". */
+typedef struct { int ix, iy, iw, ih, bar_y, prev_x, next_x, set_x, set_w; } PreviewLayout;
+
+static void preview_layout(int cx, int cy, int cw, int ch, PreviewLayout *l)
+{
+    int bar_h = 40;
+    int aw = cw - 24, ah = ch - bar_h - 20;
+    l->iw = aw;
+    l->ih = aw * 10 / 16;
+    if (l->ih > ah) { l->ih = ah; l->iw = ah * 16 / 10; }
+    l->ix = cx + (cw - l->iw) / 2;
+    l->iy = cy + 12 + (ah - l->ih) / 2;
+    l->bar_y = cy + ch - bar_h + 6;
+    l->prev_x = cx + 12;
+    l->next_x = cx + 48;
+    l->set_w = 168;
+    l->set_x = cx + cw - 12 - l->set_w;
+}
+
 static void draw_preview_window(PreviewState *preview, int content_x, int content_y, int content_w, int content_h)
 {
+    static uint32_t *pv_src;
+    static int pv_index = -1, pv_w, pv_h;
     bool dark = settings_get()->dark_mode;
+    int count = wallpaper_choice_count();
+    if (preview->index < 0 || preview->index >= count) preview->index = 0;
+    PreviewLayout l;
+    preview_layout(content_x, content_y, content_w, content_h, &l);
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, dark ? RGB(18, 24, 36) : COLOR_WHITE, dark ? 70 : 90);
-    ui_text(content_x + 16, content_y + 12, "Wallpapers", TEXT_TITLE, theme->text);
-    ui_text(content_x + 16, content_y + 32, "The built-in Tahoe wallpapers, rendered at any size.", TEXT_SMALL, theme->text_muted);
 
-    static const char *const names[2] = { "Tahoe Light", "Tahoe Dark" };
-    int total = 2 * WP_THUMB_W + 24;
-    int x0 = content_x + (content_w - total) / 2, ty = content_y + 60;
-    for (int i = 0; i < 2; i++) {
-        int tx = x0 + i * (WP_THUMB_W + 24);
-        draw_wallpaper_thumb(i, tx, ty, false);
-        int nw = text_width(names[i], TEXT_BODY_MEDIUM);
-        ui_text(tx + (WP_THUMB_W - nw) / 2, ty + WP_THUMB_H + 10, names[i], TEXT_BODY_MEDIUM, theme->text);
+    int k = fb_ui_scale();
+    gfx_shadow(surface(), l.ix, l.iy, l.iw, l.ih, 10, 12, 4, COLOR_BLACK, 80);
+    if (preview->index < WP_BUILTIN) {
+        /* The waves are drawn for the viewer's exact size. */
+        if (pv_index != preview->index || pv_w != l.iw * k || pv_h != l.ih * k) {
+            pv_w = l.iw * k;
+            pv_h = l.ih * k;
+            static size_t cap;
+            if ((size_t)pv_w * pv_h > cap) {
+                cap = (size_t)2880 * 1800;
+                if ((size_t)pv_w * pv_h > cap) cap = (size_t)pv_w * pv_h;
+                pv_src = (uint32_t *)pmm_alloc_bytes(cap * sizeof(uint32_t));
+            }
+            if (pv_src) wallpaper_render_tahoe(pv_src, pv_w, pv_h, preview->index == 1);
+            pv_index = preview->index;
+        }
+    } else if (pv_index != preview->index) {
+        pv_index = wallpaper_decode(preview->index, &pv_src, &pv_w, &pv_h) ? preview->index : -2;
     }
-    (void)preview;
-    ui_text_mid(content_x + 16, content_y + content_h - 26, 22, "Set one in Settings \xE2\x86\x92 Wallpaper", TEXT_SMALL, theme->text_muted);
+    if (pv_src && pv_index == preview->index)
+        gfx_blit_scaled(surface(), pv_src, pv_w, 0, 0, pv_w, pv_h, l.ix, l.iy, l.iw, l.ih, 10, 255);
+    else
+        draw_rounded_rect_blend(l.ix, l.iy, l.iw, l.ih, 10, theme->text_muted, 60);
+
+    Color btn = dark ? RGB(60, 70, 90) : RGB(230, 234, 242);
+    draw_rounded_rect_blend(l.prev_x, l.bar_y, 30, 26, 8, btn, 230);
+    draw_rounded_rect_blend(l.next_x, l.bar_y, 30, 26, 8, btn, 230);
+    ui_text_mid(l.prev_x + 10, l.bar_y, 26, "\xE2\x80\xB9", TEXT_BODY_MEDIUM, theme->text);
+    ui_text_mid(l.next_x + 11, l.bar_y, 26, "\xE2\x80\xBA", TEXT_BODY_MEDIUM, theme->text);
+    const char *name = wallpaper_choice_name(preview->index);
+    ui_text_mid(l.next_x + 44, l.bar_y, 26, name, TEXT_BODY_MEDIUM, theme->text);
+    bool current = preview->index == wp_choice;
+    draw_rounded_rect_blend(l.set_x, l.bar_y, l.set_w, 26, 8, current ? btn : theme->accent, 240);
+    const char *label = current ? "Desktop Picture \xE2\x9C\x93" : "Set as Desktop Picture";
+    int lw = text_width(label, TEXT_BODY_MEDIUM);
+    ui_text_mid(l.set_x + (l.set_w - lw) / 2, l.bar_y, 26, label, TEXT_BODY_MEDIUM, current ? theme->text : COLOR_WHITE);
+}
+
+static void preview_click(PreviewState *preview, int cx, int cy, int cw, int ch, int x, int y)
+{
+    PreviewLayout l;
+    preview_layout(cx, cy, cw, ch, &l);
+    int count = wallpaper_choice_count();
+    if (y < l.bar_y || y >= l.bar_y + 26) return;
+    if (x >= l.prev_x && x < l.prev_x + 30) preview->index = (preview->index + count - 1) % count;
+    else if (x >= l.next_x && x < l.next_x + 30) preview->index = (preview->index + 1) % count;
+    else if (x >= l.set_x && x < l.set_x + l.set_w) wallpaper_choose(preview->index);
 }
 
 /* Shared helpers for app modules in their own files (ui/draw.h). */
@@ -3584,49 +3865,6 @@ static bool str_contains_ci(const char *haystack, const char *needle)
         if (match) return true;
     }
     return false;
-}
-
-static bool preview_load_thumbnail(const char *path, uint8_t *out)
-{
-    if (!path || !out) return false;
-
-    VfsFile *file = vfs_open(path, VFS_O_READ);
-    if (!file) return false;
-
-    uint32_t header[2];
-    ssize_t header_read = vfs_read(file, header, sizeof(header));
-    if (header_read != (ssize_t)sizeof(header)) {
-        vfs_close(file);
-        return false;
-    }
-
-    uint32_t w = header[0];
-    uint32_t h = header[1];
-    uint64_t size = (uint64_t)w * (uint64_t)h * 4;
-    if (size > PREVIEW_RAW_MAX) {
-        vfs_close(file);
-        return false;
-    }
-
-    static uint8_t raw[PREVIEW_RAW_MAX];
-    ssize_t read_size = vfs_read(file, raw, size);
-    vfs_close(file);
-    if (read_size != (ssize_t)size) return false;
-
-    for (int y = 0; y < PREVIEW_THUMB_H; y++) {
-        int sy = (int)((y * h) / PREVIEW_THUMB_H);
-        for (int x = 0; x < PREVIEW_THUMB_W; x++) {
-            int sx = (int)((x * w) / PREVIEW_THUMB_W);
-            uint32_t src = (sy * w + sx) * 4;
-            uint32_t dst = (y * PREVIEW_THUMB_W + x) * 4;
-            out[dst + 0] = raw[src + 0];
-            out[dst + 1] = raw[src + 1];
-            out[dst + 2] = raw[src + 2];
-            out[dst + 3] = raw[src + 3];
-        }
-    }
-
-    return true;
 }
 
 static void normalize_path(char *path, size_t size)
@@ -5720,15 +5958,7 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         textedit_load_file(&state->notes, state->notes.file_path);
         strcpy(state->notes.status, "Notes");
     } else if (type == APP_PREVIEW) {
-        strncpy(state->preview.options[0], "Tahoe Light", sizeof(state->preview.options[0]) - 1);
-        strncpy(state->preview.options[1], "Tahoe Dark", sizeof(state->preview.options[1]) - 1);
-        strncpy(state->preview.current, state->preview.options[0], sizeof(state->preview.current) - 1);
-        state->preview.loaded = false;
-        if (preview_load_thumbnail("/System/Wallpapers/Tahoe Light.raw", state->preview.light_thumb)) {
-            if (preview_load_thumbnail("/System/Wallpapers/Tahoe Dark.raw", state->preview.dark_thumb)) {
-                state->preview.loaded = true;
-            }
-        }
+        state->preview.index = wp_choice;
     } else if (type == APP_CALENDAR) {
         RtcTime now;
         rtc_read_time(&now);
@@ -5781,7 +6011,7 @@ static int app_open_window(AppType type, const char *title)
     int x = 140 + (window_count * 18) % 90;
     int y = 90 + (window_count * 18) % 70;
     if (type == APP_FINDER) { w = 640; h = 420; }
-    if (type == APP_SETTINGS) { w = 560; h = 400; }
+    if (type == APP_SETTINGS) { w = 700; h = 460; }
     if (type == APP_TERMINAL) { w = 600; h = 360; }
     if (type == APP_TEXTEDIT) { w = 560; h = 360; }
     if (type == APP_NOTES) { w = 460; h = 320; }
@@ -5882,9 +6112,12 @@ void compositor_init(uint32_t width, uint32_t height)
     settings_load();
     net_set_enabled(settings_get()->wifi_enabled);     /* Wi-Fi tile state survives reboots */
     compositor_set_dark_mode(settings_get()->dark_mode);
-    compositor_set_wallpaper(settings_get()->dark_mode
-        ? "/System/Wallpapers/Tahoe Dark.raw"
-        : "/System/Wallpapers/Tahoe Light.raw");
+    /* The saved picture, else Tahoe (when the pack is installed), else the
+     * built-in waves - each following the appearance. */
+    int pick = wallpaper_find(settings_get()->wallpaper);
+    if (pick < 0) pick = wallpaper_find(dark_mode ? "Tahoe Dark" : "Tahoe Light");
+    if (pick < 0) pick = dark_mode ? 1 : 0;
+    wallpaper_show(pick);
 
     icon_folder_loaded = load_system_icon("/System/Library/Icons/Folder.raw", icon_folder);
     icon_file_loaded = load_system_icon("/System/Library/Icons/File.raw", icon_file);
@@ -5903,72 +6136,19 @@ void compositor_set_dark_mode(bool enabled)
    dark_mode = enabled;
     theme = dark_mode ? theme_dark() : theme_light();
     settings_get()->dark_mode = enabled;
-    if (!wallpaper_loaded) {
-        wallpaper_rebuild_cache();   /* Procedural wallpaper follows the theme */
-    }
+    wallpaper_retint();              /* window glass tint follows the theme */
 }
 
-static void wallpaper_load_file(const char *path);
-
-void compositor_set_wallpaper(const char *path)
+void compositor_toggle_appearance(void)
 {
-     mark_dirty();
-
-   wallpaper_load_file(path);
-    wallpaper_rebuild_cache();
+    toggle_appearance();
 }
 
-static void wallpaper_load_file(const char *path)
+/* Show a desktop picture by name (see wallpaper_choice_name). */
+void compositor_set_wallpaper(const char *name)
 {
-    if (!path) {
-        wallpaper_loaded = false;
-        return;
-    }
-    /* The built-in Tahoe wallpapers are drawn procedurally at the screen's
-     * real size (sharp at any resolution); the .raw files are fallbacks. */
-    if (str_contains_ci(path, "Tahoe")) {
-        wallpaper_loaded = false;
-        wp_tahoe_dark = str_contains_ci(path, "Dark");
-        return;
-    }
-
-    VfsFile *file = vfs_open(path, VFS_O_READ);
-    if (!file) {
-        serial_printf("[COMPOSITOR] Wallpaper not found: %s\n", path);
-        wallpaper_loaded = false;
-        return;
-    }
-
-    uint32_t header[2];
-    ssize_t header_read = vfs_read(file, header, sizeof(header));
-    if (header_read != (ssize_t)sizeof(header)) {
-        vfs_close(file);
-        wallpaper_loaded = false;
-        return;
-    }
-
-    wallpaper_w = header[0];
-    wallpaper_h = header[1];
-
-    if (wallpaper_w == 0 || wallpaper_h == 0 ||
-        wallpaper_w > WALLPAPER_MAX_W || wallpaper_h > WALLPAPER_MAX_H) {
-        vfs_close(file);
-        wallpaper_loaded = false;
-        return;
-    }
-
-    size_t data_size = wallpaper_w * wallpaper_h * 4;
-    ssize_t data_read = vfs_read(file, wallpaper_data, data_size);
-    vfs_close(file);
-
-    if (data_read != (ssize_t)data_size) {
-        wallpaper_loaded = false;
-        return;
-    }
-
-    wallpaper_loaded = true;
-    serial_printf("[COMPOSITOR] Wallpaper loaded: %s (%dx%d)\n",
-                  path, wallpaper_w, wallpaper_h);
+    int i = wallpaper_find(name);
+    if (i >= 0) wallpaper_choose(i);
 }
 
 int compositor_create_window(const char *title, int x, int y, int w, int h)
@@ -6917,11 +7097,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 } else if (item == 4) {
                     app_open_window(APP_CALCULATOR, "Calculator");
                 } else if (item == 5) {
-                    settings_toggle_dark_mode();
-                    compositor_set_dark_mode(settings_get()->dark_mode);
-                    compositor_set_wallpaper(settings_get()->dark_mode
-                        ? "/System/Wallpapers/Tahoe Dark.raw"
-                        : "/System/Wallpapers/Tahoe Light.raw");
+                    toggle_appearance();
                 } else if (item == 6) {
                     users_lock_session();
                     login_password[0] = '\0';
@@ -6987,11 +7163,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     }
                 } else if (menu == 4) {
                     if (item == 0) {
-                        settings_toggle_dark_mode();
-                        compositor_set_dark_mode(settings_get()->dark_mode);
-                        compositor_set_wallpaper(settings_get()->dark_mode
-                            ? "/System/Wallpapers/Tahoe Dark.raw"
-                            : "/System/Wallpapers/Tahoe Light.raw");
+                        toggle_appearance();
                     } else if (item == 1) {
                         settings_toggle_reduced_transparency();
                     } else if (item == 2) {
@@ -7136,11 +7308,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     strcpy(cc_message, "No Bluetooth hardware in this VM");
                     cc_message_until = timer_get_ticks() + 3000;
                 } else if (tile == 2) {
-                    settings_toggle_dark_mode();
-                    compositor_set_dark_mode(settings_get()->dark_mode);
-                    compositor_set_wallpaper(settings_get()->dark_mode
-                        ? "/System/Wallpapers/Tahoe Dark.raw"
-                        : "/System/Wallpapers/Tahoe Light.raw");
+                    toggle_appearance();
                 } else if (tile == 3) {
                     settings_toggle_reduced_transparency();
                 } else if (y >= btn_y && y <= btn_y + btn_h) {
@@ -7462,11 +7630,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             if (y >= ry && y < ry + 26 && x >= main_x + 8 && x <= main_x + main_w - 8) row = r;
                         }
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 0) {
-                            settings_toggle_dark_mode();
-                            compositor_set_dark_mode(settings_get()->dark_mode);
-                            compositor_set_wallpaper(settings_get()->dark_mode
-                                ? "/System/Wallpapers/Tahoe Dark.raw"
-                                : "/System/Wallpapers/Tahoe Light.raw");
+                            toggle_appearance();
                         }
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 1) settings_toggle_time_format();
                         if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 2) settings_toggle_reduced_transparency();
@@ -7524,21 +7688,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                                 }
                             }
                         }
-                        if (state->settings.page == SETTINGS_PAGE_WALLPAPER) {
-                            int tx0 = main_x + 16, tx1 = main_x + 16 + WP_THUMB_W + 24, ty = content_y + 48;
-                            if (x >= tx0 && x < tx0 + WP_THUMB_W && y >= ty && y < ty + WP_THUMB_H) {
-                                compositor_set_wallpaper("/System/Wallpapers/Tahoe Light.raw");
-                                settings_get()->dark_mode = false;
-                                compositor_set_dark_mode(false);
-                                settings_save();
-                            }
-                            if (x >= tx1 && x < tx1 + WP_THUMB_W && y >= ty && y < ty + WP_THUMB_H) {
-                                compositor_set_wallpaper("/System/Wallpapers/Tahoe Dark.raw");
-                                settings_get()->dark_mode = true;
-                                compositor_set_dark_mode(true);
-                                settings_save();
-                            }
-                        }
+                        if (state->settings.page == SETTINGS_PAGE_WALLPAPER)
+                            wallpaper_page_click(&state->settings, main_x, main_w, content_y, content_h, x, y);
                         if (state->settings.page == SETTINGS_PAGE_DOCK) {
                             int sx = seg_x(main_x, main_w);
                             int si = segmented_hit(sx, content_y + APPEARANCE_ROW_Y(0) + 1, 3, x, y);
@@ -7704,26 +7855,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         }
                     }
                 } else if (state->type == APP_PREVIEW) {
-                    int content_x = win->x + 12;
-                    int content_y = win->y + 40;
-                    int thumb_x = content_x + 16;
-                    int thumb_y = content_y + 40;
-                    int gap = 16;
-
-                    if (x >= thumb_x && x <= thumb_x + 120 && y >= thumb_y && y <= thumb_y + 80) {
-                        compositor_set_wallpaper("/System/Wallpapers/Tahoe Light.raw");
-                        strncpy(state->preview.current, "Tahoe Light", sizeof(state->preview.current) - 1);
-                        settings_get()->dark_mode = false;
-                        compositor_set_dark_mode(false);
-                        settings_save();
-                    } else if (x >= thumb_x + 120 + gap && x <= thumb_x + 240 + gap &&
-                               y >= thumb_y && y <= thumb_y + 80) {
-                        compositor_set_wallpaper("/System/Wallpapers/Tahoe Dark.raw");
-                        strncpy(state->preview.current, "Tahoe Dark", sizeof(state->preview.current) - 1);
-                        settings_get()->dark_mode = true;
-                        compositor_set_dark_mode(true);
-                        settings_save();
-                    }
+                    preview_click(&state->preview, win->x + 12, win->y + 40, win->w - 24, win->h - 52, x, y);
                 } else if (state->type == APP_WEB) {
                     browser_click(x, y);
                 }
@@ -7887,6 +8019,11 @@ void compositor_handle_scroll(int32_t dx, int32_t dy)
             break;
         case APP_CALENDAR:
             /* No scrollable region in the calendar yet */
+            break;
+        case APP_SETTINGS:
+            if (state->settings.page == SETTINGS_PAGE_WALLPAPER)
+                state->settings.wp_scroll = MAX(0, MIN(state->settings.wp_scroll + delta * 16,
+                                                       state->settings.wp_scroll_max));
             break;
         case APP_WEB:
             browser_scroll(delta * 40);

@@ -51,6 +51,7 @@ typedef struct {
     bool time_24h;
     bool reduced_transparency;
     bool reduced_motion;
+    char wallpaper[64];          /* desktop picture name ("" = default) */
 } SettingsState;
 
 void app_registry_init(void);

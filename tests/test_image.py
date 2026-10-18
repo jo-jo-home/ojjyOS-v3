@@ -56,6 +56,21 @@ class ImageTests(unittest.TestCase):
         self.assertEqual(payload(backups[0]), expected)
         self.assertFalse(self.new.exists())
 
+    def test_update_takes_wallpaper_pack_from_candidate(self):
+        def write_at(path, lba, data):
+            with path.open("r+b") as file:
+                file.seek(lba * 512); file.write(data)
+        def read_at(path, lba):
+            with path.open("rb") as file:
+                file.seek(lba * 512); return file.read(16)
+        last_user = image.PACK_FIRST - 1
+        write_at(self.old, last_user, b"user-tail-sector")
+        write_at(self.old, image.PACK_FIRST, b"OJWP-old-pack...")
+        write_at(self.new, image.PACK_FIRST, b"OJWP-new-pack...")
+        image.install(self.new, self.old)
+        self.assertEqual(read_at(self.old, last_user), b"user-tail-sector")
+        self.assertEqual(read_at(self.old, image.PACK_FIRST), b"OJWP-new-pack...")
+
     def test_first_architecture_build_imports_legacy_without_modifying_it(self):
         destination = self.root / "arm.img"
         expected = payload(self.old)

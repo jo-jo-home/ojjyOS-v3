@@ -159,27 +159,42 @@ void wallpaper_render_tahoe(uint32_t *dst, int w, int h, bool dark)
     }
 }
 
-void wallpaper_scale_rgba(uint32_t *dst, int w, int h, const uint8_t *rgba, int sw, int sh)
+void wallpaper_scale_cover(uint32_t *dst, int w, int h, const uint32_t *src, int sw, int sh)
 {
-    if (!dst || !rgba || w <= 0 || h <= 0 || sw <= 0 || sh <= 0) return;
+    if (!dst || !src || w <= 0 || h <= 0 || sw <= 0 || sh <= 0) return;
+    if (sw == w && sh == h) {
+        for (size_t i = 0; i < (size_t)w * h; i++) dst[i] = src[i] & 0xFFFFFF;
+        return;
+    }
+    /* Crop the source to the screen's aspect ratio around its centre. */
+    int cx = 0, cy = 0, cw = sw, ch = sh;
+    if ((int64_t)sw * h > (int64_t)sh * w) {
+        cw = (int)(((int64_t)sh * w) / h);
+        cx = (sw - cw) / 2;
+    } else {
+        ch = (int)(((int64_t)sw * h) / w);
+        cy = (sh - ch) / 2;
+    }
+    if (cw < 1) cw = 1;
+    if (ch < 1) ch = 1;
     for (int y = 0; y < h; y++) {
-        int32_t fy = (int32_t)(((int64_t)(2 * y + 1) * sh * 128) / h) - 128;
+        int32_t fy = (int32_t)(((int64_t)(2 * y + 1) * ch * 128) / h) - 128;
         if (fy < 0) fy = 0;
-        int iy = fy >> 8, ty = fy & 255, iy2 = iy + 1 < sh ? iy + 1 : sh - 1;
+        int iy = fy >> 8, ty = fy & 255, iy2 = iy + 1 < ch ? iy + 1 : ch - 1;
+        const uint32_t *r0 = src + (size_t)(cy + iy) * sw + cx, *r1 = src + (size_t)(cy + iy2) * sw + cx;
         for (int x = 0; x < w; x++) {
-            int32_t fx = (int32_t)(((int64_t)(2 * x + 1) * sw * 128) / w) - 128;
+            int32_t fx = (int32_t)(((int64_t)(2 * x + 1) * cw * 128) / w) - 128;
             if (fx < 0) fx = 0;
-            int ix = fx >> 8, tx = fx & 255, ix2 = ix + 1 < sw ? ix + 1 : sw - 1;
-            const uint8_t *p00 = rgba + ((size_t)iy * sw + ix) * 4, *p10 = rgba + ((size_t)iy * sw + ix2) * 4;
-            const uint8_t *p01 = rgba + ((size_t)iy2 * sw + ix) * 4, *p11 = rgba + ((size_t)iy2 * sw + ix2) * 4;
-            C16 c;
-            int32_t ch[3];
+            int ix = fx >> 8, tx = fx & 255, ix2 = ix + 1 < cw ? ix + 1 : cw - 1;
+            uint32_t p00 = r0[ix], p10 = r0[ix2], p01 = r1[ix], p11 = r1[ix2];
+            int32_t ch3[3];
             for (int k = 0; k < 3; k++) {
-                int32_t top = p00[k] * (256 - tx) + p10[k] * tx;
-                int32_t bot = p01[k] * (256 - tx) + p11[k] * tx;
-                ch[k] = (top * (256 - ty) + bot * ty) >> 8;     /* channel * 256 */
+                int sh8 = 16 - 8 * k;
+                int32_t top = (int32_t)((p00 >> sh8) & 255) * (256 - tx) + (int32_t)((p10 >> sh8) & 255) * tx;
+                int32_t bot = (int32_t)((p01 >> sh8) & 255) * (256 - tx) + (int32_t)((p11 >> sh8) & 255) * tx;
+                ch3[k] = (top * (256 - ty) + bot * ty) >> 8;     /* channel * 256 */
             }
-            c.r = ch[0]; c.g = ch[1]; c.b = ch[2];
+            C16 c = { ch3[0], ch3[1], ch3[2] };
             dst[(size_t)y * w + x] = out_px(c, x, y);
         }
     }

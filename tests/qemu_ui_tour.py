@@ -16,7 +16,7 @@ def run(args):
     out = Path(args.output).resolve(); out.mkdir(parents=True, exist_ok=False)
     disk = out / 'test-disk.img'; shutil.copyfile(args.image, disk)
     with disk.open('r+b') as file:
-        file.seek(67584 * 512); file.write(bytes((262144 - 34 - 67584 + 1) * 512))
+        file.seek(67584 * 512); file.write(bytes((102400 - 67584) * 512))  # user data only; the picture pack follows
     vm = VM(args.arch, disk, out, 'tour')
     try:
         vm.wait('Entering main loop'); time.sleep(3)

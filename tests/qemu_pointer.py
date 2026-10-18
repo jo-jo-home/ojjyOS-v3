@@ -43,7 +43,7 @@ def run(args):
     disk = out / 'test-disk.img'; shutil.copyfile(args.image, disk)
     # Clear ONLY the new private disk. The user's accounts are never modified.
     with disk.open('r+b') as file:
-        file.seek(67584 * 512); file.write(bytes((262144 - 34 - 67584 + 1) * 512))
+        file.seek(67584 * 512); file.write(bytes((102400 - 67584) * 512))  # user data only; the picture pack follows
     nm = shutil.which('llvm-nm') or '/opt/homebrew/opt/llvm/bin/llvm-nm'
     symbols = subprocess.check_output([nm, str(Path(args.kernel).resolve())], text=True)
     addresses = {name: int(addr, 16) for addr, name in re.findall(

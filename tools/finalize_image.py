@@ -3,7 +3,8 @@
 
 Created by Jonas Lee. Both images must have the expected, checksummed GPT
 layout. Existing disks are locked, backed up, and only replaced atomically
-after their entire data partition has been copied into the candidate.
+after the user-data part of their data partition (everything before the
+desktop picture pack) has been copied into the candidate.
 """
 
 import argparse
@@ -20,6 +21,10 @@ SECTOR = 512
 IMAGE_BYTES = 128 * 1024 * 1024
 DATA_FIRST = 67584
 DATA_LAST = IMAGE_BYTES // SECTOR - 34
+# The data partition's tail holds the read-only desktop picture pack
+# (kernel/src/image/wallpack.h). It belongs to the build, so it comes from
+# the candidate; only the sectors before it are user data and preserved.
+PACK_FIRST = 102400
 DATA_TYPE = uuid.UUID("0FC63DAF-8483-4772-8E79-3D69D8477DE4").bytes_le
 
 
@@ -47,7 +52,7 @@ def data_partition(file):
     first, last = struct.unpack_from("<QQ", entry, 32)
     if entry[:16] != DATA_TYPE or (first, last) != (DATA_FIRST, DATA_LAST):
         raise ValueError("unexpected data partition; refusing destructive migration")
-    return first * SECTOR, (last - first + 1) * SECTOR
+    return first * SECTOR, (PACK_FIRST - first) * SECTOR
 
 
 def _install_locked(candidate, destination, legacy=None):

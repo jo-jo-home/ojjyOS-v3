@@ -29,9 +29,18 @@ fi
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_crypto.c kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c kernel/src/string.c -o "$OUT/test_crypto"
 "$HOST_CC" "${FLAGS[@]}" tests/test_gfx.c kernel/src/{gfx,string}.c -o "$OUT/test_gfx"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_jpeg.c kernel/src/image/jpeg.c kernel/src/string.c -o "$OUT/test_jpeg"
+"$HOST_CC" "${FLAGS[@]}" -DWALLPACK_HOST_TEST tests/test_wallpack.c kernel/src/image/wallpack.c kernel/src/string.c -o "$OUT/test_wallpack"
+# A small pack from the real writer, so reader and writer must agree.
+python3 -I -c 'import importlib.util, sys
+spec = importlib.util.spec_from_file_location("w", sys.argv[1]); w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)
+items = [("Tahoe Light", "light", b"L" * 1500, b"l" * 300), ("Tahoe Dark", "dark", b"D" * 2049, b"d" * 512),
+         ("Goa Coast", "any", b"G" * 700, b"g" * 90)]
+open(sys.argv[2], "wb").write(w.build_pack(items))' tools/import_wallpapers.py "$OUT/sample.pack"
 "$HOST_CC" "${FLAGS[@]}" tests/test_calc.c kernel/src/ui/calcmath.c kernel/src/string.c -o "$OUT/test_calc"
 for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_calc test_gfx test_jpeg; do
     echo "Running $test"
     "$OUT/$test"
 done
+echo "Running test_wallpack"
+"$OUT/test_wallpack" "$OUT/sample.pack"
 python3 -B tests/test_image.py

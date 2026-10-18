@@ -73,6 +73,25 @@ static int parse_value(const char *buffer, const char *key, int fallback)
     return value;
 }
 
+/* "key=value" up to the end of the line; values never contain '=' or '\n'. */
+static void parse_string(const char *buffer, const char *key, char *out, size_t cap)
+{
+    char pattern[32];
+    pattern[0] = '\0';
+    str_append(pattern, sizeof(pattern), "\n");
+    str_append(pattern, sizeof(pattern), key);
+    str_append(pattern, sizeof(pattern), "=");
+    const char *pos = str_find(buffer, pattern);
+    if (!pos) return;
+    pos += strlen(pattern);
+    size_t n = 0;
+    while (pos[n] && pos[n] != '\n' && n + 1 < cap) {
+        out[n] = pos[n];
+        n++;
+    }
+    out[n] = '\0';
+}
+
 static char ascii_lower(char c)
 {
     if (c >= 'A' && c <= 'Z') return (char)(c + 32);
@@ -327,7 +346,7 @@ void settings_load(void)
     VfsFile *file = vfs_open("/Library/Preferences/system.conf", VFS_O_READ);
     if (!file) return;
 
-    char buffer[256];
+    char buffer[512];
     ssize_t bytes = vfs_read(file, buffer, sizeof(buffer) - 1);
     vfs_close(file);
     if (bytes <= 0) return;
@@ -345,6 +364,7 @@ void settings_load(void)
     settings_state.time_24h = (str_find(buffer, "time24=1") != NULL);
     settings_state.reduced_transparency = (str_find(buffer, "rt=1") != NULL);
     settings_state.reduced_motion = (str_find(buffer, "rm=1") != NULL);
+    parse_string(buffer, "wallpaper", settings_state.wallpaper, sizeof(settings_state.wallpaper));
 }
 
 void settings_save(void)
@@ -353,7 +373,7 @@ void settings_save(void)
                              VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
     if (!file) return;
 
-    char buffer[256];
+    char buffer[512];
     buffer[0] = '\0';
     if (settings_state.dark_mode) str_append(buffer, sizeof(buffer), "dark=1\n");
     else str_append(buffer, sizeof(buffer), "dark=0\n");
@@ -426,6 +446,11 @@ void settings_save(void)
         str_append(tmp, sizeof(tmp), num);
         str_append(tmp, sizeof(tmp), "\n");
         str_append(buffer, sizeof(buffer), tmp);
+    }
+    if (settings_state.wallpaper[0] && !str_find(settings_state.wallpaper, "=")) {
+        str_append(buffer, sizeof(buffer), "wallpaper=");
+        str_append(buffer, sizeof(buffer), settings_state.wallpaper);
+        str_append(buffer, sizeof(buffer), "\n");
     }
 
     vfs_write(file, buffer, strlen(buffer));

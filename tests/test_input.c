@@ -132,5 +132,38 @@ int main(void)
     }
     CHECK(count == INPUT_QUEUE_SIZE - 1 && release_seen, "release survives a completely full ring");
     CHECK(!input_has_event(), "ring drains after wrapping and overflow");
+    input_init(); input_set_mouse_bounds(1024, 768);
+    virtio_input_test_pointer_init(0, 32767, 0, 32767);
+    virtio_input_test_pointer_event(3, 0, 3203);
+    CHECK(!input_has_event(), "first X waits for coherent absolute report");
+    virtio_input_test_pointer_event(3, 1, 4272);
+    CHECK(!input_has_event(), "XY published at SYN_REPORT not half a move");
+    virtio_input_test_pointer_event(0, 0, 0);
+    CHECK(input_poll_event(&event) && event.motion.absolute && event.motion.x == 99 && event.motion.y == 99,
+          "first tablet report is an absolute position, not a discarded delta");
+    virtio_input_test_pointer_event(3, 0, 32767); virtio_input_test_pointer_event(3, 1, 32767);
+    virtio_input_test_pointer_event(1, 0x110, 1);
+    CHECK(input_poll_event(&event) && event.motion.absolute && event.motion.x == 1023 && event.motion.y == 767,
+          "pending position flushed before button");
+    CHECK(input_poll_event(&event) && event.type == INPUT_EVENT_MOUSE_BUTTON_DOWN &&
+          event.button.absolute && event.button.x == 1023 && event.button.y == 767, "click keeps tablet coordinates");
+    virtio_input_test_pointer_event(0, 0, 0);
+    CHECK(!input_has_event(), "SYN after click does not duplicate motion");
+    virtio_input_test_pointer_init(-100, 100, 10, 110);
+    virtio_input_test_pointer_event(3, 0, -2147483647); virtio_input_test_pointer_event(3, 1, 2147483647);
+    virtio_input_test_pointer_event(0, 0, 0);
+    CHECK(input_poll_event(&event) && event.motion.x == 0 && event.motion.y == 767,
+          "device min/max and out-of-range coordinates clamped before scaling");
+    virtio_input_test_pointer_event(3, 0, 0); virtio_input_test_pointer_event(3, 1, 60);
+    virtio_input_test_pointer_event(0, 0, 0);
+    CHECK(input_poll_event(&event) && event.motion.x == 511 && event.motion.y == 383, "nonzero minima normalized");
+    for (int i = 0; i < 1000; i++) input_post_mouse_absolute(i % 1024, i % 768);
+    CHECK(input_poll_event(&event) && event.motion.absolute && event.motion.x == 999 && event.motion.y == 231 &&
+          !input_has_event(), "absolute coalescing keeps latest endpoint, never sums positions");
+    input_post_mouse_absolute(10, 20); input_post_mouse_move(1, 2);
+    CHECK(input_poll_event(&event) && event.motion.absolute, "absolute and relative events don't coalesce");
+    CHECK(input_poll_event(&event) && !event.motion.absolute && event.motion.dx == 1, "PS/2 deltas remain relative");
+    input_post_mouse_move(2147483647, -2147483647);
+    CHECK(input_poll_event(&event) && event.motion.x == 1023 && event.motion.y == 0, "extreme relative movement cannot overflow");
     return finish();
 }

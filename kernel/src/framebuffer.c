@@ -23,6 +23,50 @@ static uint32_t fb_screen_pitch = 0;
 #define FB_BACK_MAX_PIXELS  (1920 * 1200)
 static uint32_t fb_back[FB_BACK_MAX_PIXELS];
 static bool fb_back_active = false;
+static bool fb_back_valid, cursor_visible;
+static int cursor_x, cursor_y;
+static uint64_t full_presents, cursor_updates;
+
+static void cursor_draw(void)
+{
+    static const uint8_t mask[12] = {
+        0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC,
+        0xFE, 0xF0, 0xD8, 0x8C, 0x0C, 0x06
+    };
+    for (int row = 0; row < 12; row++) for (int col = 0; col < 8; col++) {
+        if (!(mask[row] & (0x80 >> col))) continue;
+        Color color = (row >= 1 && row < 11 && col >= 1 && col < 7 &&
+                       (mask[row] & (0x80 >> (col - 1)))) ? COLOR_WHITE : COLOR_BLACK;
+        for (int dy = 0; dy < 2; dy++) for (int dx = 0; dx < 2; dx++) {
+            int x = cursor_x + col * 2 + dx, y = cursor_y + row * 2 + dy;
+            if (x >= 0 && y >= 0 && x < (int)fb_width && y < (int)fb_height)
+                fb_screen[y * fb_screen_pitch + x] = color;
+        }
+    }
+}
+
+static void cursor_restore(void)
+{
+    for (int y = MAX(0, cursor_y); y < MIN((int)fb_height, cursor_y + 24); y++)
+        for (int x = MAX(0, cursor_x); x < MIN((int)fb_width, cursor_x + 16); x++)
+            fb_screen[y * fb_screen_pitch + x] = fb_back[y * fb_width + x];
+}
+
+void fb_cursor_move(int x, int y)
+{
+    if (!fb_back_active || !fb_screen || !fb_width || !fb_height) return;
+    x = MAX(0, MIN(x, (int)fb_width - 1)); y = MAX(0, MIN(y, (int)fb_height - 1));
+    if (cursor_visible && x == cursor_x && y == cursor_y) return;
+    if (cursor_visible && fb_back_valid) cursor_restore();
+    cursor_x = x; cursor_y = y; cursor_visible = true;
+    if (fb_back_valid) { cursor_draw(); cursor_updates++; }
+}
+
+void fb_get_present_stats(uint64_t *frames, uint64_t *updates)
+{
+    if (frames) *frames = full_presents;
+    if (updates) *updates = cursor_updates;
+}
 
 /*
  * Initialize framebuffer from boot info
@@ -36,6 +80,8 @@ void fb_init(BootInfo *info)
     fb_base = fb_screen;
     fb_pitch = fb_screen_pitch;
     fb_back_active = false;
+    fb_back_valid = cursor_visible = false;
+    full_presents = cursor_updates = 0;
 }
 
 /*
@@ -48,10 +94,13 @@ bool fb_use_backbuffer(bool enable)
         if ((uint64_t)fb_width * fb_height > FB_BACK_MAX_PIXELS) {
             return false;
         }
+        if (!fb_back_active) { fb_back_valid = false; cursor_visible = false; }
         fb_base = fb_back;
         fb_pitch = fb_width;
         fb_back_active = true;
     } else {
+        if (fb_back_active && fb_back_valid && cursor_visible) cursor_restore();
+        cursor_visible = fb_back_valid = false;
         fb_base = fb_screen;
         fb_pitch = fb_screen_pitch;
         fb_back_active = false;
@@ -68,6 +117,11 @@ void fb_present(void)
     for (uint32_t y = 0; y < fb_height; y++) {
         uint64_t *dst = (uint64_t *)(fb_screen + y * fb_screen_pitch);
         const uint64_t *src = (const uint64_t *)(fb_back + y * fb_width);
+        if (((uintptr_t)dst | (uintptr_t)src) & 7) {
+            for (uint32_t x = 0; x < fb_width; x++)
+                fb_screen[y * fb_screen_pitch + x] = fb_back[y * fb_width + x];
+            continue;
+        }
         uint32_t n = fb_width / 2;
         for (uint32_t i = 0; i < n; i++) {
             dst[i] = src[i];
@@ -76,6 +130,9 @@ void fb_present(void)
             fb_screen[y * fb_screen_pitch + fb_width - 1] = fb_back[y * fb_width + fb_width - 1];
         }
     }
+    fb_back_valid = true;
+    full_presents++;
+    if (cursor_visible) cursor_draw();
 }
 
 /*
@@ -188,6 +245,17 @@ void fb_draw_char(int x, int y, char c, Color fg, Color bg)
         for (int col = 0; col < FONT_WIDTH; col++) {
             uint8_t cov = glyph[row * FONT_WIDTH + col];
             Color color;
+            if (fb_back_active) {
+                /* Scene frames are fully repainted before text: blend into
+                 * the real surface (glass, gradients) instead of boxing
+                 * every glyph in a guessed background colour. */
+                int px = x + col, py = y + row;
+                if (cov == 0 || px < 0 || py < 0 ||
+                    px >= (int)fb_width || py >= (int)fb_height) continue;
+                Color *dst = &fb_back[py * fb_width + px];
+                *dst = cov >= 255 ? fg : fb_blend(*dst, fg, cov);
+                continue;
+            }
             if (cov == 0) {
                 color = bg;
             } else if (cov >= 255) {
@@ -213,6 +281,22 @@ void fb_draw_string(int x, int y, const char *s, Color fg, Color bg)
             y += FONT_HEIGHT;
         } else if (*s == '\t') {
             cur_x += FONT_WIDTH * 4;  /* 4-space tabs */
+        } else if ((uint8_t)*s >= 0x80) {
+            /* The font is ASCII. Map UTF-8 dashes to '-' and draw any other
+             * multibyte sequence as one '?' instead of one per byte. */
+            const uint8_t *u = (const uint8_t *)s;
+            int len = u[0] >= 0xF0 ? 4 : u[0] >= 0xE0 ? 3 : u[0] >= 0xC0 ? 2 : 1;
+            for (int i = 1; i < len; i++) if ((u[i] & 0xC0) != 0x80) { len = i; break; }
+            bool dash = len == 3 && u[0] == 0xE2 && u[1] == 0x80 && (u[2] == 0x93 || u[2] == 0x94);
+            bool dot = (len == 3 && u[0] == 0xE2 && u[1] == 0x80 && u[2] == 0xA2) ||
+                       (len == 2 && u[0] == 0xC2 && u[1] == 0xB7);
+            fb_draw_char(cur_x, y, dash ? '-' : dot ? ' ' : '?', fg, bg);
+            if (dot) { /* bullet / middle dot: small centred disc */
+                fb_fill_rect(cur_x + 3, y + 7, 2, 3, fg);
+                fb_fill_rect(cur_x + 2, y + 8, 4, 1, fg);
+            }
+            cur_x += FONT_WIDTH;
+            s += len - 1;
         } else {
             fb_draw_char(cur_x, y, *s, fg, bg);
             cur_x += FONT_WIDTH;

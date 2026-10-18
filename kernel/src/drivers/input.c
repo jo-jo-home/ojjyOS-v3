@@ -24,6 +24,7 @@ static int32_t mouse_y = 0;
 static int32_t mouse_max_x = 1920;
 static int32_t mouse_max_y = 1080;
 static uint8_t mouse_buttons = 0;
+static bool mouse_absolute;
 
 /* Current keyboard state */
 static uint8_t current_modifiers = 0;
@@ -95,6 +96,7 @@ void input_init(void)
     mouse_x = mouse_max_x / 2;
     mouse_y = mouse_max_y / 2;
     mouse_buttons = 0;
+    mouse_absolute = false;
     current_modifiers = 0;
 
     memset(key_states, 0, sizeof(key_states));
@@ -120,7 +122,14 @@ void input_post_event(const InputEvent *event)
      * stream relative to clicks and keys. Never print from the overflow path. */
     if (event->type == INPUT_EVENT_MOUSE_MOVE && queue_head != queue_tail) {
         InputEvent *last = &event_queue[(queue_head - 1) & INPUT_QUEUE_MASK];
-        if (last->type == INPUT_EVENT_MOUSE_MOVE) {
+        if (last->type == INPUT_EVENT_MOUSE_MOVE && last->motion.absolute == event->motion.absolute) {
+            if (event->motion.absolute) {
+                *last = *event;
+                last->timestamp = timer_get_ticks();
+                total_events++;
+                input_unlock(flags);
+                return;
+            }
             int64_t dx = (int64_t)last->motion.dx + event->motion.dx;
             int64_t dy = (int64_t)last->motion.dy + event->motion.dy;
             if (dx >= -2147483648LL && dx <= 2147483647LL &&
@@ -225,9 +234,11 @@ void input_post_key_event(InputEventType type, uint8_t scancode,
  */
 void input_post_mouse_move(int32_t dx, int32_t dy)
 {
+    mouse_absolute = false;
     /* Update absolute position with clamping */
-    mouse_x += dx;
-    mouse_y += dy;
+    int64_t x = (int64_t)mouse_x + dx, y = (int64_t)mouse_y + dy;
+    mouse_x = (int32_t)MAX(0, MIN(x, mouse_max_x - 1));
+    mouse_y = (int32_t)MAX(0, MIN(y, mouse_max_y - 1));
 
     if (mouse_x < 0) mouse_x = 0;
     if (mouse_y < 0) mouse_y = 0;
@@ -241,6 +252,20 @@ void input_post_mouse_move(int32_t dx, int32_t dy)
     event.motion.x = mouse_x;
     event.motion.y = mouse_y;
 
+    input_post_event(&event);
+}
+
+/* Absolute devices have already been mapped to framebuffer pixels. Keep the
+ * first position and every later position, not a history-dependent delta. */
+void input_post_mouse_absolute(int32_t x, int32_t y)
+{
+    mouse_absolute = true;
+    input_set_mouse_position(x, y);
+    InputEvent event = {0};
+    event.type = INPUT_EVENT_MOUSE_MOVE;
+    event.motion.absolute = true;
+    event.motion.x = mouse_x;
+    event.motion.y = mouse_y;
     input_post_event(&event);
 }
 
@@ -262,6 +287,7 @@ void input_post_mouse_button(InputEventType type, MouseButton button)
     event.button.x = mouse_x;
     event.button.y = mouse_y;
     event.button.modifiers = current_modifiers;
+    event.button.absolute = mouse_absolute;
 
     input_post_event(&event);
 }

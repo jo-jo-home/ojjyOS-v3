@@ -24,5 +24,9 @@ void virtio_dev_ready(uint32_t base);
 /* Poll all input devices for pending events (called each main-loop
  * iteration by a64_poll_input). */
 void virtio_input_poll(void);
+#ifdef OJJY_HOST_TEST
+void virtio_input_test_pointer_init(int32_t min_x, int32_t max_x, int32_t min_y, int32_t max_y);
+void virtio_input_test_pointer_event(uint16_t type, uint16_t code, int32_t value);
+#endif
 
 #endif /* _OJJY_ARCH_VIRTIO_DEVICES_H */

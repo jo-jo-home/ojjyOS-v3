@@ -23,7 +23,8 @@ fi
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_virtqueue.c kernel/src/arch/aarch64/virtio.c kernel/src/string.c -o "$OUT/test_virtqueue"
 "$HOST_CC" "${FLAGS[@]}" tests/test_acpi_aml.c kernel/src/drivers/acpi_aml.c kernel/src/string.c -o "$OUT/test_acpi_aml"
 "$HOST_CC" "${FLAGS[@]}" tests/test_user.c kernel/src/{user,user_image,string}.c -o "$OUT/test_user"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user; do
+"$HOST_CC" "${FLAGS[@]}" tests/test_framebuffer.c kernel/src/{framebuffer,string}.c -o "$OUT/test_framebuffer"
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer; do
     echo "Running $test"
     "$OUT/$test"
 done

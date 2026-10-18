@@ -106,6 +106,7 @@ typedef struct {
             int32_t     dy;         /* Relative Y delta */
             int32_t     x;          /* Absolute X position */
             int32_t     y;          /* Absolute Y position */
+            bool        absolute;   /* Tablet coordinates, never apply relative gain */
         } motion;
 
         /* Mouse button event data */
@@ -114,6 +115,7 @@ typedef struct {
             int32_t     x;          /* X position at event */
             int32_t     y;          /* Y position at event */
             uint8_t     modifiers;  /* Active modifier flags */
+            bool        absolute;   /* Button position came from an absolute device */
         } button;
 
         /* Mouse scroll event data */
@@ -143,6 +145,7 @@ void input_post_event(const InputEvent *event);
 void input_post_key_event(InputEventType type, uint8_t scancode,
                           KeyCode keycode, char ascii);
 void input_post_mouse_move(int32_t dx, int32_t dy);
+void input_post_mouse_absolute(int32_t x, int32_t y);
 void input_post_mouse_button(InputEventType type, MouseButton button);
 void input_post_mouse_scroll(int32_t dx, int32_t dy);
 

@@ -69,6 +69,9 @@ void fb_copy_rect(int dst_x, int dst_y, int src_x, int src_y, int w, int h);
  * then fb_present() shows it in one pass. */
 bool fb_use_backbuffer(bool enable);
 void fb_present(void);
+/* Cursor-free backbuffer + tiny scanout overlay. Full presents reapply it. */
+void fb_cursor_move(int x, int y);
+void fb_get_present_stats(uint64_t *frames, uint64_t *cursor_updates);
 
 /* Copy a tightly packed width*height image into the current target */
 void fb_blit_full(const uint32_t *src);

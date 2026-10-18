@@ -3,7 +3,26 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## CURRENT: bounded ARM64 protected apps completed (2026-10-17)
+## LATEST: cursor repair + UI cleanup DONE (2026-10-17); now bug/improvement pass
+
+Cursor offset/lag fixed (absolute tablet path, scanout cursor overlay, no
+scene repaint on pointer motion) and UI cleaned (transparent text, UTF-8,
+blue glass, round traffic lights, working Finder titlebar toolbar, menu
+layout, Settings switches). Receipts at the end of `CURSOR_UI_PLAN.md`.
+Jonas then asked: keep writing context into the project while working, and
+after the needed work, hunt for bugs/improvements -> see `IMPROVEMENTS.md`.
+
+### (previous) cursor repair then UI cleanup
+
+Jonas reported absolute-pointer offset and lag, then asked for UI improvements
+afterward. This supersedes scheduler work; **no scheduler edits exist**. Read
+`CURSOR_UI_PLAN.md` for the measured baseline, plan and safe candidate-build path.
+QMP (100,100) produced software cursor (512,582); root cause is absolute tablet
+positions converted into deltas and scaled again by compositor mouse speed.
+Pointer movement also forces whole-scene redraws. User's live Cocoa VM must not
+be stopped or its disk overwritten. Keep updating this context during execution.
+
+## Previous milestone: bounded ARM64 protected apps completed (2026-10-17)
 
 This section supersedes older pause/no-userspace claims below. Jonas resumed
 with **"continue"**, then asked to **update context as work proceeds**; keep

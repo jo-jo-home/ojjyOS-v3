@@ -7,7 +7,7 @@
  *
  *   EV_KEY  + keycode < 128   ->  keyboard events (ASCII translation)
  *   EV_KEY  + BTN_*           ->  mouse button events
- *   EV_ABS  + ABS_X/ABS_Y     ->  absolute pointer -> relative moves
+ *   EV_ABS  + ABS_X/ABS_Y     ->  absolute framebuffer positions
  *   EV_REL  + REL_WHEEL        ->  scroll events
  *
  * Events are harvested by polling: the 1 kHz timer keeps the kernel
@@ -55,9 +55,9 @@ typedef struct {
 typedef struct {
     VirtQueue vq;
     bool has_pointer;
-    uint32_t abs_max_x, abs_max_y;
+    int32_t abs_min_x, abs_max_x, abs_min_y, abs_max_y;
     int32_t last_px, last_py;
-    bool have_pos;
+    bool have_x, have_y, position_pending;
     VirtioInputEvent events[INPUT_EVENTS_PER_BUF];
 } InputDevState;
 
@@ -199,30 +199,39 @@ static void handle_abs_event(InputDevState *dev, int code, int value)
     int32_t px = dev->last_px;
     int32_t py = dev->last_py;
 
-    if (code == ABS_X && dev->abs_max_x > 0) {
-        px = (int32_t)(((int64_t)value * (bounds_w - 1)) / (int64_t)dev->abs_max_x);
-    } else if (code == ABS_Y && dev->abs_max_y > 0) {
-        py = (int32_t)(((int64_t)value * (bounds_h - 1)) / (int64_t)dev->abs_max_y);
+    if (code == ABS_X && dev->abs_max_x > dev->abs_min_x) {
+        int64_t v = MAX(dev->abs_min_x, MIN(value, dev->abs_max_x));
+        px = (int32_t)(((v - dev->abs_min_x) * (bounds_w - 1)) /
+                       ((int64_t)dev->abs_max_x - dev->abs_min_x));
+        dev->have_x = true;
+    } else if (code == ABS_Y && dev->abs_max_y > dev->abs_min_y) {
+        int64_t v = MAX(dev->abs_min_y, MIN(value, dev->abs_max_y));
+        py = (int32_t)(((v - dev->abs_min_y) * (bounds_h - 1)) /
+                       ((int64_t)dev->abs_max_y - dev->abs_min_y));
+        dev->have_y = true;
     } else {
         return;
     }
 
-    if (dev->have_pos) {
-        int dx = px - dev->last_px;
-        int dy = py - dev->last_py;
-        if (dx != 0 || dy != 0) {
-            input_post_mouse_move(dx, dy);
-        }
-    }
     dev->last_px = px;
     dev->last_py = py;
-    dev->have_pos = true;
+    dev->position_pending = true;
+}
+
+static void flush_pointer(InputDevState *dev)
+{
+    if (dev->position_pending && dev->have_x && dev->have_y) {
+        input_post_mouse_absolute(dev->last_px, dev->last_py);
+        dev->position_pending = false;
+    }
 }
 
 static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
 {
     switch (ev->type) {
         case EV_KEY:
+            /* A button can precede SYN_REPORT in the same device batch. */
+            flush_pointer(dev);
             virtio_input_handle_key(ev->code, ev->value);
             break;
         case EV_REL:
@@ -236,6 +245,8 @@ static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
             }
             break;
         case EV_SYN:
+            if (ev->code == 0) flush_pointer(dev); /* SYN_REPORT */
+            break;
         default:
             break;
     }
@@ -244,7 +255,7 @@ static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
 /*
  * Read the absinfo max value for one axis from the device config.
  */
-static uint32_t input_abs_max(uint32_t mmio, uint8_t axis)
+static bool input_abs_range(uint32_t mmio, uint8_t axis, int32_t *min, int32_t *max)
 {
     volatile uint8_t *cfg = (volatile uint8_t *)(uintptr_t)(mmio + VIO_CFG);
     cfg[0] = VIRTIO_INPUT_CFG_ABS_INFO;
@@ -252,8 +263,10 @@ static uint32_t input_abs_max(uint32_t mmio, uint8_t axis)
     virtio_memory_barrier();
 
     /* absinfo: min(u32), max(u32), fuzz, flat, res at CFG+8 */
-    volatile uint32_t *data = (volatile uint32_t *)(uintptr_t)(mmio + VIO_CFG + 8);
-    return data[1];
+    if (cfg[2] < 20) return false;
+    volatile int32_t *data = (volatile int32_t *)(uintptr_t)(mmio + VIO_CFG + 8);
+    *min = data[0]; *max = data[1];
+    return *max > *min;
 }
 
 int virtio_input_attach(uint32_t mmio_base)
@@ -273,12 +286,9 @@ int virtio_input_attach(uint32_t mmio_base)
     }
 
     /* A device reporting ABS ranges is a pointer (tablet) */
-    uint32_t abs_x_max = input_abs_max(mmio_base, ABS_X);
-    uint32_t abs_y_max = input_abs_max(mmio_base, ABS_Y);
-    if (abs_x_max > 0 && abs_y_max > 0) {
+    if (input_abs_range(mmio_base, ABS_X, &dev->abs_min_x, &dev->abs_max_x) &&
+        input_abs_range(mmio_base, ABS_Y, &dev->abs_min_y, &dev->abs_max_y)) {
         dev->has_pointer = true;
-        dev->abs_max_x = abs_x_max;
-        dev->abs_max_y = abs_y_max;
     }
 
     virtio_dev_ready(mmio_base);
@@ -306,6 +316,23 @@ int virtio_input_attach(uint32_t mmio_base)
     input_dev_count++;
     return 0;
 }
+
+#ifdef OJJY_HOST_TEST
+/* Exercise the real decoder without pretending host memory is device MMIO. */
+static InputDevState test_pointer;
+void virtio_input_test_pointer_init(int32_t min_x, int32_t max_x, int32_t min_y, int32_t max_y)
+{
+    memset(&test_pointer, 0, sizeof(test_pointer));
+    test_pointer.has_pointer = true;
+    test_pointer.abs_min_x = min_x; test_pointer.abs_max_x = max_x;
+    test_pointer.abs_min_y = min_y; test_pointer.abs_max_y = max_y;
+}
+void virtio_input_test_pointer_event(uint16_t type, uint16_t code, int32_t value)
+{
+    VirtioInputEvent event = {type, code, value};
+    handle_event(&test_pointer, &event);
+}
+#endif
 
 /*
  * Drain all pending events from every input device.

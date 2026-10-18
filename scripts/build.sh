@@ -38,7 +38,7 @@ fi
 # Directories
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-BUILD_DIR="$ROOT_DIR/build/$ARCH"
+BUILD_DIR="${OJJY_BUILD_DIR:-$ROOT_DIR/build/$ARCH}"
 export OJJY_BUILD_DIR="$BUILD_DIR"
 BOOT_DIR="$ROOT_DIR/boot"
 KERNEL_DIR="$ROOT_DIR/kernel"

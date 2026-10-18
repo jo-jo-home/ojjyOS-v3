@@ -81,11 +81,10 @@ if [ "$ARCH" = "aarch64" ]; then
     ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "1")
     ACCEL_DESC="MTTCG (ARM64 JIT, 1 vCPU)"
 
-    # On macOS use the native cocoa display. show-cursor keeps the host
-    # pointer visible on top of the guest cursor (with the absolute
-    # virtio-tablet the two track the same position).
+    # One visible pointer: the guest's fast scanout overlay. Absolute tablet
+    # coordinates remain 1:1; do not show a second host pointer over it.
     if [ "$(uname -s)" = "Darwin" ]; then
-        DISPLAY_ARGS=(-display "cocoa,show-cursor=on")
+        DISPLAY_ARGS=(-display "cocoa,show-cursor=off")
     else
         DISPLAY_ARGS=()
     fi

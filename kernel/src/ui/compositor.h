@@ -59,6 +59,7 @@ int compositor_destroy_window(int id);
 void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers);
 void compositor_handle_key_release(KeyCode keycode, uint8_t modifiers);
 void compositor_handle_mouse_move(int32_t dx, int32_t dy);
+void compositor_handle_mouse_absolute(int32_t x, int32_t y);
 void compositor_handle_mouse(int x, int y, bool down, bool up);
 void compositor_handle_right_click(int x, int y);
 void compositor_handle_scroll(int32_t dx, int32_t dy);

@@ -615,6 +615,31 @@ static void draw_shadow(int x, int y, int w, int h, int radius)
     }
 }
 
+/* Window chrome layout shared by drawing and hit-testing. Traffic lights
+ * are 12px discs; the title follows them; Finder puts its back/forward and
+ * view buttons in the unified titlebar after the title. */
+#define TL_SIZE   12
+#define TL_TOP    10
+#define TL_X(i)   (12 + (i) * 18)
+#define TITLE_X   70
+static int finder_toolbar_x(const CompositorWindow *win, int base_x)
+{
+    return base_x + TITLE_X + (int)strlen(win->title) * FONT_WIDTH + 18;
+}
+static bool hit_traffic_light(const CompositorWindow *win, int i, int x, int y)
+{
+    return x >= win->x + TL_X(i) - 2 && x <= win->x + TL_X(i) + TL_SIZE + 2 &&
+           y >= win->y + TL_TOP - 2 && y <= win->y + TL_TOP + TL_SIZE + 2;
+}
+
+/* Settings > Appearance rows: label left, pill switch right; whole row clicks. */
+#define APPEARANCE_ROW_Y(i) (40 + (i) * 30)
+static void draw_switch(int x, int y, bool on)
+{
+    draw_rounded_rect_blend(x, y, 38, 20, 10, on ? theme->accent : theme->text_muted, on ? 240 : 110);
+    draw_rounded_rect_blend(on ? x + 20 : x + 2, y + 2, 16, 16, 8, COLOR_WHITE, 250);
+}
+
 static void draw_finder_window(const CompositorWindow *win, FinderState *state, int content_x, int content_y, int content_w, int content_h)
 {
     if (state->needs_refresh) {
@@ -660,9 +685,13 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     }
 
     if (state->view_mode == FINDER_VIEW_LIST) {
+        /* Columns follow the panel width so they never spill into Preview. */
+        int size_x = main_x + main_w - 52;
+        int type_x = size_x - 64;
+        int name_chars = MAX(4, (type_x - main_x - 24) / FONT_WIDTH);
         fb_draw_string(main_x + 16, content_y + 28, "Name", theme->text_muted, theme->dock_tint);
-        fb_draw_string(main_x + 220, content_y + 28, "Type", theme->text_muted, theme->dock_tint);
-        fb_draw_string(main_x + 300, content_y + 28, "Size", theme->text_muted, theme->dock_tint);
+        fb_draw_string(type_x, content_y + 28, "Type", theme->text_muted, theme->dock_tint);
+        fb_draw_string(size_x, content_y + 28, "Size", theme->text_muted, theme->dock_tint);
 
         int visible = (content_h - 48) / 18;
         if (visible < 1) visible = 1;
@@ -679,12 +708,18 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
             } else if (state->drag_active && i == state->drag_hover_index && entry->type == VFS_TYPE_DIR) {
                 draw_rounded_rect_blend(main_x + 6, row_y - 2, main_w - 12, 18, 8, theme->accent_soft, 40);
             }
-            fb_draw_string(main_x + 16, row_y + 2, entry->name, theme->text, theme->dock_tint);
+            char namebuf[64];
+            strncpy(namebuf, entry->name, sizeof(namebuf) - 1);
+            namebuf[sizeof(namebuf) - 1] = '\0';
+            if ((int)strlen(namebuf) > name_chars && name_chars < (int)sizeof(namebuf)) {
+                namebuf[name_chars - 2] = '.'; namebuf[name_chars - 1] = '.'; namebuf[name_chars] = '\0';
+            }
+            fb_draw_string(main_x + 16, row_y + 2, namebuf, theme->text, theme->dock_tint);
 
             const char *type = "File";
             if (entry->type == VFS_TYPE_DIR) type = "Folder";
             if (entry->type == VFS_TYPE_BUNDLE) type = "App";
-            fb_draw_string(main_x + 220, row_y + 2, type, theme->text_muted, theme->dock_tint);
+            fb_draw_string(type_x, row_y + 2, type, theme->text_muted, theme->dock_tint);
 
             char sizebuf[16];
             if (entry->type == VFS_TYPE_FILE) {
@@ -692,7 +727,8 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
             } else {
                 strcpy(sizebuf, "--");
             }
-            fb_draw_string(main_x + 300, row_y + 2, sizebuf, theme->text_muted, theme->dock_tint);
+            if (strlen(sizebuf) > 5) { utoa((entry->size + 1023) / 1024, sizebuf, 10); size_t n = strlen(sizebuf); sizebuf[n] = 'K'; sizebuf[n + 1] = '\0'; }
+            fb_draw_string(size_x, row_y + 2, sizebuf, theme->text_muted, theme->dock_tint);
 
             row_y += 18;
         }
@@ -749,24 +785,38 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
             if (!drew_icon) {
                 fb_fill_rect(ix, iy, icon, icon, theme->accent_soft);
             }
-            fb_draw_string(ix - 2, iy + icon + 8, state->entries[i].name, theme->text, theme->dock_tint);
+            char label[12];
+            strncpy(label, state->entries[i].name, sizeof(label) - 1);
+            label[sizeof(label) - 1] = '\0';
+            if (strlen(label) > 7) { label[5] = '.'; label[6] = '.'; label[7] = '\0'; }
+            int label_x = ix + (icon - (int)strlen(label) * FONT_WIDTH) / 2;
+            fb_draw_string(label_x, iy + icon + 6, label, theme->text, theme->dock_tint);
         }
     }
 
-    int toolbar_y = win->y + 36;
-    fb_fill_rect(content_x + 8, toolbar_y - 26, 18, 18, theme->accent_soft);
-    fb_fill_rect(content_x + 30, toolbar_y - 26, 18, 18, theme->accent_soft);
-    fb_draw_string(content_x + 62, toolbar_y - 22, "View", theme->text_muted, theme->dock_tint);
+    int toolbar_y = content_y - 4;       /* = titlebar y + 36, as before */
+    int tb_x = finder_toolbar_x(win, content_x - 12);
+    bool can_back = state->history_pos > 0;
+    bool can_fwd = state->history_pos + 1 < state->history_count;
+    draw_rounded_rect_blend(tb_x, toolbar_y - 28, 22, 20, 6, theme->dock_tint, can_back ? 170 : 90);
+    draw_rounded_rect_blend(tb_x + 24, toolbar_y - 28, 22, 20, 6, theme->dock_tint, can_fwd ? 170 : 90);
+    fb_draw_char(tb_x + 7, toolbar_y - 26, '<', can_back ? theme->text : theme->text_muted, theme->dock_tint);
+    fb_draw_char(tb_x + 31, toolbar_y - 26, '>', can_fwd ? theme->text : theme->text_muted, theme->dock_tint);
+    draw_rounded_rect_blend(tb_x + 52, toolbar_y - 28, 52, 20, 6, theme->dock_tint, 150);
+    fb_draw_string(tb_x + 58, toolbar_y - 26,
+                   state->view_mode == FINDER_VIEW_LIST ? "List" : "Icons",
+                   theme->text_muted, theme->dock_tint);
 
     int search_x = main_x + main_w - 150;
-    fb_fill_rect(search_x, toolbar_y - 26, 140, 18, theme->dock_tint);
+    if (search_x < tb_x + 112) search_x = tb_x + 112;
+    draw_rounded_rect_blend(search_x, toolbar_y - 28, 140, 20, 8, theme->dock_tint, 200);
     if (state->rename_mode) {
-        fb_draw_string(search_x + 6, toolbar_y - 22, state->rename_buffer,
+        fb_draw_string(search_x + 8, toolbar_y - 26, state->rename_buffer,
                        theme->text, theme->dock_tint);
-        fb_draw_string(search_x - 70, toolbar_y - 22, "Rename:",
+        fb_draw_string(search_x - 64, toolbar_y - 26, "Rename:",
                        theme->text_muted, theme->dock_tint);
     } else {
-        fb_draw_string(search_x + 6, toolbar_y - 22,
+        fb_draw_string(search_x + 8, toolbar_y - 26,
                        state->search[0] ? state->search : "Search",
                        theme->text_muted, theme->dock_tint);
     }
@@ -817,26 +867,15 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
 
     if (state->page == SETTINGS_PAGE_APPEARANCE) {
         fb_draw_string(main_x + 16, content_y + 16, "Appearance", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 16, content_y + 42,
-                       settings->dark_mode ? "Theme: Dark" : "Theme: Light", theme->text_muted, theme->dock_tint);
-        fb_fill_rect(main_x + 210, content_y + 38, 40, 14, settings->dark_mode ? theme->accent : theme->accent_soft);
-
-        fb_draw_string(main_x + 16, content_y + 66,
-                       settings->time_24h ? "Clock: 24-hour" : "Clock: 12-hour",
-                       theme->text_muted, theme->dock_tint);
-        fb_fill_rect(main_x + 210, content_y + 62, 40, 14, settings->time_24h ? theme->accent : theme->accent_soft);
-
-        fb_draw_string(main_x + 16, content_y + 90,
-                       settings->reduced_transparency ? "Reduced Transparency: On" : "Reduced Transparency: Off",
-                       theme->text_muted, theme->dock_tint);
-        fb_fill_rect(main_x + 230, content_y + 86, 40, 14,
-                     settings->reduced_transparency ? theme->accent : theme->accent_soft);
-
-        fb_draw_string(main_x + 16, content_y + 114,
-                       settings->reduced_motion ? "Reduced Motion: On" : "Reduced Motion: Off",
-                       theme->text_muted, theme->dock_tint);
-        fb_fill_rect(main_x + 230, content_y + 110, 40, 14,
-                     settings->reduced_motion ? theme->accent : theme->accent_soft);
+        const char *labels[4] = { "Dark Mode", "24-Hour Clock", "Reduce Transparency", "Reduce Motion" };
+        bool values[4] = { settings->dark_mode, settings->time_24h,
+                           settings->reduced_transparency, settings->reduced_motion };
+        for (int i = 0; i < 4; i++) {
+            int ry = content_y + APPEARANCE_ROW_Y(i);
+            if (i) fb_fill_rect(main_x + 16, ry - 4, main_w - 32, 1, blend(theme->dock_tint, theme->text_muted, 40));
+            fb_draw_string(main_x + 16, ry + 5, labels[i], theme->text, theme->dock_tint);
+            draw_switch(main_x + main_w - 58, ry + 3, values[i]);
+        }
     } else if (state->page == SETTINGS_PAGE_USERS) {
         fb_draw_string(main_x + 16, content_y + 14, "Users & Credentials", theme->text, theme->dock_tint);
 
@@ -1509,14 +1548,19 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
 
     /* Wave banner */
     {
+        /* Right of the title block so it never draws over the text. */
         static const char *about_waves[] = {
-            "    ~  ~  ojjyOS  ~  ~    ",
-            "  ~~~  ~  ~  ~  ~  ~  ~~~  ",
+            "~  ~  ojjyOS  ~  ~",
+            "~~~  ~  ~  ~  ~~~ ",
+            " ~~  ~~~  ~~~  ~~ ",
         };
-        int max_w = (int)strlen(about_waves[1]) * FONT_WIDTH;
-        int wx = content_x + (content_w - max_w) / 2;
-        fb_draw_string(wx, content_y + 10, about_waves[0], COLOR_SKY_BLUE, theme->dock_tint);
-        fb_draw_string(wx, content_y + 26, about_waves[1], theme->accent_soft, theme->dock_tint);
+        int max_w = (int)strlen(about_waves[0]) * FONT_WIDTH;
+        int wx = content_x + content_w - max_w - 20;
+        if (wx >= content_x + 24 + 20 * FONT_WIDTH + 16) {
+            fb_draw_string(wx, content_y + 16, about_waves[0], theme->accent, theme->dock_tint);
+            fb_draw_string(wx, content_y + 34, about_waves[1], theme->accent_soft, theme->dock_tint);
+            fb_draw_string(wx, content_y + 52, about_waves[2], theme->accent_soft, theme->dock_tint);
+        }
     }
 
     int cx = content_x + 24;
@@ -1866,12 +1910,15 @@ static void draw_window(int idx)
     }
 
     draw_rounded_rect_blend(draw_x, draw_y, draw_w, 32, r, theme->accent_soft, highlight);
-    fb_draw_string(draw_x + 52, draw_y + 10, win->title,
+    fb_draw_string(draw_x + TITLE_X, draw_y + 8, win->title,
                    theme->text, blend(theme->accent_soft, theme->glass_aqua, 24));
 
-    fb_fill_rect(draw_x + 10, draw_y + 10, 8, 8, RGB(235, 92, 86));
-    fb_fill_rect(draw_x + 22, draw_y + 10, 8, 8, RGB(245, 197, 72));
-    fb_fill_rect(draw_x + 34, draw_y + 10, 8, 8, RGB(86, 200, 105));
+    static const Color lights[3] = { RGB(235, 92, 86), RGB(245, 197, 72), RGB(86, 200, 105) };
+    for (int i = 0; i < 3; i++) {
+        bool focused = idx == window_count - 1;
+        draw_rounded_rect_blend(draw_x + TL_X(i), draw_y + TL_TOP, TL_SIZE, TL_SIZE, TL_SIZE / 2,
+                                focused ? lights[i] : theme->text_muted, focused ? 255 : 110);
+    }
 
     int content_x = draw_x + 12;
     int content_y = draw_y + 40;
@@ -1962,6 +2009,16 @@ static void draw_wallpaper(void)
     }
 }
 
+/* Menu titles flow after the bold app name (macOS-style), so long names such
+ * as "About ojjyOS" or "Activity Monitor" never overlap "File". Index 0..3 =
+ * File, Edit, View, Window. Shared by drawing, dropdowns and hit-testing. */
+static const int menu_offsets[5] = { 0, 44, 88, 132, 195 };
+static int menu_title_x(int i)
+{
+    int base = 60 + (int)strlen(active_app_name) * FONT_WIDTH + 24;
+    return MAX(140, base) + menu_offsets[i];
+}
+
 static void draw_menu_bar(void)
 {
     draw_rounded_rect_blend(0, 0, (int)comp_width, MENU_BAR_HEIGHT, 0,
@@ -1975,9 +2032,9 @@ static void draw_menu_bar(void)
 
     fb_draw_string(60, 8, active_app_name, theme->text, theme->dock_tint);
 
-    /* Interactive menu items: File (140), Edit (184), View (228), Window (272) */
+    /* Interactive menu items: File, Edit, View, Window (see menu_title_x) */
     const char *menus[4] = { "File", "Edit", "View", "Window" };
-    int mx[4] = { 140, 184, 228, 272 };
+    int mx[4] = { menu_title_x(0), menu_title_x(1), menu_title_x(2), menu_title_x(3) };
     for (int i = 0; i < 4; i++) {
         int mw = (int)strlen(menus[i]) * FONT_WIDTH + 10;
         if (active_menu == i + 2) {
@@ -2039,26 +2096,26 @@ static void draw_menu_dropdown(void)
         items[count++] = "Restart...";
         items[count++] = "Shut Down...";
     } else if (active_menu == 2) {
-        x = 136;
+        x = menu_title_x(0) - 4;
         items[count++] = "New Finder Window";
         items[count++] = "New Text Document";
         items[count++] = "Open Home Folder";
         items[count++] = "Save Document (Cmd+S)";
         items[count++] = "Close Window (Cmd+Q)";
     } else if (active_menu == 3) {
-        x = 180;
+        x = menu_title_x(1) - 4;
         items[count++] = "Copy (Cmd+C)";
         items[count++] = "Cut (Cmd+X)";
         items[count++] = "Paste (Cmd+V)";
         items[count++] = "Clear Selection";
     } else if (active_menu == 4) {
-        x = 224;
+        x = menu_title_x(2) - 4;
         items[count++] = "Toggle Dark / Light";
         items[count++] = "Toggle Transparency";
         items[count++] = "Mission Control (Cmd+M)";
         items[count++] = "Launchpad (Cmd+L)";
     } else if (active_menu == 5) {
-        x = 268;
+        x = menu_title_x(3) - 4;
         items[count++] = "Minimize Window";
         items[count++] = "Zoom / Maximize";
         items[count++] = "Calculator";
@@ -2599,7 +2656,11 @@ static void draw_desktop_icons(void)
                                     theme->accent, 230);
             draw_rounded_rect_blend(x + 4, y + 4, DESKTOP_ICON_SIZE - 8, 18, 6,
                                     theme->accent_soft, 160);
-            fb_draw_string(x + 4, y + 30, "ojjyHD", COLOR_WHITE, theme->accent);
+            /* Drive slot + activity light; the label below names it. */
+            draw_rounded_rect_blend(x + 8, y + DESKTOP_ICON_SIZE - 14, DESKTOP_ICON_SIZE - 26, 4, 2,
+                                    theme->midnight, 120);
+            draw_rounded_rect_blend(x + DESKTOP_ICON_SIZE - 13, y + DESKTOP_ICON_SIZE - 15, 6, 6, 3,
+                                    RGB(120, 230, 160), 230);
         } else if (icon->type == VFS_TYPE_DIR) {
             if (icon_folder_loaded) {
                 draw_icon_scaled(icon_folder, BUNDLE_ICON_SIZE, x, y, DESKTOP_ICON_SIZE);
@@ -2877,33 +2938,6 @@ static void draw_app_switcher(int anim)
             draw_icon_scaled(app->icon.pixels, BUNDLE_ICON_SIZE, icon_x, icon_y, size);
         } else {
             fb_fill_rect(icon_x, icon_y, size, size, theme->accent);
-        }
-    }
-}
-
-static void draw_cursor(int x, int y)
-{
-    static const uint8_t cursor[12] = {
-        0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC,
-        0xFE, 0xF0, 0xD8, 0x8C, 0x0C, 0x06
-    };
-
-    /* Drawn at 2x so the pointer is clearly visible on a 1:1
-     * emulated display (1024x768 ramfb on a Retina screen). */
-    for (int row = 0; row < 12; row++) {
-        for (int col = 0; col < 8; col++) {
-            if (cursor[row] & (0x80 >> col)) {
-                fb_fill_rect(x + col * 2, y + row * 2, 2, 2, COLOR_BLACK);
-            }
-        }
-    }
-    for (int row = 1; row < 11; row++) {
-        for (int col = 1; col < 7; col++) {
-            uint8_t inner = cursor[row] & (0x80 >> col);
-            uint8_t left = cursor[row] & (0x80 >> (col - 1));
-            if (inner && left) {
-                fb_fill_rect(x + col * 2, y + row * 2, 2, 2, COLOR_WHITE);
-            }
         }
     }
 }
@@ -6089,10 +6123,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
         }
 
         if (active_menu > 0) {
-            int mx = (active_menu == 1) ? 6 :
-                     (active_menu == 2) ? 136 :
-                     (active_menu == 3) ? 180 :
-                     (active_menu == 4) ? 224 : 268;
+            int mx = (active_menu == 1) ? 6 : menu_title_x(active_menu - 2) - 4;
             int mw = 210;
             int mcount = (active_menu == 1) ? 7 : (active_menu == 2) ? 5 : 4;
             int my = MENU_BAR_HEIGHT + 4;
@@ -6199,22 +6230,22 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 overlay_set(OVERLAY_NONE);
                 return;
             }
-            if (x >= 135 && x < 179) {
+            if (x >= menu_title_x(0) - 5 && x < menu_title_x(1) - 5) {
                 active_menu = (active_menu == 2) ? 0 : 2;
                 overlay_set(OVERLAY_NONE);
                 return;
             }
-            if (x >= 179 && x < 223) {
+            if (x >= menu_title_x(1) - 5 && x < menu_title_x(2) - 5) {
                 active_menu = (active_menu == 3) ? 0 : 3;
                 overlay_set(OVERLAY_NONE);
                 return;
             }
-            if (x >= 223 && x < 267) {
+            if (x >= menu_title_x(2) - 5 && x < menu_title_x(3) - 5) {
                 active_menu = (active_menu == 4) ? 0 : 4;
                 overlay_set(OVERLAY_NONE);
                 return;
             }
-            if (x >= 267 && x < 330) {
+            if (x >= menu_title_x(3) - 5 && x < menu_title_x(4) - 5) {
                 active_menu = (active_menu == 5) ? 0 : 5;
                 overlay_set(OVERLAY_NONE);
                 return;
@@ -6424,7 +6455,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     break;
                 } else if (y < win->y + 32) {
                     /* Traffic lights: close (red), minimize (yellow), maximize/zoom (green) */
-                    if (x >= win->x + 10 && x <= win->x + 18 && y >= win->y + 10 && y <= win->y + 18) {
+                    if (hit_traffic_light(win, 0, x, y)) {
                         AppType closing = state->type;
                         destroy_window_internal(win->id);
                         if (app_registry_find_by_name(active_app_name) >= 0) {
@@ -6437,10 +6468,10 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             strncpy(active_app_name, "Finder", sizeof(active_app_name) - 1);
                         }
                         return;
-                    } else if (x >= win->x + 22 && x <= win->x + 30 && y >= win->y + 10 && y <= win->y + 18) {
+                    } else if (hit_traffic_light(win, 1, x, y)) {
                         win->minimized = true;
                         return;
-                    } else if (x >= win->x + 34 && x <= win->x + 42 && y >= win->y + 10 && y <= win->y + 18) {
+                    } else if (hit_traffic_light(win, 2, x, y)) {
                         if (win->maximized) {
                             win->x = win->saved_x;
                             win->y = win->saved_y;
@@ -6464,6 +6495,18 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         return;
                     }
 
+                    /* Finder's unified titlebar toolbar (was unreachable). */
+                    if (state->type == APP_FINDER && y >= win->y + 8 && y <= win->y + 28) {
+                        int tb_x = finder_toolbar_x(win, win->x);
+                        if (x >= tb_x && x < tb_x + 22) { finder_back(&state->finder); return; }
+                        if (x >= tb_x + 24 && x < tb_x + 46) { finder_forward(&state->finder); return; }
+                        if (x >= tb_x + 52 && x < tb_x + 104) {
+                            state->finder.view_mode = (state->finder.view_mode == FINDER_VIEW_LIST)
+                                ? FINDER_VIEW_ICON : FINDER_VIEW_LIST;
+                            return;
+                        }
+                    }
+
                     if (!win->maximized) {
                         dragging = true;
                         drag_index = i;
@@ -6474,21 +6517,6 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     int content_x = win->x + 12;
                     int content_y = win->y + 40;
                     int sidebar_w = 150;
-                    int toolbar_y = win->y + 36;
-
-                    if (y >= win->y + 10 && y <= win->y + 32 &&
-                        x >= content_x + 60 && x <= content_x + 110) {
-                        state->finder.view_mode = (state->finder.view_mode == FINDER_VIEW_LIST)
-                            ? FINDER_VIEW_ICON : FINDER_VIEW_LIST;
-                    }
-
-                    if (y >= toolbar_y - 26 && y <= toolbar_y - 8) {
-                        if (x >= content_x + 8 && x <= content_x + 26) {
-                            finder_back(&state->finder);
-                        } else if (x >= content_x + 30 && x <= content_x + 48) {
-                            finder_forward(&state->finder);
-                        }
-                    }
 
                     if (x >= content_x && x <= content_x + sidebar_w) {
                         int rel_y = y - content_y;
@@ -6609,26 +6637,22 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         }
                     } else {
                         int main_x = content_x + sidebar_w + 10;
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
-                            x >= main_x + 210 && x <= main_x + 250 && y >= content_y + 38 && y <= content_y + 52) {
+                        int main_w = (win->w - 24) - sidebar_w - 10;
+                        int row = -1;
+                        for (int r = 0; r < 4; r++) {
+                            int ry = content_y + APPEARANCE_ROW_Y(r);
+                            if (y >= ry && y < ry + 26 && x >= main_x + 8 && x <= main_x + main_w - 8) row = r;
+                        }
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 0) {
                             settings_toggle_dark_mode();
                             compositor_set_dark_mode(settings_get()->dark_mode);
                             compositor_set_wallpaper(settings_get()->dark_mode
                                 ? "/System/Wallpapers/Tahoe Dark.raw"
                                 : "/System/Wallpapers/Tahoe Light.raw");
                         }
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
-                            x >= main_x + 210 && x <= main_x + 250 && y >= content_y + 62 && y <= content_y + 76) {
-                            settings_toggle_time_format();
-                        }
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
-                            x >= main_x + 230 && x <= main_x + 270 && y >= content_y + 86 && y <= content_y + 100) {
-                            settings_toggle_reduced_transparency();
-                        }
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE &&
-                            x >= main_x + 230 && x <= main_x + 270 && y >= content_y + 110 && y <= content_y + 124) {
-                            settings_toggle_reduced_motion();
-                        }
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 1) settings_toggle_time_format();
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 2) settings_toggle_reduced_transparency();
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 3) settings_toggle_reduced_motion();
                         if (state->settings.page == SETTINGS_PAGE_USERS) {
                             if (x >= main_x + 92 && x <= main_x + 242 &&
                                 y >= content_y + 118 && y <= content_y + 138) {
@@ -6959,21 +6983,21 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
     }
 }
 
-void compositor_handle_mouse_move(int32_t dx, int32_t dy)
+void compositor_handle_mouse_absolute(int32_t x, int32_t y)
 {
-     mark_dirty();
-
-   int speed = settings_get()->mouse_speed;
-    if (speed < 1) speed = 1;
-    if (speed > 4) speed = 4;
-
-    cursor_x += dx * speed;
-    cursor_y += dy * speed;
-
-    if (cursor_x < 0) cursor_x = 0;
-    if (cursor_y < 0) cursor_y = 0;
-    if (cursor_x >= (int)comp_width) cursor_x = (int)comp_width - 1;
-    if (cursor_y >= (int)comp_height) cursor_y = (int)comp_height - 1;
+    int old_y = cursor_y;
+    int nx = MAX(0, MIN(x, (int)comp_width - 1));
+    int ny = MAX(0, MIN(y, (int)comp_height - 1));
+    if (nx == cursor_x && ny == cursor_y) return;
+    cursor_x = nx; cursor_y = ny;
+    /* A cursor-only move never invalidates glass/windows. Hover visuals,
+     * dragging and resizing still need a scene frame. */
+    if (!login_screen_visible() && (dragging || resizing || active_menu || ctx_menu_open ||
+        old_y >= (int)comp_height - DOCK_HEIGHT - 20 - DOCK_HOVER_RADIUS ||
+        cursor_y >= (int)comp_height - DOCK_HEIGHT - 20 - DOCK_HOVER_RADIUS)) mark_dirty();
+    for (int i = 0; i < window_count; i++) {
+        if (app_states[i].type == APP_FINDER && app_states[i].finder.drag_active) mark_dirty();
+    }
 
     if (dragging && drag_index >= 0 && drag_index < window_count) {
         windows[drag_index].x = cursor_x - drag_dx;
@@ -6996,6 +7020,15 @@ void compositor_handle_mouse_move(int32_t dx, int32_t dy)
             wm_hooks.on_resize(win->id, nw, nh);
         }
     }
+}
+
+void compositor_handle_mouse_move(int32_t dx, int32_t dy)
+{
+    int speed = MAX(1, MIN(settings_get()->mouse_speed, 4));
+    int64_t x = (int64_t)cursor_x + (int64_t)dx * speed;
+    int64_t y = (int64_t)cursor_y + (int64_t)dy * speed;
+    compositor_handle_mouse_absolute((int32_t)MAX(0, MIN(x, (int)comp_width - 1)),
+                                     (int32_t)MAX(0, MIN(y, (int)comp_height - 1)));
 }
 
 /*
@@ -7179,6 +7212,8 @@ void compositor_handle_right_click(int x, int y)
 void compositor_tick(uint64_t now_ms)
 {
     static bool login_frame_visible;
+    /* Pointer overlay is independent of the 30fps scene/animation budget. */
+    fb_cursor_move(cursor_x, cursor_y);
     uint64_t delta = now_ms - last_frame_ms;
     if (delta < 33) {
         return;
@@ -7211,7 +7246,6 @@ void compositor_tick(uint64_t now_ms)
 
     if (login_screen_visible()) {
         draw_login_screen();
-        draw_cursor(cursor_x, cursor_y);
         fb_present();
         login_frame_visible = true;
         return;
@@ -7255,7 +7289,6 @@ void compositor_tick(uint64_t now_ms)
     draw_menu_dropdown();
     draw_context_menu();
 
-    draw_cursor(cursor_x, cursor_y);
     fb_present();
     if (login_frame_visible) {
         serial_printf("[UI] Desktop presented\n");

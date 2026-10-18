@@ -1094,9 +1094,11 @@ void kernel_main(BootInfo *boot_info)
                         compositor_handle_key_release(event.key.keycode, event.key.modifiers);
                         break;
                     case INPUT_EVENT_MOUSE_MOVE:
-                        compositor_handle_mouse_move(event.motion.dx, event.motion.dy);
+                        if (event.motion.absolute) compositor_handle_mouse_absolute(event.motion.x, event.motion.y);
+                        else compositor_handle_mouse_move(event.motion.dx, event.motion.dy);
                         break;
                     case INPUT_EVENT_MOUSE_BUTTON_DOWN: {
+                        if (event.button.absolute) compositor_handle_mouse_absolute(event.button.x, event.button.y);
                         /* Hit-test at the position the user actually sees
                          * (the compositor applies the mouse speed setting) */
                         int32_t cx = 0, cy = 0;
@@ -1109,6 +1111,7 @@ void kernel_main(BootInfo *boot_info)
                         break;
                     }
                     case INPUT_EVENT_MOUSE_BUTTON_UP: {
+                        if (event.button.absolute) compositor_handle_mouse_absolute(event.button.x, event.button.y);
                         int32_t cx = 0, cy = 0;
                         compositor_get_cursor(&cx, &cy);
                         if (event.button.button != MOUSE_BUTTON_RIGHT) {

@@ -2,6 +2,21 @@
 
 Captured: **2026-10-17**. Read this together with **AGENTS.md**.
 
+## DONE: cursor and UI request (see CURSOR_UI_PLAN.md receipts)
+
+After `ef92f96`, Jonas first requested an OS status update, then reported the
+guest pointer is offset from the host pointer and laggy, and requested UI
+cleanup after the pointer fix. Scheduler design was only being considered;
+no implementation edits were made. Latest task is cursor first, visuals second.
+Read `CURSOR_UI_PLAN.md`. Reproduction on the unmodified image: injected guest
+target (100,100) renders cursor at (512,582), target (200,150) at (712,682),
+returning across an edge drifts to (0,0). Evidence `build/cursor-before/`.
+Virtio tablet absolute values are converted into deltas, then compositor applies
+mouse-speed gain. Full-scene repaint on every movement is also on the lag path.
+The user's Cocoa QEMU is running against `build/aarch64/ojjyos3.img`; don't stop
+it or replace its locked disk. Use isolated build/test candidates. Scope is
+pointer pipeline, framebuffer overlay, UI cleanup, tests and associated docs.
+
 ## FINAL STATE: protected execution milestone complete (2026-10-17)
 
 The user resumed; do not obey the old paused snapshot as a current stop request.

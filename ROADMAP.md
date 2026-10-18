@@ -22,7 +22,8 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 - [ ] Intel: PCI enumeration, e1000/virtio-pci NIC, absolute USB tablet.
 
 ## Networking & web
-- [~] Network stack + working browser (see BROWSER_APPS_PLAN.md).
+- [x] Network stack + working browser over http:// (BROWSER_APPS_PLAN.md).
+- [~] HTTPS (TLS 1.3) in the browser.
 - [ ] HTTPS certificate verification (X.509, RSA/ECDSA, root store).
 - [ ] PNG/GIF image decoding in the browser (inflate + palette).
 - [ ] Downloads to ~/Downloads with Finder integration.

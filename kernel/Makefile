@@ -58,6 +58,8 @@ COMMON_C_SOURCES = src/main.c \
                    src/net/tcp.c \
                    src/web/url.c \
                    src/web/http.c \
+                   src/web/html.c \
+                   src/ui/browser.c \
                    src/ui/netcmd.c
 
 ifeq ($(ARCH),aarch64)

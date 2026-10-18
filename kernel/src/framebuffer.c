@@ -24,6 +24,21 @@ static uint32_t fb_screen_pitch = 0;
 static uint32_t fb_back[FB_BACK_MAX_PIXELS];
 static bool fb_back_active = false;
 static bool fb_back_valid, cursor_visible;
+/* Clip rectangle for drawing primitives (defaults to the whole screen). */
+static int clip_x1, clip_y1, clip_x2 = 1 << 30, clip_y2 = 1 << 30;
+
+void fb_set_clip(int x, int y, int w, int h)
+{
+    clip_x1 = MAX(0, x); clip_y1 = MAX(0, y);
+    clip_x2 = MIN((int)fb_width, x + w); clip_y2 = MIN((int)fb_height, y + h);
+}
+
+void fb_reset_clip(void)
+{
+    clip_x1 = clip_y1 = 0;
+    clip_x2 = (int)fb_width; clip_y2 = (int)fb_height;
+}
+
 static int cursor_x, cursor_y;
 static uint64_t full_presents, cursor_updates;
 
@@ -82,6 +97,7 @@ void fb_init(BootInfo *info)
     fb_back_active = false;
     fb_back_valid = cursor_visible = false;
     full_presents = cursor_updates = 0;
+    fb_reset_clip();
 }
 
 /*
@@ -181,7 +197,8 @@ void fb_clear(Color color)
  */
 void fb_put_pixel(int x, int y, Color color)
 {
-    if (x < 0 || x >= (int)fb_width || y < 0 || y >= (int)fb_height) {
+    if (x < clip_x1 || x >= clip_x2 || y < clip_y1 || y >= clip_y2 ||
+        x >= (int)fb_width || y >= (int)fb_height) {
         return;
     }
     fb_base[y * fb_pitch + x] = color;
@@ -204,10 +221,10 @@ Color fb_get_pixel(int x, int y)
 void fb_fill_rect(int x, int y, int w, int h, Color color)
 {
     /* Clip to screen bounds */
-    int x1 = MAX(0, x);
-    int y1 = MAX(0, y);
-    int x2 = MIN((int)fb_width, x + w);
-    int y2 = MIN((int)fb_height, y + h);
+    int x1 = MAX(clip_x1, x);
+    int y1 = MAX(clip_y1, y);
+    int x2 = MIN(MIN((int)fb_width, clip_x2), x + w);
+    int y2 = MIN(MIN((int)fb_height, clip_y2), y + h);
 
     for (int py = y1; py < y2; py++) {
         uint32_t *row = fb_base + py * fb_pitch;
@@ -250,7 +267,7 @@ void fb_draw_char(int x, int y, char c, Color fg, Color bg)
                  * the real surface (glass, gradients) instead of boxing
                  * every glyph in a guessed background colour. */
                 int px = x + col, py = y + row;
-                if (cov == 0 || px < 0 || py < 0 ||
+                if (cov == 0 || px < clip_x1 || py < clip_y1 || px >= clip_x2 || py >= clip_y2 ||
                     px >= (int)fb_width || py >= (int)fb_height) continue;
                 Color *dst = &fb_back[py * fb_width + px];
                 *dst = cov >= 255 ? fg : fb_blend(*dst, fg, cov);
@@ -307,6 +324,34 @@ void fb_draw_string(int x, int y, const char *s, Color fg, Color bg)
         if (cur_x + FONT_WIDTH > (int)fb_width) {
             cur_x = x;
             y += FONT_HEIGHT;
+        }
+    }
+}
+
+/*
+ * Scaled (1x/2x) text with optional faux-bold, blended into the backbuffer
+ * (or drawn over `bg` on the direct console path). Draws exactly n chars.
+ */
+void fb_draw_text_scaled(int x, int y, const char *s, int n, Color fg, int scale, bool bold)
+{
+    if (scale < 1) scale = 1;
+    for (int i = 0; i < n; i++, x += FONT_WIDTH * scale) {
+        if (x >= clip_x2 || x + FONT_WIDTH * scale + 1 < clip_x1) continue;
+        const uint8_t *glyph = font_get_glyph_aa(s[i]);
+        for (int row = 0; row < FONT_HEIGHT; row++) {
+            for (int col = 0; col < FONT_WIDTH; col++) {
+                uint8_t cov = glyph[row * FONT_WIDTH + col];
+                if (!cov) continue;
+                for (int sy = 0; sy < scale; sy++) {
+                    for (int sx = 0; sx < scale + (bold ? 1 : 0); sx++) {
+                        int px = x + col * scale + sx, py = y + row * scale + sy;
+                        if (px < clip_x1 || py < clip_y1 || px >= clip_x2 || py >= clip_y2 ||
+                            px >= (int)fb_width || py >= (int)fb_height) continue;
+                        Color *dst = &fb_base[py * fb_pitch + px];
+                        *dst = cov >= 255 ? fg : fb_blend(*dst, fg, cov);
+                    }
+                }
+            }
         }
     }
 }

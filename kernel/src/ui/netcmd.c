@@ -10,6 +10,7 @@
 #include "web/http.h"
 #include "string.h"
 #include "serial.h"
+#include "memory.h"
 
 #define LINE 78
 
@@ -28,7 +29,8 @@ static struct {
 } job;
 
 static HttpFetch curl_fetch;
-static uint8_t curl_buf[256 * 1024];
+#define CURL_BUF (256 * 1024)
+static uint8_t *curl_buf;           /* page-allocated on first curl */
 
 static void cat(char *dst, const char *src)
 {
@@ -134,7 +136,9 @@ bool netcmd_exec(const char *cmd, netcmd_print_fn print)
 
     if (is_curl) {
         if (strncmp(arg, "-I ", 3) == 0) { job.headers_only = true; arg = skip(arg + 3); }
-        http_start(&curl_fetch, arg, curl_buf, sizeof(curl_buf));
+        if (!curl_buf) curl_buf = (uint8_t *)pmm_alloc_bytes(CURL_BUF);
+        if (!curl_buf) { print("curl: not enough memory"); return true; }
+        http_start(&curl_fetch, arg, curl_buf, CURL_BUF);
         if (curl_fetch.phase == HTTP_ERROR) {
             char l[LINE + 1]; l[0] = 0; cat(l, "curl: "); cat(l, curl_fetch.error); print(l);
             return true;

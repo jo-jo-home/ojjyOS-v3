@@ -184,6 +184,16 @@ void pmm_init(BootInfo *info)
         }
     }
 
+    /* Never hand out the scanout: some firmware reports the framebuffer
+     * inside boot-services memory, which is otherwise reclaimed above. */
+    if (info->fb_addr && info->fb_pitch && info->fb_height) {
+        uint64_t first = info->fb_addr / PAGE_SIZE;
+        uint64_t last = (info->fb_addr + (uint64_t)info->fb_pitch * info->fb_height + PAGE_SIZE - 1) / PAGE_SIZE;
+        for (uint64_t page = first; page < last && page < MAX_PAGES; page++) {
+            if (!pmm_is_page_used(page)) { pmm_set_page_used(page); free_memory -= PAGE_SIZE; }
+        }
+    }
+
     bitmap_pages = sizeof(page_bitmap) * 8;
 
     serial_printf("[PMM] Total usable memory: %d MB\n",
@@ -225,6 +235,34 @@ uint64_t pmm_alloc_page(void)
     /* Out of memory */
     serial_printf("[PMM] ERROR: Out of physical memory!\n");
     return 0;
+}
+
+/*
+ * Allocate `pages` physically contiguous, zeroed pages (first fit, below
+ * 4 GiB, which both architectures identity-map). Used for large buffers
+ * so they need not live in the kernel image's BSS. Returns 0 on failure.
+ */
+uint64_t pmm_alloc_contiguous(uint64_t pages)
+{
+    if (!pages) return 0;
+    uint64_t run = 0;
+    for (uint64_t page = 256; page < MAX_PAGES; page++) {
+        if (pmm_is_page_used(page)) { run = 0; continue; }
+        if (++run == pages) {
+            uint64_t start = page + 1 - pages;
+            for (uint64_t p = start; p <= page; p++) pmm_set_page_used(p);
+            free_memory -= pages * PAGE_SIZE;
+            memset((void *)(uintptr_t)(start * PAGE_SIZE), 0, pages * PAGE_SIZE);
+            return start * PAGE_SIZE;
+        }
+    }
+    serial_printf("[PMM] ERROR: no %d contiguous pages\n", (int)pages);
+    return 0;
+}
+
+void *pmm_alloc_bytes(size_t bytes)
+{
+    return (void *)(uintptr_t)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
 }
 
 /*

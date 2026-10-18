@@ -19,6 +19,8 @@
 #include "../proc.h"
 #include "../user.h"
 #include "netcmd.h"
+#include "browser.h"
+#include "draw.h"
 
 #define COMPOSITOR_MAX_WINDOWS  8
 #define WALLPAPER_MAX_W         1024
@@ -61,8 +63,10 @@ static uint8_t wallpaper_data[WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4];
 #define WP_CACHE_MAX_PIXELS     (1920 * 1200)
 #define WP_CACHE_MAX_DIM        2048
 #define WP_BLUR_RADIUS          10
-static Color wp_cache[WP_CACHE_MAX_PIXELS];
-static Color wp_blur[WP_CACHE_MAX_PIXELS];
+/* Allocated at the real screen size from the page allocator (not BSS: the
+ * kernel image must fit the RAM the firmware leaves free at its load address). */
+static Color *wp_cache;
+static Color *wp_blur;
 static Color wp_line_tmp[WP_CACHE_MAX_DIM];
 static bool wp_cache_valid = false;
 static void wallpaper_rebuild_cache(void);
@@ -243,28 +247,9 @@ typedef struct {
     bool loaded;
 } CalendarState;
 
-/*
- * Web app: an offline page browser.
- * Pages live in /System/Web/<id>.page with a tiny markup:
- *   "# Heading"      - heading line
- *   ">id Label"      - hyperlink to page <id>
- *   anything else    - plain text
- */
-#define WEB_MAX_LINES   48
-#define WEB_LINE_MAX    88
-#define WEB_HISTORY_MAX  8
-
+/* Web app: the browser keeps one global instance in ui/browser.c. */
 typedef struct {
-    char page_id[64];                    /* Current page id */
-    char address[64];                    /* Address bar contents */
-    char lines[WEB_MAX_LINES][WEB_LINE_MAX];
-    char links[WEB_MAX_LINES][64];       /* Link target per line ("" = none) */
-    bool heading[WEB_MAX_LINES];         /* Line is a heading */
-    int line_count;
-    int scroll;
-    char history[WEB_HISTORY_MAX][64];
-    int history_count;
-    int history_pos;
+    int unused;
 } WebState;
 
 typedef struct {
@@ -379,8 +364,6 @@ static int destroy_window_internal(int id);
 static void launch_app_index(int index, uint64_t now_ms);
 static void finder_set_path(FinderState *state, const char *path);
 static bool desktop_handle_click(int x, int y, uint64_t now_ms);
-static void web_load_page(WebState *web, const char *page_id);
-static void web_go_history(WebState *web, int delta);
 static void mark_dirty(void);
 
 static inline Color blend(Color bg, Color fg, uint8_t alpha)
@@ -541,6 +524,9 @@ static void wallpaper_rebuild_cache(void)
         w > WP_CACHE_MAX_DIM || h > WP_CACHE_MAX_DIM) {
         return;   /* Fall back to the slow uncached path */
     }
+    if (!wp_cache) wp_cache = (Color *)pmm_alloc_bytes((size_t)w * h * sizeof(Color));
+    if (!wp_blur) wp_blur = (Color *)pmm_alloc_bytes((size_t)w * h * sizeof(Color));
+    if (!wp_cache || !wp_blur) return;
 
     for (uint32_t y = 0; y < h; y++) {
         for (uint32_t x = 0; x < w; x++) {
@@ -1330,217 +1316,14 @@ static void draw_preview_window(PreviewState *preview, int content_x, int conten
                    preview->current, theme->text_muted, theme->dock_tint);
 }
 
-/* ================================================================== */
-/* Web app (offline browser)                                           */
-/* ================================================================== */
-
-/*
- * Load a page from /System/Web/<id>.page into the render model.
- * Missing pages render as a "not found" page with a link home.
- */
-static bool web_history_replay;
-
-static void web_load_page(WebState *web, const char *page_id)
+/* Shared helpers for app modules in their own files (ui/draw.h). */
+const ThemeTokens *ui_theme(void) { return theme; }
+void ui_rounded_rect(int x, int y, int w, int h, int r, Color color, uint8_t alpha)
 {
-    if (!web || !page_id || !page_id[0]) return;
-
-    /* Validate the id: [A-Za-z0-9-_] only (no path traversal) */
-    for (const char *p = page_id; *p; p++) {
-        bool ok = (*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
-                  (*p >= '0' && *p <= '9') || *p == '-' || *p == '_';
-        if (!ok) return;
-    }
-
-    web->line_count = 0;
-    web->scroll = 0;
-    for (int i = 0; i < WEB_MAX_LINES; i++) {
-        web->lines[i][0] = '\0';
-        web->links[i][0] = '\0';
-        web->heading[i] = false;
-    }
-
-    char path[128];
-    if (vfs_join_path(path, sizeof(path), "/System/Web", page_id) != 0) return;
-    str_append(path, sizeof(path), ".page");
-
-    VfsFile *file = vfs_open(path, VFS_O_READ);
-    if (!file) {
-        /* Not-found page */
-        strncpy(web->page_id, page_id, sizeof(web->page_id) - 1);
-        web->page_id[sizeof(web->page_id) - 1] = '\0';
-        int n = web->line_count++;
-        strncpy(web->lines[n], "Page not found", WEB_LINE_MAX - 1);
-        web->heading[n] = true;
-        n = web->line_count++;
-        strncpy(web->lines[n], "The page you requested is not on this disk.", WEB_LINE_MAX - 1);
-        n = web->line_count++;
-        strncpy(web->lines[n], "", 1);
-        n = web->line_count++;
-        strncpy(web->lines[n], "Go back to the start page", WEB_LINE_MAX - 1);
-        strncpy(web->links[n], "home", sizeof(web->links[n]) - 1);
-        return;
-    }
-
-    char line[128];
-    ssize_t bytes;
-    char pending[WEB_LINE_MAX];
-    int pending_len = 0;
-
-    while ((bytes = vfs_read(file, line, sizeof(line))) > 0) {
-        for (ssize_t i = 0; i < bytes; i++) {
-            char c = line[i];
-            if (c == '\n' || pending_len >= (int)sizeof(pending) - 1) {
-                pending[pending_len] = '\0';
-                pending_len = 0;
-                if (web->line_count >= WEB_MAX_LINES) goto done;
-
-                if (pending[0] == '\0') {
-                    int n = web->line_count++;
-                    web->lines[n][0] = '\0';  /* Blank spacer line */
-                } else if (pending[0] == '#' && pending[1] == ' ') {
-                    int n = web->line_count++;
-                    strncpy(web->lines[n], pending + 2, WEB_LINE_MAX - 1);
-                    web->lines[n][WEB_LINE_MAX - 1] = '\0';
-                    web->heading[n] = true;
-                } else if (pending[0] == '>') {
-                    /* Link line: ">target Label" */
-                    const char *target = pending + 1;
-                    const char *space = str_find(target, " ");
-                    int n = web->line_count++;
-                    if (space && space > target) {
-                        size_t tlen = (size_t)(space - target);
-                        if (tlen >= sizeof(web->links[n])) tlen = sizeof(web->links[n]) - 1;
-                        memcpy(web->links[n], target, tlen);
-                        web->links[n][tlen] = '\0';
-                        while (*space == ' ') space++;
-                        strncpy(web->lines[n], space, WEB_LINE_MAX - 1);
-                        web->lines[n][WEB_LINE_MAX - 1] = '\0';
-                    } else {
-                        strncpy(web->links[n], target, sizeof(web->links[n]) - 1);
-                        strncpy(web->lines[n], target, WEB_LINE_MAX - 1);
-                    }
-                } else {
-                    int n = web->line_count++;
-                    strncpy(web->lines[n], pending, WEB_LINE_MAX - 1);
-                    web->lines[n][WEB_LINE_MAX - 1] = '\0';
-                }
-            } else if (c != '\r') {
-                pending[pending_len++] = c;
-            }
-        }
-    }
-done:
-    /* Final line without trailing newline */
-    if (pending_len > 0 && web->line_count < WEB_MAX_LINES) {
-        pending[pending_len] = '\0';
-        int n = web->line_count++;
-        strncpy(web->lines[n], pending, WEB_LINE_MAX - 1);
-        web->lines[n][WEB_LINE_MAX - 1] = '\0';
-    }
-    vfs_close(file);
-
-    strncpy(web->page_id, page_id, sizeof(web->page_id) - 1);
-    web->page_id[sizeof(web->page_id) - 1] = '\0';
-
-    /* Push history (forward history is discarded, like a browser). Back/
-     * Forward replays must not push: when full, a push shifts the array. */
-    if (web_history_replay) return;
-    if (web->history_count > 0) web->history_count = web->history_pos + 1;
-    if (web->history_count < WEB_HISTORY_MAX) {
-        strncpy(web->history[web->history_count++], page_id, sizeof(web->history[0]) - 1);
-        web->history_pos = web->history_count - 1;
-    } else {
-        for (int i = 1; i < WEB_HISTORY_MAX; i++) {
-            memcpy(web->history[i - 1], web->history[i], sizeof(web->history[0]));
-        }
-        strncpy(web->history[WEB_HISTORY_MAX - 1], page_id, sizeof(web->history[0]) - 1);
-        web->history_pos = WEB_HISTORY_MAX - 1;
-    }
+    draw_rounded_rect_blend(x, y, w, h, r, color, alpha);
 }
-
-/* Move back/forward in history */
-static void web_go_history(WebState *web, int delta)
-{
-    if (!web) return;
-    int pos = web->history_pos + delta;
-    if (pos < 0 || pos >= web->history_count) return;
-    web->history_pos = pos;
-
-    /* Re-render without re-pushing history */
-    char page[64];
-    strncpy(page, web->history[pos], sizeof(page) - 1);
-    page[sizeof(page) - 1] = '\0';
-
-    web_history_replay = true;
-    web_load_page(web, page);
-    web_history_replay = false;
-}
-
-static void draw_web_window(WebState *web, int content_x, int content_y, int content_w, int content_h)
-{
-    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 110);
-
-    /* Toolbar: back / forward / address bar */
-    int bar_y = content_y + 8;
-    int bar_h = 22;
-    draw_rounded_rect_blend(content_x + 8, bar_y, 22, bar_h, 6, theme->accent_soft, 120);
-    fb_draw_string(content_x + 14, bar_y + 4, "<", theme->text, theme->dock_tint);
-    draw_rounded_rect_blend(content_x + 34, bar_y, 22, bar_h, 6, theme->accent_soft, 120);
-    fb_draw_string(content_x + 40, bar_y + 4, ">", theme->text, theme->dock_tint);
-
-    int addr_x = content_x + 62;
-    int addr_w = content_w - 70;
-    draw_rounded_rect_blend(addr_x, bar_y, addr_w, bar_h, 6, theme->glass_aqua, 160);
-    char addr[96];
-    addr[0] = '\0';
-    str_append(addr, sizeof(addr), "ojjy://");
-    str_append(addr, sizeof(addr), web->address[0] ? web->address : web->page_id);
-    fb_draw_string(addr_x + 8, bar_y + 4, addr, theme->text, theme->dock_tint);
-
-    /* Page content */
-    int page_y = content_y + 40;
-    int page_h = content_h - 58;
-    draw_rounded_rect_blend(content_x + 8, page_y, content_w - 16, page_h, 10,
-                            theme->glass_aqua, 120);
-
-    int visible = (page_h - 12) / 18;
-    if (visible < 1) visible = 1;
-    int max_scroll = web->line_count - visible;
-    if (max_scroll < 0) max_scroll = 0;
-    if (web->scroll > max_scroll) web->scroll = max_scroll;
-    if (web->scroll < 0) web->scroll = 0;
-
-    int line_y = page_y + 8;
-    for (int i = web->scroll; i < web->line_count && i < web->scroll + visible; i++) {
-        if (!web->lines[i][0]) {
-            line_y += 18;
-            continue;
-        }
-        if (web->links[i][0]) {
-            /* Hyperlinks: accent blue with an underline */
-            fb_draw_string(content_x + 20, line_y, web->lines[i],
-                           theme->accent, theme->glass_aqua);
-            int underline_w = (int)strlen(web->lines[i]) * FONT_WIDTH;
-            fb_fill_rect(content_x + 20, line_y + FONT_HEIGHT - 1, underline_w, 1, theme->accent);
-        } else if (web->heading[i]) {
-            fb_draw_string(content_x + 16, line_y, web->lines[i],
-                           theme->text, theme->glass_aqua);
-            int heading_w = (int)strlen(web->lines[i]) * FONT_WIDTH;
-            fb_fill_rect(content_x + 16, line_y + FONT_HEIGHT + 1, heading_w, 2, theme->accent_soft);
-        } else {
-            fb_draw_string(content_x + 16, line_y, web->lines[i],
-                           theme->text, theme->glass_aqua);
-        }
-        line_y += 18;
-    }
-
-    /* Status bar */
-    char status[96];
-    status[0] = '\0';
-    str_append(status, sizeof(status), "Offline page  -  ojjyOS Web");
-    fb_draw_string(content_x + 12, content_y + content_h - 16, status,
-                   theme->text_muted, theme->dock_tint);
-}
+Color ui_blend(Color bg, Color fg, uint8_t alpha) { return blend(bg, fg, alpha); }
+void ui_mark_dirty(void) { mark_dirty(); }
 
 /* ================================================================== */
 /* About window                                                        */
@@ -1914,8 +1697,14 @@ static void draw_window(int idx)
     }
 
     draw_rounded_rect_blend(draw_x, draw_y, draw_w, 32, r, theme->accent_soft, highlight);
-    fb_draw_string(draw_x + TITLE_X, draw_y + 8, win->title,
-                   theme->text, blend(theme->accent_soft, theme->glass_aqua, 24));
+    {
+        const char *title = state->type == APP_WEB ? browser_title() : win->title;
+        int max = (draw_w - TITLE_X - 16) / FONT_WIDTH;
+        if (state->type == APP_FINDER) max = (int)strlen(title);
+        int n = (int)strlen(title);
+        if (n > max) n = max > 0 ? max : 0;
+        fb_draw_text_scaled(draw_x + TITLE_X, draw_y + 8, title, n, theme->text, 1, false);
+    }
 
     static const Color lights[3] = { RGB(235, 92, 86), RGB(245, 197, 72), RGB(86, 200, 105) };
     for (int i = 0; i < 3; i++) {
@@ -1955,7 +1744,7 @@ static void draw_window(int idx)
             draw_about_window(content_x, content_y, content_w, content_h);
             break;
         case APP_WEB:
-            draw_web_window(&state->web, content_x, content_y, content_w, content_h);
+            browser_draw(content_x, content_y, content_w, content_h);
             break;
         case APP_CALCULATOR:
             draw_calculator_window(&state->calc, content_x, content_y, content_w, content_h);
@@ -5039,11 +4828,7 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         state->calendar.edit_buffer[0] = '\0';
         calendar_load(&state->calendar);
     } else if (type == APP_WEB) {
-        state->web.history_count = 0;
-        state->web.history_pos = 0;
-        state->web.address[0] = '\0';
-        strcpy(state->web.address, "home");
-        web_load_page(&state->web, "home");
+        browser_open();
     } else if (type == APP_CALCULATOR) {
         calc_reset(&state->calc);
     }
@@ -5083,9 +4868,19 @@ static int app_open_window(AppType type, const char *title)
     if (type == APP_PREVIEW) { w = 480; h = 320; }
     if (type == APP_CALENDAR) { w = 720; h = 440; }
     if (type == APP_ABOUT) { w = 460; h = 300; }
-    if (type == APP_WEB) { w = 640; h = 420; }
+    if (type == APP_WEB) {
+        w = MIN(880, (int)comp_width - 40);
+        h = MIN(580, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 40);
+    }
     if (type == APP_CALCULATOR) { w = 300; h = 360; }
     if (type == APP_MONITOR) { w = 520; h = 340; }
+
+    /* Keep new windows fully on screen (cascade offsets + large apps such as
+     * Web could otherwise run past the right edge or under the Dock). */
+    w = MIN(w, (int)comp_width - 16);
+    h = MIN(h, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 24);
+    if (x + w > (int)comp_width - 8) x = MAX(8, (int)comp_width - 8 - w);
+    if (y + h > (int)comp_height - DOCK_HEIGHT - 16) y = MAX(MENU_BAR_HEIGHT + 8, (int)comp_height - DOCK_HEIGHT - 16 - h);
 
     int id = create_window_internal(title, x, y, w, h, type);
     if (id >= 0) {
@@ -5335,6 +5130,7 @@ void compositor_open_default_apps(void)
  */
 static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
 {
+    if (state->type == APP_WEB) return browser_shortcut(keycode);
     if (state->type != APP_TEXTEDIT && state->type != APP_NOTES) {
         return false;
     }
@@ -5873,27 +5669,7 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                 return;
             }
         } else if (state->type == APP_WEB) {
-            WebState *web = &state->web;
-            if (keycode == KEY_BACKSPACE) {
-                size_t len = strlen(web->address);
-                if (len > 0) {
-                    web->address[len - 1] = '\0';
-                }
-                return;
-            }
-            if (keycode == KEY_ENTER) {
-                if (web->address[0]) {
-                    web_load_page(web, web->address);
-                }
-                return;
-            }
-            if (ascii >= 32 && ascii <= 126) {
-                size_t len = strlen(web->address);
-                if (len < sizeof(web->address) - 1) {
-                    web->address[len] = ascii;
-                    web->address[len + 1] = '\0';
-                }
-            }
+            browser_key(keycode, ascii, modifiers);
         } else if (state->type == APP_SETTINGS) {
             if (state->settings.page == SETTINGS_PAGE_USERS && state->settings.user_field > 0) {
                 if (keycode == KEY_TAB) {
@@ -7001,34 +6777,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         settings_save();
                     }
                 } else if (state->type == APP_WEB) {
-                    WebState *web = &state->web;
-                    int content_x = win->x + 12;
-                    int content_y = win->y + 40;
-                    int content_w = win->w - 24;
-
-                    int bar_y = content_y + 8;
-                    /* Back / forward buttons */
-                    if (y >= bar_y && y <= bar_y + 22) {
-                        if (x >= content_x + 8 && x <= content_x + 30) {
-                            web_go_history(web, -1);
-                            return;
-                        }
-                        if (x >= content_x + 34 && x <= content_x + 56) {
-                            web_go_history(web, 1);
-                            return;
-                        }
-                    }
-
-                    /* Link lines */
-                    int page_y = content_y + 40;
-                    if (y >= page_y + 8) {
-                        int row = (y - (page_y + 8)) / 18 + web->scroll;
-                        if (row >= 0 && row < web->line_count && web->links[row][0]) {
-                            web_load_page(web, web->links[row]);
-                            return;
-                        }
-                    }
-                    (void)content_w;
+                    browser_click(x, y);
                 }
 
                 if (i != window_count - 1) {
@@ -7089,6 +6838,10 @@ void compositor_handle_mouse_absolute(int32_t x, int32_t y)
     for (int i = 0; i < window_count; i++) {
         if (app_states[i].type == APP_FINDER && app_states[i].finder.drag_active) mark_dirty();
     }
+    /* Browser: show the hovered link's address in its status bar. */
+    if (active_window_index >= 0 && active_window_index < window_count &&
+        app_states[active_window_index].type == APP_WEB && !windows[active_window_index].minimized &&
+        browser_hover(cursor_x, cursor_y)) mark_dirty();
 
     if (dragging && drag_index >= 0 && drag_index < window_count) {
         windows[drag_index].x = cursor_x - drag_dx;
@@ -7175,8 +6928,7 @@ void compositor_handle_scroll(int32_t dx, int32_t dy)
             /* No scrollable region in the calendar yet */
             break;
         case APP_WEB:
-            state->web.scroll += delta;
-            if (state->web.scroll < 0) state->web.scroll = 0;
+            browser_scroll(delta * 40);
             break;
         default:
             break;
@@ -7306,6 +7058,7 @@ void compositor_tick(uint64_t now_ms)
     /* Pointer overlay is independent of the 30fps scene/animation budget. */
     fb_cursor_move(cursor_x, cursor_y);
     if (netcmd_busy()) netcmd_poll(terminal_net_print);
+    browser_poll();
     uint64_t delta = now_ms - last_frame_ms;
     if (delta < 33) {
         return;

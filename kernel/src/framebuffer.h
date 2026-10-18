@@ -68,6 +68,10 @@ void fb_copy_rect(int dst_x, int dst_y, int src_x, int src_y, int w, int h);
 /* Off-screen back buffer (desktop UI): draw a whole frame off-screen,
  * then fb_present() shows it in one pass. */
 bool fb_use_backbuffer(bool enable);
+/* Drawing clip rectangle (all primitives honour it); reset = full screen. */
+void fb_set_clip(int x, int y, int w, int h);
+void fb_reset_clip(void);
+void fb_draw_text_scaled(int x, int y, const char *s, int n, Color fg, int scale, bool bold);
 void fb_present(void);
 /* Cursor-free backbuffer + tiny scanout overlay. Full presents reapply it. */
 void fb_cursor_move(int x, int y);

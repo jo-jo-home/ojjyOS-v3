@@ -216,110 +216,120 @@ cat > "$SYSROOT/Applications/Monitor.app/manifest.json" << 'EOF'
 }
 EOF
 
-# Create the Web app's offline pages (tiny markup:
-#   "# text" = heading, ">id text" = link to <id>.page, else plain text)
+# Built-in pages for the Web browser (real HTML, opened as ojjy:<name>)
 mkdir -p "$SYSROOT/System/Web"
-cat > "$SYSROOT/System/Web/home.page" << 'EOF'
-# Welcome to ojjyOS Web
+rm -f "$SYSROOT"/System/Web/*.page
+cat > "$SYSROOT/System/Web/home.html" << 'PAGE'
+<html><head><title>Start Page</title></head><body>
+<h1>ojjyOS Web</h1>
+<p>A web browser written from scratch for the ojjyOS kernel &mdash; created by <b>Jonas Lee</b>.</p>
+<form action="http://wiby.me/" method="get">
+<input name="q" size="38" placeholder="Search the classic web with Wiby"> <input type="submit" value="Search">
+</form>
+<h3>Favorites</h3>
+<ul>
+<li><a href="http://wiby.me/">Wiby</a> &mdash; a search engine for the classic web</li>
+<li><a href="http://frogfind.com/">FrogFind</a> &mdash; simplified search and reader (when online)</li>
+<li><a href="http://68k.news/">68k.news</a> &mdash; today's headlines, lightweight</li>
+<li><a href="http://info.cern.ch/hypertext/WWW/TheProject.html">The first website</a> (CERN, 1991)</li>
+<li><a href="http://example.com/">example.com</a></li>
+<li><a href="http://neverssl.com/">NeverSSL</a></li>
+<li><a href="http://textfiles.com/">textfiles.com</a></li>
+</ul>
+<h3>Built-in pages</h3>
+<p><a href="ojjy:about">About ojjyOS</a> &nbsp;|&nbsp; <a href="ojjy:shortcuts">Keyboard shortcuts</a>
+&nbsp;|&nbsp; <a href="ojjy:accounts">Accounts guide</a> &nbsp;|&nbsp; <a href="ojjy:release">What's new</a></p>
+<h3>Tips</h3>
+<ul>
+<li>Type words into the address bar to search, or a web address to open it.</li>
+<li><b>Cmd+L</b> address bar, <b>Cmd+R</b> reload, <b>Cmd+[</b> / <b>Cmd+]</b> back and forward.</li>
+<li>Secure <code>https://</code> sites are not supported yet &mdash; try their <code>http://</code> address.</li>
+<li>No network? Turn on <b>Wi-Fi</b> in Control Center.</li>
+</ul>
+<pre>
+   ~  ~  ~   T a h o e  -  L i q u i d   ~  ~  ~
+</pre>
+</body></html>
+PAGE
 
-      *             .           *      .
-          /\                   *
-         /  \       /\        .      *
-        /    \     /  \    *
-   *   /      \   /    \       .
-      /        \ /      \        *
-     /   /\             \
-    /   /  \   /\        \    .
-   /___/    \ /  \___     \       *
+cat > "$SYSROOT/System/Web/about.html" << 'PAGE'
+<html><head><title>About ojjyOS</title></head><body>
+<h1>About ojjyOS</h1>
+<p>ojjyOS is a custom operating system with a macOS Tahoe-inspired user interface. It is built from
+scratch on a custom kernel &mdash; not based on Linux, BSD, Windows or macOS.</p>
+<p><b>Created by Jonas Lee.</b></p>
+<h3>Inside</h3>
+<ul>
+<li>Custom kernel for ARM64 (Apple Silicon VMs) and x86-64</li>
+<li>Its own network stack: Ethernet, ARP, IPv4, DHCP, DNS, TCP and HTTP</li>
+<li>This browser: HTML layout engine, links, forms and history</li>
+<li>Finder, Terminal, TextEdit, Notes, Preview, Calendar, Calculator, Settings and more</li>
+</ul>
+<p><a href="ojjy:home">Back to the start page</a></p>
+</body></html>
+PAGE
 
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   ~   T a h o e  -  L i q u i d   ~
-  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cat > "$SYSROOT/System/Web/accounts.html" << 'PAGE'
+<html><head><title>Accounts Guide</title></head><body>
+<h1>User Accounts &amp; Credentials</h1>
+<p>ojjyOS includes a multi-user account system with salted SHA-256 password hashing.</p>
+<ul>
+<li>On first boot, Setup Assistant creates your account and password.</li>
+<li>Open <b>Settings &rarr; Users &amp; Accounts</b> to add accounts, change your password, lock the
+screen, or switch users.</li>
+<li>In Terminal: <code>adduser</code>, <code>passwd</code>, <code>su</code>, <code>whoami</code>,
+<code>users</code>, <code>lock</code>.</li>
+</ul>
+<p><a href="ojjy:home">Back to the start page</a></p>
+</body></html>
+PAGE
 
-This is the offline browser for ojjyOS. Pages are stored on the
-system disk under /System/Web - no network connection needed.
+cat > "$SYSROOT/System/Web/shortcuts.html" << 'PAGE'
+<html><head><title>Keyboard Shortcuts</title></head><body>
+<h1>Keyboard shortcuts</h1>
+<h3>System</h3>
+<table>
+<tr><td><b>Cmd+Space</b></td><td>Spotlight search</td></tr>
+<tr><td><b>Cmd+L</b></td><td>Launchpad (address bar in Web)</td></tr>
+<tr><td><b>Cmd+C</b></td><td>Control Center (copy in TextEdit, Notes and Finder)</td></tr>
+<tr><td><b>Cmd+M</b></td><td>Mission Control</td></tr>
+<tr><td><b>Cmd+Tab</b></td><td>Switch between running apps</td></tr>
+<tr><td><b>Ctrl+Cmd+Q</b></td><td>Lock screen</td></tr>
+</table>
+<h3>Web</h3>
+<table>
+<tr><td><b>Cmd+L</b></td><td>Edit the address</td></tr>
+<tr><td><b>Cmd+R</b></td><td>Reload</td></tr>
+<tr><td><b>Cmd+[ / Cmd+]</b></td><td>Back / Forward</td></tr>
+<tr><td><b>Space / Shift+Space</b></td><td>Page down / up</td></tr>
+<tr><td><b>Tab</b></td><td>Next text field</td></tr>
+</table>
+<h3>Editing</h3>
+<p><b>Cmd+S</b> save, <b>Cmd+O</b> open the last file, <b>Cmd+C / X / V</b> copy, cut and paste.</p>
+<p><a href="ojjy:home">Back to the start page</a></p>
+</body></html>
+PAGE
 
->about About ojjyOS and its creator
->accounts User Accounts & Credentials Guide
->shortcuts Keyboard shortcuts
->release What is new in this release
-EOF
-
-cat > "$SYSROOT/System/Web/accounts.page" << 'EOF'
-# User Accounts & Credentials
-
-ojjyOS includes a built-in multi-user account and credential
-system with salted SHA-256 password hashing.
-
-Creating or managing accounts:
-- On first boot into the Tahoe desktop, Setup Assistant prompts
-  you to create your administrator account and password.
-- Open Settings -> Users & Accounts to add accounts, change
-  your password, lock the screen, or switch users.
-- In Terminal or Console: adduser, passwd, login, su, whoami,
-  users, lock, and logout.
-
->home Back to the start page
-EOF
-
-cat > "$SYSROOT/System/Web/about.page" << 'EOF'
-# About ojjyOS
-
-ojjyOS is a custom operating system with a macOS Tahoe-inspired
-user interface. It is built from scratch on a custom kernel -
-not based on Linux, BSD, Windows or macOS.
-
-Created by Jonas Lee.
-
-The system includes a Finder, a Terminal, TextEdit, Notes,
-Preview, Calendar, Settings, and this offline Web browser.
-
->home Back to the start page
-EOF
-
-cat > "$SYSROOT/System/Web/shortcuts.page" << 'EOF'
-# Keyboard shortcuts
-
-Command (Super) key shortcuts:
-
-Super + Space  -  Spotlight search
-Super + L     -  Launchpad
-Super + C     -  Control Center
-Super + M     -  Mission Control
-Super + Tab   -  Switch between running apps
-Super + Q     -  Quit the active app
-
-App shortcuts:
-
-Super + S     -  Save (TextEdit, Notes)
-Super + O     -  Open the last file
-Super + C/X/V -  Copy / Cut / Paste
-
->home Back to the start page
-EOF
-
-cat > "$SYSROOT/System/Web/release.page" << 'EOF'
-# ojjyOS 3.1.0
-
-The "Make It Work" release.
-
-The kernel now boots reliably: the bootloader loads a real ELF
-kernel, the keyboard and mouse work through the driver model,
-and the whole filesystem is reachable.
-
-New in this release:
-
-- Working Dock, Spotlight, Launchpad and Control Center
-- Scroll wheel support across the system
-- Desktop icons with double-click to open
-- Working window close and minimize buttons
-- The Web app: this offline browser
-- Finder, Terminal, TextEdit and Calendar fixes throughout
-
-Created by Jonas Lee.
-
->home Back to the start page
-EOF
+cat > "$SYSROOT/System/Web/release.html" << 'PAGE'
+<html><head><title>What's New</title></head><body>
+<h1>ojjyOS 3.1</h1>
+<h3>New</h3>
+<ul>
+<li><b>Networking</b> &mdash; a from-scratch network stack with DHCP, DNS and TCP.</li>
+<li><b>A real web browser</b> &mdash; open http:// websites, follow links, search and fill in forms.</li>
+<li><b>Terminal network tools</b> &mdash; <code>ifconfig</code>, <code>ping</code>, <code>nslookup</code>,
+<code>curl</code>.</li>
+<li>Accurate, fast mouse pointer and a cleaner blue desktop.</li>
+</ul>
+<h3>Earlier</h3>
+<ul>
+<li>Protected ARM64 apps (<code>run hello</code> in Terminal)</li>
+<li>Reliable boot, input and saved storage</li>
+<li>Dock, Spotlight, Launchpad, Control Center and Mission Control</li>
+</ul>
+<p>Created by Jonas Lee. <a href="ojjy:home">Back to the start page</a></p>
+</body></html>
+PAGE
 
 # Create system version file
 cat > "$SYSROOT/System/version.txt" << 'EOF'

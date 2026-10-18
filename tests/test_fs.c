@@ -133,19 +133,19 @@ int main(int argc, char **argv)
     if (about) ops->close(about);
 
     /* Web app pages & new apps */
-    CHECK(ops->isfile(inst, "/System/Web/home.page") != 0, "isfile /System/Web/home.page");
-    CHECK(ops->isfile(inst, "/System/Web/accounts.page") != 0, "isfile /System/Web/accounts.page");
+    CHECK(ops->isfile(inst, "/System/Web/home.html") != 0, "isfile /System/Web/home.html");
+    CHECK(ops->isfile(inst, "/System/Web/accounts.html") != 0, "isfile /System/Web/accounts.html");
     CHECK(ops->isfile(inst, "/Applications/Web.app/manifest.json") != 0, "isfile Web.app manifest");
     CHECK(ops->isfile(inst, "/Applications/Calculator.app/manifest.json") != 0, "isfile Calculator.app manifest");
     CHECK(ops->isfile(inst, "/Applications/Monitor.app/manifest.json") != 0, "isfile Monitor.app manifest");
-    VfsFile *home = ops->open(inst, "/System/Web/home.page", VFS_O_READ);
-    CHECK(home != NULL, "open /System/Web/home.page");
+    VfsFile *home = ops->open(inst, "/System/Web/home.html", VFS_O_READ);
+    CHECK(home != NULL, "open /System/Web/home.html");
     if (home) {
         char buf[256];
         memset(buf, 0, sizeof(buf));
         ssize_t n = ops->read(home, buf, 40);
-        CHECK(n == 40 && strncmp(buf, "# Welcome to ojjyOS Web", 23) == 0,
-              "home.page content parses");
+        CHECK(n == 40 && strncmp(buf, "<html><head><title>Start Page</title>", 37) == 0,
+              "home.html start page content");
         ops->close(home);
     }
 

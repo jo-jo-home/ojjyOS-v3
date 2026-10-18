@@ -15,6 +15,9 @@ void pmm_init(BootInfo *info);
 
 /* Allocate a physical page (returns physical address, or 0 on failure) */
 uint64_t pmm_alloc_page(void);
+/* Physically contiguous, zeroed pages (identity-mapped); 0/NULL on failure. */
+uint64_t pmm_alloc_contiguous(uint64_t pages);
+void *pmm_alloc_bytes(size_t bytes);
 
 /* Free a physical page */
 void pmm_free_page(uint64_t addr);

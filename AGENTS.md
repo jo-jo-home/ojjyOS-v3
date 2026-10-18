@@ -3,7 +3,18 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## LATEST: cursor repair + UI cleanup DONE (2026-10-17); now bug/improvement pass
+## LATEST (2026-10-17): networking + working web browser; next HTTPS, Wi-Fi tile, apps pass
+
+Jonas: "keep working on improvements, make a list of new stuff, improve all
+apps, focus on a working browser" and "add wifi bluetooth ... write down plans
+and updates and context". Live plan/log: `BROWSER_APPS_PLAN.md`; ideas list:
+`ROADMAP.md`. Done: virtio-net/rng, from-scratch IPv4/DHCP/DNS/TCP, HTTP
+client, Terminal ifconfig/ping/nslookup/curl, HTML engine + browser (real
+sites over http://). Keep big buffers out of BSS (see plan log: firmware
+memory at 0x44000000 blocks the ARM kernel image). No Wi-Fi/Bluetooth
+hardware exists in QEMU; the Wi-Fi tile will control the real virtual NIC.
+
+## Earlier: cursor repair + UI cleanup DONE (2026-10-17); bug/improvement pass
 
 Cursor offset/lag fixed (absolute tablet path, scanout cursor overlay, no
 scene repaint on pointer motion) and UI cleaned (transparent text, UTF-8,

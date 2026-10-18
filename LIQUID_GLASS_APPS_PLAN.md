@@ -110,12 +110,12 @@ Settings > Appearance gains:
 - Terminal theme (S4) row.
 All saved in settings and applied live.
 
-## Status (2026-10-18, job paused by Jonas)
+## Status (2026-10-18)
 
 | Step | State |
 |---|---|
-| LG1, LG2, W1, W2, W3, W4 | done (see Log) |
-| C, LG3, LG4, S1, S2, S3, S4, A, leftovers, finish | not started — detailed instructions in `HANDOFF_UI.md` §5 |
+| LG1, LG2, W1, W2, W3, W4, C | done (see Log) |
+| LG3, LG4, S1, S2, S3, S4, A, leftovers, finish | not started — detailed instructions in `HANDOFF_UI.md` §5 |
 
 ## Order of work
 
@@ -124,6 +124,26 @@ TextEdit, Notes, Calendar, Calculator, Activity Monitor, Settings, Web,
 About, Preview, Login). Commit after each; log below.
 
 ## Log
+- C done (2026-10-18, on `ui-polish-3` off integrated `main`): Settings >
+  Appearance rebuilt — Appearance segmented (Light/Dark/Auto; Auto = dark
+  19:00–07:00 by the RTC, checked once a minute from the main loop and
+  immediately on selection, pairing wallpapers), 8 accent swatches (Blue
+  default keeps the original hand-tuned tokens pixel-unchanged; Purple,
+  Pink, Red, Orange, Yellow, Green, Graphite derive light/dark variants
+  from one base via `theme_set_accent()`), Liquid Glass Clear/Tinted
+  (tint_alpha × 1.5), Menu Bar Glass/Solid, Window Corners Standard/Round
+  (16), Terminal Theme row (Tahoe/Light/Ocean/Green; S4 wires the actual
+  terminal colours) plus the existing Reduce Transparency/Motion and
+  24-Hour Clock switches, moved to rows 6–8. Persisted as appearance=,
+  accent=, glass=, menubar=, corners=, termtheme= in system.conf (legacy
+  dark= still honoured on load). Every change logs `[UI] Appearance
+  key=value`; settings_load logs a one-line summary at boot. New live test
+  `tests/qemu_appearance.py`: clicks every control, asserts each serial
+  line, verifies the Auto clock flip (time-of-day aware), syncs, cold-boots
+  and asserts the persisted summary — PASS (`build/appearance-live-2`).
+  Accent switch visibly changes the desktop (1,285/25,000 sampled pixels
+  between Blue and Green+Tinted). Host suite 15/15, both arches 0 warnings.
+  Evidence: `build/appearance-{arm,x86,host,live-2}.log` + suites below.
 - LG1 done: `gfx_liquid_glass()` + `gfx_set_scratch()` (live-backdrop copy,
   half-res 2x box blur, saturation, rim refraction (1-t)^2 along the edge
   normal, tint, specular rim lit from above, AA edge, fast interior path).

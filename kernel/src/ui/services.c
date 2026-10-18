@@ -3,6 +3,7 @@
  */
 
 #include "services.h"
+#include "theme.h"
 #include "../string.h"
 #include "../fs/vfs.h"
 #include "../serial.h"
@@ -353,6 +354,26 @@ void settings_load(void)
     buffer[bytes] = '\0';
 
     settings_state.dark_mode = (str_find(buffer, "dark=1") != NULL);
+    /* "appearance" supersedes the legacy dark= switch; Auto resolves the
+     * effective mode from the clock on the first tick after boot. */
+    {
+        int appear = parse_value(buffer, "appearance", -1);
+        if (appear >= 0 && appear <= 2) {
+            settings_state.appearance = (uint8_t)appear;
+            if (appear < 2) settings_state.dark_mode = (appear == 1);
+        } else {
+            settings_state.appearance = settings_state.dark_mode ? 1 : 0;
+        }
+    }
+    settings_state.accent = (uint8_t)parse_value(buffer, "accent", settings_state.accent);
+    if (settings_state.accent >= theme_accent_count()) settings_state.accent = 0;
+    settings_state.glass_tint = (uint8_t)parse_value(buffer, "glass", settings_state.glass_tint);
+    if (settings_state.glass_tint > 1) settings_state.glass_tint = 0;
+    settings_state.menubar = (uint8_t)parse_value(buffer, "menubar", settings_state.menubar);
+    if (settings_state.menubar > 1) settings_state.menubar = 0;
+    settings_state.corners = (uint8_t)parse_value(buffer, "corners", settings_state.corners);
+    if (settings_state.corners > 1) settings_state.corners = 0;
+    parse_string(buffer, "termtheme", settings_state.termtheme, sizeof(settings_state.termtheme));
     settings_state.wifi_enabled = (str_find(buffer, "wifi=1") != NULL);
     settings_state.bluetooth_enabled = (str_find(buffer, "bt=1") != NULL);
     settings_state.volume = (uint8_t)parse_value(buffer, "volume", settings_state.volume);
@@ -365,6 +386,15 @@ void settings_load(void)
     settings_state.reduced_transparency = (str_find(buffer, "rt=1") != NULL);
     settings_state.reduced_motion = (str_find(buffer, "rm=1") != NULL);
     parse_string(buffer, "wallpaper", settings_state.wallpaper, sizeof(settings_state.wallpaper));
+
+    /* One line the live tests can assert on across cold boots. */
+    serial_printf("[UI] Appearance mode=%s accent=%s glass=%s menubar=%s corners=%s termtheme=%s\n",
+                  settings_state.appearance == 2 ? "auto" : settings_state.appearance == 1 ? "dark" : "light",
+                  theme_accent_name(settings_state.accent),
+                  settings_state.glass_tint ? "tinted" : "clear",
+                  settings_state.menubar ? "solid" : "glass",
+                  settings_state.corners ? "round" : "standard",
+                  settings_state.termtheme[0] ? settings_state.termtheme : "Tahoe Dark");
 }
 
 void settings_save(void)
@@ -446,10 +476,50 @@ void settings_save(void)
         str_append(tmp, sizeof(tmp), num);
         str_append(tmp, sizeof(tmp), "\n");
         str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "appearance=");
+        utoa(settings_state.appearance, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "accent=");
+        utoa(settings_state.accent, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "glass=");
+        utoa(settings_state.glass_tint, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "menubar=");
+        utoa(settings_state.menubar, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
+
+        tmp[0] = '\0';
+        str_append(tmp, sizeof(tmp), "corners=");
+        utoa(settings_state.corners, num, 10);
+        str_append(tmp, sizeof(tmp), num);
+        str_append(tmp, sizeof(tmp), "\n");
+        str_append(buffer, sizeof(buffer), tmp);
     }
     if (settings_state.wallpaper[0] && !str_find(settings_state.wallpaper, "=")) {
         str_append(buffer, sizeof(buffer), "wallpaper=");
         str_append(buffer, sizeof(buffer), settings_state.wallpaper);
+        str_append(buffer, sizeof(buffer), "\n");
+    }
+    if (settings_state.termtheme[0] && !str_find(settings_state.termtheme, "=")) {
+        str_append(buffer, sizeof(buffer), "termtheme=");
+        str_append(buffer, sizeof(buffer), settings_state.termtheme);
         str_append(buffer, sizeof(buffer), "\n");
     }
 
@@ -496,6 +566,47 @@ void settings_toggle_reduced_motion(void)
 void settings_set_volume(uint8_t value)
 {
     settings_state.volume = value;
+    settings_save();
+}
+
+void settings_set_appearance(uint8_t value)
+{
+    settings_state.appearance = value > 2 ? 0 : value;
+    settings_save();
+}
+
+void settings_set_accent(uint8_t index)
+{
+    settings_state.accent = index >= theme_accent_count() ? 0 : index;
+    settings_save();
+}
+
+void settings_set_glass_tint(uint8_t value)
+{
+    settings_state.glass_tint = value > 1 ? 0 : value;
+    settings_save();
+}
+
+void settings_set_menubar(uint8_t value)
+{
+    settings_state.menubar = value > 1 ? 0 : value;
+    settings_save();
+}
+
+void settings_set_corners(uint8_t value)
+{
+    settings_state.corners = value > 1 ? 0 : value;
+    settings_save();
+}
+
+void settings_set_termtheme(const char *name)
+{
+    if (!name || !name[0]) {
+        settings_state.termtheme[0] = '\0';
+    } else {
+        strncpy(settings_state.termtheme, name, sizeof(settings_state.termtheme) - 1);
+        settings_state.termtheme[sizeof(settings_state.termtheme) - 1] = '\0';
+    }
     settings_save();
 }
 

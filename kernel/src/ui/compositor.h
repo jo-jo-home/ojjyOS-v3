@@ -51,6 +51,7 @@ void compositor_init(uint32_t width, uint32_t height);
 void compositor_set_dark_mode(bool enabled);
 /* Switch Light/Dark (saved); paired desktop pictures follow. */
 void compositor_toggle_appearance(void);
+void compositor_appearance_auto_tick(void);   /* Auto appearance: clock check */
 /* Desktop picture by name: "Tahoe Light", "ojjyOS Waves Dark", ... */
 void compositor_set_wallpaper(const char *name);
 int compositor_create_window(const char *title, int x, int y, int w, int h);

@@ -4,7 +4,7 @@
 
 #include "theme.h"
 
-static const ThemeTokens theme_light_tokens = {
+static ThemeTokens theme_light_tokens = {
     .name = "Tahoe Light",
 
     /* Palette derived from lighttahoe.png reference */
@@ -33,7 +33,7 @@ static const ThemeTokens theme_light_tokens = {
     }
 };
 
-static const ThemeTokens theme_dark_tokens = {
+static ThemeTokens theme_dark_tokens = {
     .name = "Tahoe Dark",
 
     .sky_top = RGB(8, 14, 26),          /* #080E1A */
@@ -69,4 +69,69 @@ const ThemeTokens *theme_light(void)
 const ThemeTokens *theme_dark(void)
 {
     return &theme_dark_tokens;
+}
+
+/* Accent colours (Settings > Appearance). Blue keeps the original
+ * hand-tuned light/dark pairs so the default look is unchanged; every
+ * other accent derives its light and dark variants from one base. */
+typedef struct {
+    const char *name;
+    Color base;
+} AccentDef;
+
+static const AccentDef accent_defs[] = {
+    { "Blue",     RGB(28, 122, 216) },
+    { "Purple",   RGB(112, 92, 226) },
+    { "Pink",     RGB(240, 64, 112) },
+    { "Red",      RGB(226, 62, 56) },
+    { "Orange",   RGB(240, 140, 20) },
+    { "Yellow",   RGB(206, 156, 12) },
+    { "Green",    RGB(56, 172, 84) },
+    { "Graphite", RGB(140, 144, 152) },
+};
+
+static Color color_lerp(Color a, Color b, int t)
+{
+    if (t < 0) t = 0;
+    if (t > 255) t = 255;
+    uint32_t out = 0xFF000000;
+    for (int shift = 0; shift <= 16; shift += 8) {
+        uint32_t ca = (a >> shift) & 0xFF, cb = (b >> shift) & 0xFF;
+        out |= ((ca + (cb - ca) * (uint32_t)t / 255) & 0xFF) << shift;
+    }
+    return (Color)out;
+}
+
+int theme_accent_count(void)
+{
+    return (int)(sizeof(accent_defs) / sizeof(accent_defs[0]));
+}
+
+const char *theme_accent_name(int index)
+{
+    if (index < 0 || index >= theme_accent_count()) return "Blue";
+    return accent_defs[index].name;
+}
+
+Color theme_accent_swatch(int index)
+{
+    if (index < 0 || index >= theme_accent_count()) return accent_defs[0].base;
+    return accent_defs[index].base;
+}
+
+void theme_set_accent(int index)
+{
+    if (index <= 0 || index >= theme_accent_count()) {
+        /* Tahoe Blue: the original hand-tuned pairs, pixel-unchanged. */
+        theme_light_tokens.accent = RGB(48, 145, 216);
+        theme_light_tokens.accent_soft = RGB(124, 197, 230);
+        theme_dark_tokens.accent = RGB(76, 164, 216);
+        theme_dark_tokens.accent_soft = RGB(96, 134, 170);
+        return;
+    }
+    Color base = accent_defs[index].base;
+    theme_light_tokens.accent = base;
+    theme_light_tokens.accent_soft = color_lerp(base, COLOR_WHITE, 115);
+    theme_dark_tokens.accent = color_lerp(base, COLOR_WHITE, 46);
+    theme_dark_tokens.accent_soft = color_lerp(base, RGB(20, 24, 32), 90);
 }

@@ -205,7 +205,12 @@ git fetch -q . ui-polish-2:main
 Each item lists the files to touch and what "done" means. Mark it in the
 plan log when finished.
 
-### C — Appearance customisation (Settings > Appearance) — NEXT
+### C — Appearance customisation (Settings > Appearance) — DONE (2026-10-18)
+
+Implemented on `ui-polish-3` (see `LIQUID_GLASS_APPS_PLAN.md` log): all six
+rows plus the moved switches, Auto clock flipping, accent table, persistence
+keys, boot-summary log line and the live test `tests/qemu_appearance.py`.
+The remaining items below are still open, in this order.
 
 Jonas asked for "customizability for themes/ui/background in settings".
 Add to `SettingsState` (`ui/services.h`) and save/load in `ui/services.c`

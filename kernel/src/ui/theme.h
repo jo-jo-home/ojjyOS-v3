@@ -45,4 +45,12 @@ typedef struct {
 const ThemeTokens *theme_light(void);
 const ThemeTokens *theme_dark(void);
 
+/* Accent colours (Settings > Appearance). Blue is the Tahoe default.
+ * set_accent mutates both token sets in place, so every `theme->accent`
+ * user follows a change immediately. */
+void theme_set_accent(int index);
+int theme_accent_count(void);
+const char *theme_accent_name(int index);
+Color theme_accent_swatch(int index);
+
 #endif /* _OJJY_UI_THEME_H */

@@ -736,6 +736,7 @@ static void glass_params(GfxGlass *g, uint8_t tint, uint8_t fade)
     bool dark = settings_get()->dark_mode;
     g->tint = dark ? RGB(28, 34, 46) : COLOR_WHITE;
     g->tint_alpha = (uint8_t)(dark ? 70 + tint * 45 / 100 : 30 + tint * 40 / 100);
+    if (settings_get()->glass_tint) g->tint_alpha = (uint8_t)MIN(255, g->tint_alpha * 3 / 2);
     g->blur = 10;
     g->refract = 7;
     g->band = 12;
@@ -792,8 +793,26 @@ static bool hit_traffic_light(const CompositorWindow *win, int i, int x, int y)
            y >= win->y + TL_TOP - 2 && y <= win->y + TL_TOP + TL_SIZE + 2;
 }
 
-/* Settings > Appearance rows: label left, pill switch right; whole row clicks. */
+/* Settings > Appearance rows: 0 appearance, 1 accent swatches, 2 liquid
+ * glass, 3 menu bar, 4 window corners, 5 terminal theme, 6-8 switches. */
 #define APPEARANCE_ROW_Y(i) (40 + (i) * 30)
+#define APPEARANCE_ROWS 9
+#define ACCENT_SWATCH  18
+#define ACCENT_PITCH   30
+static int accent_row_x(int main_x, int main_w)
+{
+    int total = (theme_accent_count() - 1) * ACCENT_PITCH + ACCENT_SWATCH;
+    return main_x + main_w - 16 - total;
+}
+static const char *const term_theme_names[4] = { "Tahoe Dark", "Light", "Ocean", "Classic Green" };
+static int termtheme_index(void)
+{
+    const char *name = settings_get()->termtheme;
+    for (int i = 0; i < 4; i++) {
+        if (strcmp(name, term_theme_names[i]) == 0) return i;
+    }
+    return 0;
+}
 static void draw_switch(int x, int y, bool on)
 {
     draw_rounded_rect_blend(x, y, 38, 20, 10, on ? theme->accent : (settings_get()->dark_mode ? RGB(70, 78, 92) : RGB(208, 214, 222)), 255);
@@ -1123,6 +1142,64 @@ static int segmented_hit(int x, int y, int n, int px, int py)
     return (px - x) / (SEG_W / n);
 }
 
+/* Settings > Appearance: one row click (segment, accent swatch or switch).
+ * Every change logs a `[UI] Appearance key=value` line for live tests. */
+static void appearance_page_click(int main_x, int main_w, int content_y, int row, int x, int y)
+{
+    SettingsState *s = settings_get();
+    if (row < 0) return;
+    int ry = content_y + APPEARANCE_ROW_Y(row);
+    if (row == 0) {
+        int i = segmented_hit(seg_x(main_x, main_w), ry + 1, 3, x, y);
+        if (i < 0) return;
+        s->appearance = (uint8_t)i;
+        if (i < 2) {
+            if ((i == 1) != dark_mode) toggle_appearance();
+        } else {
+            compositor_appearance_auto_tick();   /* Auto applies immediately */
+        }
+        settings_save();
+        serial_printf("[UI] Appearance mode=%s\n", i == 0 ? "light" : i == 1 ? "dark" : "auto");
+    } else if (row == 1) {
+        int ax = accent_row_x(main_x, main_w);
+        for (int a = 0; a < theme_accent_count(); a++) {
+            if (x >= ax + a * ACCENT_PITCH && x < ax + a * ACCENT_PITCH + ACCENT_SWATCH &&
+                y >= ry + 3 && y < ry + 3 + ACCENT_SWATCH) {
+                s->accent = (uint8_t)a;
+                theme_set_accent(a);
+                settings_save();
+                wallpaper_retint();
+                serial_printf("[UI] Appearance accent=%s\n", theme_accent_name(a));
+                return;
+            }
+        }
+    } else if (row <= 5) {
+        int n = row == 5 ? 4 : 2;
+        int i = segmented_hit(seg_x(main_x, main_w), ry + 1, n, x, y);
+        if (i < 0) return;
+        if (row == 2) {
+            s->glass_tint = (uint8_t)i;
+            serial_printf("[UI] Appearance glass=%s\n", i ? "tinted" : "clear");
+        } else if (row == 3) {
+            s->menubar = (uint8_t)i;
+            serial_printf("[UI] Appearance menubar=%s\n", i ? "solid" : "glass");
+        } else if (row == 4) {
+            s->corners = (uint8_t)i;
+            serial_printf("[UI] Appearance corners=%s\n", i ? "round" : "standard");
+        } else {
+            settings_set_termtheme(term_theme_names[i]);
+            serial_printf("[UI] Appearance termtheme=%s\n", term_theme_names[i]);
+        }
+        settings_save();
+    } else if (row == 6) {
+        settings_toggle_reduced_transparency();
+    } else if (row == 7) {
+        settings_toggle_reduced_motion();
+    } else if (row == 8) {
+        settings_toggle_time_format();
+    }
+}
+
 /* Dock: size presets and magnification levels (relative to the size). */
 static const uint8_t dock_sizes[3] = { 40, 48, 56 };
 static int dock_size_index(void)
@@ -1308,14 +1385,43 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
 
     if (state->page == SETTINGS_PAGE_APPEARANCE) {
         ui_text(main_x + 16, content_y + 12, "Appearance", TEXT_HEADLINE, theme->text);
-        const char *labels[4] = { "Dark Mode", "24-Hour Clock", "Reduce Transparency", "Reduce Motion" };
-        bool values[4] = { settings->dark_mode, settings->time_24h,
-                           settings->reduced_transparency, settings->reduced_motion };
-        for (int i = 0; i < 4; i++) {
+        static const char *const appearances[3] = { "Light", "Dark", "Auto" };
+        static const char *const glasses[2] = { "Clear", "Tinted" };
+        static const char *const menubars[2] = { "Glass", "Solid" };
+        static const char *const corner_opts[2] = { "Standard", "Round" };
+        static const char *const term_labels[4] = { "Tahoe", "Light", "Ocean", "Green" };
+        static const char *const row_labels[6] = {
+            "Appearance", "Accent", "Liquid Glass", "Menu Bar", "Window Corners", "Terminal Theme"
+        };
+        static const char *const switch_labels[3] = { "Reduce Transparency", "Reduce Motion", "24-Hour Clock" };
+        for (int i = 0; i < APPEARANCE_ROWS; i++) {
             int ry = content_y + APPEARANCE_ROW_Y(i);
-            if (i) fb_fill_rect(main_x + 16, ry - 4, main_w - 32, 1, blend(theme->dock_tint, theme->text_muted, 40));
-            ui_text(main_x + 16, ry + 5, labels[i], TEXT_BODY, theme->text);
-            draw_switch(main_x + main_w - 58, ry + 3, values[i]);
+            if (i) draw_rounded_rect_blend(main_x + 16, ry - 4, main_w - 32, 1, 0, theme->text_muted, 50);
+            const char *label = i <= 5 ? row_labels[i] : switch_labels[i - 6];
+            ui_text(main_x + 16, ry + 5, label, TEXT_BODY, theme->text);
+            if (i == 1) {
+                int ax = accent_row_x(main_x, main_w);
+                for (int a = 0; a < theme_accent_count(); a++) {
+                    draw_rounded_rect_blend(ax + a * ACCENT_PITCH, ry + 3, ACCENT_SWATCH, ACCENT_SWATCH,
+                                            ACCENT_SWATCH / 2, theme_accent_swatch(a), 255);
+                    if (a == settings->accent) {
+                        gfx_round_rect_stroke(surface(), ax + a * ACCENT_PITCH - 2, ry + 1,
+                                              ACCENT_SWATCH + 4, ACCENT_SWATCH + 4,
+                                              ACCENT_SWATCH / 2 + 2, theme->text, 210);
+                    }
+                }
+            } else if (i <= 5) {
+                const char *const *opts = i == 0 ? appearances : i == 2 ? glasses :
+                                         i == 3 ? menubars : i == 4 ? corner_opts : term_labels;
+                int n = i == 0 ? 3 : i == 5 ? 4 : 2;
+                int sel = i == 0 ? settings->appearance : i == 2 ? settings->glass_tint :
+                          i == 3 ? settings->menubar : i == 4 ? settings->corners : termtheme_index();
+                draw_segmented(seg_x(main_x, main_w), ry + 1, opts, n, sel);
+            } else {
+                bool value = i == 6 ? settings->reduced_transparency :
+                             i == 7 ? settings->reduced_motion : settings->time_24h;
+                draw_switch(main_x + main_w - 58, ry + 3, value);
+            }
         }
     } else if (state->page == SETTINGS_PAGE_USERS) {
         ui_text(main_x + 16, content_y + 10, "Users & Credentials", TEXT_HEADLINE, theme->text);
@@ -2277,7 +2383,7 @@ static void draw_window(int idx)
 {
     CompositorWindow *win = &windows[idx];
     AppWindowState *state = &app_states[idx];
-    int r = theme->glass.corner_radius[win->corner_level];
+    int r = settings_get()->corners ? 16 : theme->glass.corner_radius[win->corner_level];
     int blur_px = theme->glass.blur_px[win->blur_level];
     uint8_t opacity = theme->glass.opacity[win->glass_level];
     uint8_t highlight = theme->glass.highlight[win->glass_level];
@@ -2572,7 +2678,7 @@ static void draw_window_animated(int idx)
     int dw = win->w * sc / 1000, dh = win->h * sc / 1000;
     int dx = win->x + (win->w - dw) / 2, dy = win->y + (win->h - dh) / 2 + 8 * (1000 - e) / 1000;
     uint8_t alpha = (uint8_t)(255 * MIN(1000, e * 4 / 3) / 1000);
-    int r = theme->glass.corner_radius[win->corner_level];
+    int r = settings_get()->corners ? 16 : theme->glass.corner_radius[win->corner_level];
     render_window_to_layer(idx);
     gfx_shadow(surface(), dx, dy, dw, dh, r, 34, 14, theme->shadow, (uint8_t)(105 * alpha / 255));
     int k = fb_ui_scale();
@@ -2674,7 +2780,7 @@ static void draw_menu_bar(void)
     MenuBarLayout L;
     menu_bar_layout(&L);
     int H = MENU_BAR_HEIGHT;
-    if (!settings_get()->reduced_transparency) {
+    if (!settings_get()->reduced_transparency && !settings_get()->menubar) {
         /* Tahoe: an almost clear glass strip, no refraction or rim */
         ui_glass(0, 0, (int)comp_width, H, 0, 150);
     } else {
@@ -6135,6 +6241,7 @@ void compositor_set_dark_mode(bool enabled)
 
    dark_mode = enabled;
     theme = dark_mode ? theme_dark() : theme_light();
+    theme_set_accent(settings_get()->accent);   /* accent survives theme flips */
     settings_get()->dark_mode = enabled;
     wallpaper_retint();              /* window glass tint follows the theme */
 }
@@ -6142,6 +6249,21 @@ void compositor_set_dark_mode(bool enabled)
 void compositor_toggle_appearance(void)
 {
     toggle_appearance();
+}
+
+/* Auto appearance: dark between 19:00 and 07:00. Called once a minute from
+ * the main loop and immediately when Auto is selected. */
+void compositor_appearance_auto_tick(void)
+{
+    SettingsState *s = settings_get();
+    if (s->appearance != 2) return;
+    RtcTime now;
+    rtc_read_time(&now);
+    bool dark = now.hour >= 19 || now.hour < 7;
+    if (dark != dark_mode) {
+        toggle_appearance();
+        serial_printf("[UI] Appearance auto -> %s\n", dark ? "dark" : "light");
+    }
 }
 
 /* Show a desktop picture by name (see wallpaper_choice_name). */
@@ -7625,16 +7747,13 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         int main_x = content_x + sidebar_w + 10;
                         int main_w = (win->w - 24) - sidebar_w - 10;
                         int row = -1;
-                        for (int r = 0; r < 4; r++) {
+                        for (int r = 0; r < APPEARANCE_ROWS; r++) {
                             int ry = content_y + APPEARANCE_ROW_Y(r);
                             if (y >= ry && y < ry + 26 && x >= main_x + 8 && x <= main_x + main_w - 8) row = r;
                         }
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 0) {
-                            toggle_appearance();
+                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE) {
+                            appearance_page_click(main_x, main_w, content_y, row, x, y);
                         }
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 1) settings_toggle_time_format();
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 2) settings_toggle_reduced_transparency();
-                        if (state->settings.page == SETTINGS_PAGE_APPEARANCE && row == 3) settings_toggle_reduced_motion();
                         if (state->settings.page == SETTINGS_PAGE_NETWORK && net_info()->present) {
                             if (row == 0) set_wifi(!net_info()->enabled);
                             /* "Renew Lease" button sits below the detail lines */

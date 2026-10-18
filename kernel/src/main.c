@@ -157,6 +157,7 @@ static void seed_user_data(void)
 
 /* UI state */
 static bool ui_mode = false;
+static uint64_t appearance_auto_next_check;   /* next Auto-appearance clock check */
 static bool ui_initialized = false;
 
 /*
@@ -1098,6 +1099,13 @@ void kernel_main(BootInfo *boot_info)
         a64_poll_input();
 #endif
         net_poll(timer_get_ticks());   /* DHCP/ARP/DNS/TCP timers */
+
+        /* Auto appearance (Settings > Appearance): dark 19:00-07:00, checked
+         * once a minute so a session crossing the boundary flips itself. */
+        if (ui_mode && timer_get_ticks() >= appearance_auto_next_check) {
+            appearance_auto_next_check = timer_get_ticks() + 60000;
+            compositor_appearance_auto_tick();
+        }
 
         /* Process input events */
         for (unsigned budget = 0; budget < 128 && input_has_event(); budget++) {

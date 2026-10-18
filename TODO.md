@@ -61,11 +61,11 @@ live resize, Terminal themes.
   Plan + log: `LIQUID_GLASS_APPS_PLAN.md`.
 - Done: [x] LG1 Liquid Glass material, [x] LG2 glass on all floating chrome,
   [x] W1 JPEG decoder, [x] W2 wallpaper import + disk pack,
-  [x] W3 wallpaper library, [x] W4 Settings grid + Preview viewer.
+  [x] W3 wallpaper library, [x] W4 Settings grid + Preview viewer,
+  [x] C Appearance (Light/Dark/Auto, 8 accents, Clear/Tinted glass,
+  Glass/Solid menu bar, Standard/Round corners, Terminal theme row;
+  `tests/qemu_appearance.py`).
 - Remaining, in order:
-  - [ ] **C** Settings > Appearance: Light/Dark/Auto, accent colour
-    (Blue default + 7), Glass Clear/Tinted, menu bar Glass/Solid, window
-    corners, Terminal theme row — live and saved.
   - [ ] **LG3** Liquid Glass rims on windows, radius 16, concentric panels.
   - [ ] **LG4** glass toolbar buttons / segmented controls / switches.
   - [ ] **S1** notification banners (+ posts from apps).

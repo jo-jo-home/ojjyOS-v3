@@ -52,6 +52,12 @@ typedef struct {
     bool reduced_transparency;
     bool reduced_motion;
     char wallpaper[64];          /* desktop picture name ("" = default) */
+    uint8_t appearance;          /* 0 Light, 1 Dark, 2 Auto (clock) */
+    uint8_t accent;              /* theme accent index (theme_accent_*) */
+    uint8_t glass_tint;          /* 0 Clear, 1 Tinted Liquid Glass */
+    uint8_t menubar;             /* 0 Glass, 1 Solid menu bar */
+    uint8_t corners;             /* 0 Standard, 1 Round window corners */
+    char termtheme[24];          /* Terminal theme name ("" = Tahoe Dark) */
 } SettingsState;
 
 void app_registry_init(void);
@@ -75,6 +81,12 @@ void settings_toggle_reduced_transparency(void);
 void settings_toggle_reduced_motion(void);
 void settings_set_volume(uint8_t value);
 void settings_set_brightness(uint8_t value);
+void settings_set_appearance(uint8_t value);      /* 0 light, 1 dark, 2 auto */
+void settings_set_accent(uint8_t index);
+void settings_set_glass_tint(uint8_t value);      /* 0 clear, 1 tinted */
+void settings_set_menubar(uint8_t value);        /* 0 glass, 1 solid */
+void settings_set_corners(uint8_t value);        /* 0 standard, 1 round */
+void settings_set_termtheme(const char *name);
 
 void notifications_init(void);
 void notifications_push(const char *message);

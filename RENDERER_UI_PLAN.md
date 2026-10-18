@@ -254,3 +254,10 @@ Results are appended to the log below.
   has a shortcuts switch + reference list; Mouse page has a 4-step speed
   control and says honestly it only affects relative mice. Live: TCG + HVF
   smoke, pointer, apps, browser, network UI, x86 smoke PASS (build/ui2-live).
+- UI polish pass 2b: TextEdit/Notes had no visible text cursor at all — now an
+  accent caret, current-line highlight, document header (icon, name,
+  "Edited" pill), paper sheet and status bar; Notes gets a yellow notepad
+  header and full-page ruled lines. Preview shows the rendered wallpaper
+  thumbnails (the old nearest-neighbour thumbnails and draw_image_scaled are
+  gone). Light + dark checked (build/edit1). Live: TCG + HVF smoke, pointer,
+  apps, files, x86 smoke PASS (build/ui3-live).

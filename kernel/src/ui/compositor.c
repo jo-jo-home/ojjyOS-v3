@@ -376,7 +376,6 @@ static void finder_update_preview(FinderState *state);
 static bool path_in_trash(const char *path);
 static void trash_dir(char *out, size_t size);
 static void empty_trash(void);
-static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x, int y, int w, int h);
 static void textedit_load_file(TextEditState *edit, const char *path);
 static size_t str_append(char *dest, size_t size, const char *src);
 static const char *str_find(const char *haystack, const char *needle);
@@ -1258,13 +1257,36 @@ static void draw_terminal_window(TerminalState *term, int content_x, int content
     fb_draw_string(content_x + 10, content_y + content_h - 20, prompt, COLOR_TEXT_LIGHT, theme->midnight);
 }
 
-static void draw_textedit_window(TextEditState *edit, int content_x, int content_y, int content_w, int content_h)
+/* TextEdit and Notes: monospace text on a "paper" sheet (the editor works on
+ * a character grid), a document header, visible caret and a status bar.
+ * Notes gets a yellow notepad header and ruled lines. */
+#define EDIT_LINE_H  18
+static void draw_textedit_window(TextEditState *edit, int content_x, int content_y, int content_w, int content_h, bool notes)
 {
-    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
+    bool dark = settings_get()->dark_mode;
+    Color paper = dark ? RGB(24, 30, 42) : (notes ? RGB(255, 252, 238) : COLOR_WHITE);
+    Color ink = dark ? theme->text : RGB(30, 34, 42);
 
-    ui_text(content_x + 10, content_y + 8, edit->file_path[0] ? edit->file_path : "Untitled", TEXT_BODY, theme->text);
+    /* Header: icon, document name, edited pill */
+    int hy = content_y, hh = 30;
+    if (notes) gfx_round_rect_vgradient(surface(), content_x, hy, content_w, hh, 10,
+                                        dark ? RGB(120, 96, 30) : RGB(255, 222, 89), dark ? RGB(96, 76, 22) : RGB(248, 196, 40), 255);
+    draw_icon_id(notes ? ICON_NOTES : ICON_TEXTEDIT, content_x + 10, hy + 7, 16, 255);
+    const char *name = edit->file_path[0] ? vfs_basename(edit->file_path) : (notes ? "Quick Note" : "Untitled");
+    int nw = text_draw_fit(surface(), content_x + 32, text_y_center(hy, hh, TEXT_BODY_BOLD), name, TEXT_BODY_BOLD,
+                           notes && !dark ? RGB(70, 50, 10) : theme->text, content_w - 140);
+    if (edit->dirty) {
+        int pw = text_width("Edited", TEXT_SMALL_BOLD) + 14;
+        draw_rounded_rect_blend(content_x + 40 + nw, hy + 7, pw, 16, 8, theme->accent, 220);
+        ui_text_mid(content_x + 47 + nw, hy + 7, 16, "Edited", TEXT_SMALL_BOLD, COLOR_WHITE);
+    }
 
-    int visible = (content_h - 60) / 16;
+    /* Paper */
+    int py = content_y + hh + 4, ph = content_h - hh - 4 - 24;
+    gfx_shadow(surface(), content_x, py, content_w, ph, 8, 8, 2, COLOR_BLACK, dark ? 60 : 30);
+    draw_rounded_rect_blend(content_x, py, content_w, ph, 8, paper, 250);
+
+    int visible = (ph - 16) / EDIT_LINE_H;
     if (visible < 1) visible = 1;
     int max_scroll = edit->line_count - visible;
     if (max_scroll < 0) max_scroll = 0;
@@ -1276,38 +1298,45 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
         edit->scroll = edit->cursor_line - visible + 1;
     }
 
-    int line_y = content_y + 30;
+    int tx = content_x + 14, line_y = py + 8;
+    fb_set_clip(content_x + 4, py + 2, content_w - 8, ph - 4);
+    if (notes)          /* ruled paper across the whole page */
+        for (int r = 0; r < visible; r++)
+            draw_rounded_rect_blend(content_x + 8, line_y + r * EDIT_LINE_H + EDIT_LINE_H - 1, content_w - 16, 1, 0,
+                                    dark ? COLOR_WHITE : RGB(200, 190, 150), dark ? 20 : 120);
     for (int i = edit->scroll; i < edit->line_count && i < edit->scroll + visible; i++) {
+        if (i == edit->cursor_line && !edit->sel_active)
+            draw_rounded_rect_blend(content_x + 6, line_y - 1, content_w - 12, EDIT_LINE_H, 4,
+                                    theme->accent, dark ? 30 : 18);
         if (edit->sel_active && edit->sel_line == i) {
             textedit_normalize_selection(edit);
             int start = edit->sel_start;
             int end = edit->sel_end;
             if (start < end) {
-                int x1 = content_x + 10 + start * FONT_WIDTH;
-                int width = (end - start) * FONT_WIDTH;
-                draw_rounded_rect_blend(x1 - 2, line_y - 2, width + 4, FONT_HEIGHT + 4,
-                                        6, theme->accent, 40);
+                draw_rounded_rect_blend(tx + start * FONT_WIDTH - 1, line_y, (end - start) * FONT_WIDTH + 2, EDIT_LINE_H - 2,
+                                        3, theme->accent, 90);
             }
         }
-        fb_draw_string(content_x + 10, line_y, edit->lines[i], theme->text, theme->dock_tint);
-        line_y += 16;
+        fb_draw_string(tx, line_y + 1, edit->lines[i], ink, paper);
+        if (i == edit->cursor_line)
+            draw_rounded_rect_blend(tx + edit->cursor_col * FONT_WIDTH, line_y, 2, EDIT_LINE_H - 2, 1, theme->accent, 255);
+        line_y += EDIT_LINE_H;
     }
+    if (edit->line_count == 0)       /* empty document: caret at the start */
+        draw_rounded_rect_blend(tx, line_y, 2, EDIT_LINE_H - 2, 1, theme->accent, 255);
+    fb_reset_clip();
 
     char status[96];
     status[0] = '\0';
-    if (edit->dirty) {
-        str_append(status, sizeof(status), "Edited • ");
-    }
     str_append(status, sizeof(status), edit->status);
-    str_append(status, sizeof(status), "  Ln ");
+    str_append(status, sizeof(status), "   Line ");
     char num[8];
     utoa(edit->cursor_line + 1, num, 10);
     str_append(status, sizeof(status), num);
-    str_append(status, sizeof(status), ", Col ");
+    str_append(status, sizeof(status), ", Column ");
     utoa(edit->cursor_col + 1, num, 10);
     str_append(status, sizeof(status), num);
-
-    ui_text(content_x + 10, content_y + content_h - 18, status, TEXT_BODY, theme->text_muted);
+    ui_text_mid(content_x + 4, content_y + content_h - 22, 22, status, TEXT_SMALL, theme->text_muted);
 }
 
 static void calendar_format_time(const CalendarEvent *ev, char *out, size_t size)
@@ -1571,25 +1600,22 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
 
 static void draw_preview_window(PreviewState *preview, int content_x, int content_y, int content_w, int content_h)
 {
-    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
-    ui_text(content_x + 12, content_y + 12, "Preview", TEXT_BODY, theme->text);
+    bool dark = settings_get()->dark_mode;
+    draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, dark ? RGB(18, 24, 36) : COLOR_WHITE, dark ? 70 : 90);
+    ui_text(content_x + 16, content_y + 12, "Wallpapers", TEXT_TITLE, theme->text);
+    ui_text(content_x + 16, content_y + 32, "The built-in Tahoe wallpapers, rendered at any size.", TEXT_SMALL, theme->text_muted);
 
-    int thumb_y = content_y + 40;
-    int thumb_x = content_x + 16;
-    int gap = 16;
-
-    if (preview->loaded) {
-        draw_image_scaled(preview->light_thumb, PREVIEW_THUMB_W, PREVIEW_THUMB_H, thumb_x, thumb_y, 120, 80);
-        draw_image_scaled(preview->dark_thumb, PREVIEW_THUMB_W, PREVIEW_THUMB_H, thumb_x + 120 + gap, thumb_y, 120, 80);
-    } else {
-        fb_fill_rect(thumb_x, thumb_y, 120, 80, theme->accent_soft);
-        fb_fill_rect(thumb_x + 120 + gap, thumb_y, 120, 80, theme->accent);
+    static const char *const names[2] = { "Tahoe Light", "Tahoe Dark" };
+    int total = 2 * WP_THUMB_W + 24;
+    int x0 = content_x + (content_w - total) / 2, ty = content_y + 60;
+    for (int i = 0; i < 2; i++) {
+        int tx = x0 + i * (WP_THUMB_W + 24);
+        draw_wallpaper_thumb(i, tx, ty, false);
+        int nw = text_width(names[i], TEXT_BODY_MEDIUM);
+        ui_text(tx + (WP_THUMB_W - nw) / 2, ty + WP_THUMB_H + 10, names[i], TEXT_BODY_MEDIUM, theme->text);
     }
-
-    ui_text(thumb_x + 10, thumb_y + 90, "Tahoe Light", TEXT_BODY, theme->text_muted);
-    ui_text(thumb_x + 140 + gap, thumb_y + 90, "Tahoe Dark", TEXT_BODY, theme->text_muted);
-
-    ui_text(content_x + 12, content_y + content_h - 18, preview->current, TEXT_BODY, theme->text_muted);
+    (void)preview;
+    ui_text_mid(content_x + 16, content_y + content_h - 26, 22, "Set one in Settings \xE2\x86\x92 Wallpaper", TEXT_SMALL, theme->text_muted);
 }
 
 /* Shared helpers for app modules in their own files (ui/draw.h). */
@@ -2040,10 +2066,10 @@ static void draw_window(int idx)
             draw_terminal_window(&state->terminal, content_x, content_y, content_w, content_h);
             break;
         case APP_TEXTEDIT:
-            draw_textedit_window(&state->textedit, content_x, content_y, content_w, content_h);
+            draw_textedit_window(&state->textedit, content_x, content_y, content_w, content_h, false);
             break;
         case APP_NOTES:
-            draw_textedit_window(&state->notes, content_x, content_y, content_w, content_h);
+            draw_textedit_window(&state->notes, content_x, content_y, content_w, content_h, true);
             break;
         case APP_PREVIEW:
             draw_preview_window(&state->preview, content_x, content_y, content_w, content_h);
@@ -2740,24 +2766,6 @@ static void draw_app_icon_a(const AppInfo *app, int x, int y, int size, uint8_t 
 static void draw_app_icon(const AppInfo *app, int x, int y, int size)
 {
     draw_app_icon_a(app, x, y, size, 255);
-}
-
-static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x, int y, int w, int h)
-{
-    for (int py = 0; py < h; py++) {
-        int sy = (py * src_h) / h;
-        for (int px = 0; px < w; px++) {
-            int sx = (px * src_w) / w;
-            int idx = (sy * src_w + sx) * 4;
-            uint8_t r = pixels[idx + 0];
-            uint8_t g = pixels[idx + 1];
-            uint8_t b = pixels[idx + 2];
-            uint8_t a = pixels[idx + 3];
-            if (a > 16) {
-                fb_put_pixel(x + px, y + py, RGB(r, g, b));
-            }
-        }
-    }
 }
 
 /* Dock layout (macOS-style magnification): icons near the pointer grow

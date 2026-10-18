@@ -12,6 +12,20 @@ layout, Settings switches). Receipts at the end of `CURSOR_UI_PLAN.md`.
 Jonas then asked: keep writing context into the project while working, and
 after the needed work, hunt for bugs/improvements -> see `IMPROVEMENTS.md`.
 
+Session records / HEAD at this write (2026-10-17 ~21:15):
+
+- **`JONAS_MESSAGES.md`** — Jonas's 42 messages to the AI, verbatim, in order,
+  extracted from the 9.7 MB session export he dropped into the repo root
+  (`ojjyos-v3-bugs-macos-features-custom-kernel.json`; deliberately NOT
+  committed — too large). His msg 280 is the canonical requirements list;
+  his latest instructions supersede older ones.
+- HEAD is `8cc8d5a` (file-copy data loss, Finder shortcut/refresh/history,
+  account-name bug pass; details in `IMPROVEMENTS.md`); main is 17 commits
+  ahead of origin/main, **nothing pushed**.
+- More than one AI session has worked in this repo concurrently today.
+  Re-check `git log`/`git status` before editing; every handoff file here is
+  a snapshot, not a lock.
+
 ### (previous) cursor repair then UI cleanup
 
 Jonas reported absolute-pointer offset and lag, then asked for UI improvements

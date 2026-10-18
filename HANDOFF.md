@@ -2,6 +2,22 @@
 
 Captured: **2026-10-17**. Read this together with **AGENTS.md**.
 
+## Session records (final write of this session, 2026-10-17 ~21:15)
+
+- **`JONAS_MESSAGES.md`** — Jonas's 42 messages to the AI, verbatim, in
+  order, extracted from the 9.7 MB session export he provided in the repo
+  root (`ojjyos-v3-bugs-macos-features-custom-kernel.json`, intentionally
+  uncommitted). Read it for requirements history and tone.
+- HEAD at this write: `8cc8d5a` (bug/improvement pass — file-copy data loss,
+  Finder Cmd+C, stale listings, forward history, username validation; see
+  `IMPROVEMENTS.md`). Cursor/UI fix: `e649535` (receipts in
+  `CURSOR_UI_PLAN.md`). Protected apps: `ef92f96` (`PROTECTED_APPS.md`).
+  Main is 17 commits ahead of origin/main; **nothing pushed**.
+- Multiple AI sessions edited this repo concurrently today; re-check git
+  state before trusting any single handoff file, including this one.
+- User-level skill `qemu-kernel-counter-probe` captures the live-counter
+  verification technique (llvm-nm + QMP pmemsave) used throughout.
+
 ## DONE: cursor and UI request (see CURSOR_UI_PLAN.md receipts)
 
 After `ef92f96`, Jonas first requested an OS status update, then reported the

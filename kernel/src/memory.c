@@ -168,7 +168,7 @@ void pmm_init(BootInfo *info)
 
     /* Reserve the actual kernel image (_kernel_start .. _kernel_end, .bss included).
      * The kernel BSS is several MB (wallpaper buffers, ramfs pools), so we use
-     * linker symbols on both x86_64 (0x100000) and aarch64 (0x41000000). */
+     * linker symbols on both x86_64 (0x100000) and aarch64 (0x71000000). */
     uint64_t kernel_start_page = (uint64_t)(uintptr_t)_kernel_start / PAGE_SIZE;
     uint64_t kernel_end_page = ((uint64_t)(uintptr_t)_kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
     if (kernel_start_page < 256) {

@@ -110,6 +110,8 @@ EFI_STATUS LoadKernel(EFI_HANDLE ImageHandle, UINT64 *entry_point);
 EFI_STATUS SetupFramebuffer(BootInfo *info);
 EFI_STATUS GetMemoryMap(BootInfo *info, UINTN *map_key);
 UINT64 FindRSDP(void);
+static void SaveBootLog(EFI_HANDLE ImageHandle);
+static void DumpPlatform(void);
 
 /*
  * EFI entry point
@@ -172,6 +174,8 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
         Print(L"[WARN] RSDP not found\n");
     }
 
+    DumpPlatform();
+
     /* Step 3: Load kernel from disk */
     Print(L"[BOOT] Loading kernel from %s...\n", KERNEL_PATH);
     status = LoadKernel(ImageHandle, &kernel_entry);
@@ -189,6 +193,10 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     }
     Print(L"[OK]   Memory map: %d bytes, desc size %d\n",
           (UINT32)boot_info->mmap_size, (UINT32)boot_info->mmap_desc_size);
+    Print(L"[BOOT] Jumping to kernel\n");
+    SaveBootLog(ImageHandle);       /* writing allocates: refresh the map after */
+    status = GetMemoryMap(boot_info, &map_key);
+    if (EFI_ERROR(status)) goto error;
 
     /* Step 5: Exit boot services - point of no return.
      * The map key can be invalidated by anything the firmware does,
@@ -223,6 +231,7 @@ efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
     }
 
 error:
+    SaveBootLog(ImageHandle);
     Print(L"\n[BOOT] Press any key to reboot...\n");
     WaitForSingleEvent(ST->ConIn->WaitForKey, 0);
     RT->ResetSystem(EfiResetCold, EFI_SUCCESS, 0, NULL);
@@ -597,4 +606,111 @@ FindRSDP(void)
     }
 
     return 0;
+}
+
+/*
+ * Boot log: everything Print()ed is saved to \ojjyboot.log on the boot
+ * volume, so boots on machines without a visible console (Apple's
+ * Virtualization framework) can be diagnosed from the disk image.
+ */
+static void SaveBootLog(EFI_HANDLE ImageHandle)
+{
+#ifdef OJJY_STANDALONE_EFI
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_GUID li_guid = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+    EFI_LOADED_IMAGE_PROTOCOL *li = NULL;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs = NULL;
+    EFI_FILE_PROTOCOL *root, *f;
+    if (EFI_ERROR(BS->HandleProtocol(ImageHandle, &li_guid, (void **)&li)) || !li->DeviceHandle) return;
+    if (EFI_ERROR(BS->HandleProtocol(li->DeviceHandle, &fs_guid, (void **)&fs))) return;
+    if (EFI_ERROR(fs->OpenVolume(fs, &root))) return;
+    if (!EFI_ERROR(root->Open(root, &f, L"\\ojjyboot.log",
+                              EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0))) {
+        f->SetPosition(f, 0);
+        UINTN n = efi_log_len;
+        f->Write(f, &n, efi_log);
+        /* Pad over any older, longer log */
+        static char pad[512];
+        for (int i = 0; i < 512; i++) pad[i] = ' ';
+        for (int k = 0; k < 8; k++) { UINTN m = sizeof(pad); f->Write(f, &m, pad); }
+        f->Flush(f);
+        f->Close(f);
+    }
+    root->Close(root);
+#else
+    (void)ImageHandle;
+#endif
+}
+
+/* Platform facts for bring-up on new machines: memory map, configuration
+ * tables and ACPI table signatures (with addresses). */
+static void DumpPlatform(void)
+{
+    BootInfo mi;
+    UINTN key;
+    if (!EFI_ERROR(GetMemoryMap(&mi, &key))) {
+        Print(L"[MAP]  type start..end\n");
+        for (UINT64 off = 0; off < mi.mmap_size; off += mi.mmap_desc_size) {
+            EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)(UINTN)(mi.mmap_addr + off);
+            Print(L"[MAP]  %d 0x%lx..0x%lx\n", (UINT64)d->Type, d->PhysicalStart,
+                  d->PhysicalStart + d->NumberOfPages * 4096);
+        }
+        BS->FreePool((void *)(UINTN)mi.mmap_addr);
+    }
+    for (UINTN i = 0; i < ST->NumberOfTableEntries; i++) {
+        EFI_GUID *g = &ST->ConfigurationTable[i].VendorGuid;
+        Print(L"[CFG]  %x-%x-%x @ 0x%lx\n", (UINT64)g->Data1, (UINT64)g->Data2, (UINT64)g->Data3,
+              (UINT64)(UINTN)ST->ConfigurationTable[i].VendorTable);
+    }
+    UINT64 rsdp = FindRSDP();
+    if (rsdp) {
+        UINT8 *r = (UINT8 *)(UINTN)rsdp;
+        UINT64 xsdt = *(UINT64 *)(r + 24);
+        UINT8 *x = (UINT8 *)(UINTN)xsdt;
+        UINT32 len = *(UINT32 *)(x + 4);
+        for (UINT32 o = 36; o + 8 <= len; o += 8) {
+            UINT8 *t = (UINT8 *)(UINTN)*(UINT64 *)(x + o);
+            CHAR16 sig[5] = { t[0], t[1], t[2], t[3], 0 };
+            UINT32 tl = *(UINT32 *)(t + 4);
+            Print(L"[ACPI] %s @ 0x%lx len %d\n", sig, (UINT64)(UINTN)t, (UINT64)tl);
+            if (sig[0] == 'A' && sig[1] == 'P') {          /* MADT: GIC structures */
+                for (UINT32 q = 44; q + 2 <= tl; q += t[q + 1]) {
+                    if (!t[q + 1]) break;
+                    UINT8 ty = t[q];
+                    if (ty == 0xC) Print(L"[MADT] GICD base 0x%lx version %d\n", *(UINT64 *)(t + q + 8), (UINT64)t[q + 20]);
+                    else if (ty == 0xE) Print(L"[MADT] GICR base 0x%lx len 0x%x\n", *(UINT64 *)(t + q + 4), (UINT64)*(UINT32 *)(t + q + 12));
+                    else if (ty == 0xB) Print(L"[MADT] GICC mpidr 0x%lx gicr 0x%lx base 0x%lx\n", *(UINT64 *)(t + q + 68),
+                                              *(UINT64 *)(t + q + 60), *(UINT64 *)(t + q + 32));
+                    else if (ty == 0xF) Print(L"[MADT] ITS base 0x%lx\n", *(UINT64 *)(t + q + 8));
+                    else Print(L"[MADT] type %d\n", (UINT64)ty);
+                }
+            } else if (sig[0] == 'M' && sig[1] == 'C') {   /* MCFG: PCIe ECAM */
+                for (UINT32 q = 44; q + 16 <= tl; q += 16) {
+                    UINT64 ecam = *(UINT64 *)(t + q);
+                    Print(L"[MCFG] ECAM 0x%lx seg %d bus %d..%d\n", ecam, (UINT64)*(UINT16 *)(t + q + 8),
+                          (UINT64)t[q + 10], (UINT64)t[q + 11]);
+                    for (UINT32 bus = 0; bus < 2; bus++) for (UINT32 dev = 0; dev < 32; dev++) for (UINT32 fn = 0; fn < 8; fn++) {
+                        volatile UINT32 *c = (volatile UINT32 *)(UINTN)(ecam + (bus << 20) + (dev << 15) + (fn << 12));
+                        if ((c[0] & 0xFFFF) == 0xFFFF) { if (fn == 0) break; continue; }
+                        Print(L"[PCI]  %d:%d.%d id %x class %x hdr %x\n", (UINT64)bus, (UINT64)dev, (UINT64)fn,
+                              (UINT64)c[0], (UINT64)(c[2] >> 8), (UINT64)((c[3] >> 16) & 0xFF));
+                        for (UINT32 b = 0; b < 6; b++) {
+                            UINT32 v = c[4 + b];
+                            if (!v) continue;
+                            UINT64 addr = v & ~0xFULL;
+                            if ((v & 6) == 4) { addr |= (UINT64)c[5 + b] << 32; Print(L"[PCI]    bar%d 0x%lx (64)\n", (UINT64)b, addr); b++; }
+                            else Print(L"[PCI]    bar%d 0x%lx\n", (UINT64)b, addr);
+                        }
+                        if (fn == 0 && !(((c[3] >> 16) & 0x80))) break;
+                    }
+                }
+            } else if (sig[0] == 'G' && sig[1] == 'T') {   /* GTDT: timer interrupts */
+                Print(L"[GTDT] secure %d nonsecure-phys %d virtual %d hyp %d\n", (UINT64)*(UINT32 *)(t + 48),
+                      (UINT64)*(UINT32 *)(t + 56), (UINT64)*(UINT32 *)(t + 64), (UINT64)*(UINT32 *)(t + 72));
+            } else if (sig[0] == 'F' && sig[1] == 'A') {   /* FADT -> DSDT */
+                Print(L"[FADT] DSDT 0x%lx flags 0x%x arm-boot 0x%x\n", *(UINT64 *)(t + 140), (UINT64)*(UINT32 *)(t + 112),
+                      (UINT64)*(UINT16 *)(t + 129));
+            }
+        }
+    }
 }

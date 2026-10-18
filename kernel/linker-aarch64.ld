@@ -1,9 +1,10 @@
 /*
  * ojjyOS v3 Kernel Linker Script (aarch64)
  *
- * On QEMU -M virt, RAM begins at 0x40000000 (1 GB).
- * The kernel is linked and loaded at 0x41000000 (+16 MB into RAM),
- * leaving the first 16 MB of RAM free for UEFI firmware tables.
+ * Linked and loaded at 0x71000000, which is RAM on both supported
+ * machines: QEMU virt (RAM 0x40000000..) and Apple's Virtualization
+ * framework (RAM 0x70000000..0xF0000000; 0x41000000 is not RAM there).
+ * Keep big buffers out of BSS (see uefi-kernel-bss notes in AGENTS.md).
  * Entry point is _start in arch/aarch64/entry.S.
  */
 
@@ -11,8 +12,8 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* Kernel starts at 0x41000000 */
-    . = 0x41000000;
+    /* Kernel starts at 0x71000000 */
+    . = 0x71000000;
     _kernel_start = .;
 
     /* Code section */

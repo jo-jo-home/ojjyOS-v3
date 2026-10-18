@@ -325,6 +325,8 @@ typedef struct {
     { 0x09576e92, 0x6d3f, 0x11d2, { 0x8e, 0x39, 0x00, 0xa0, 0xc9, 0x69, 0x72, 0x3b } }
 
 #define EFI_FILE_MODE_READ 0x0000000000000001ULL
+#define EFI_FILE_MODE_WRITE 0x0000000000000002ULL
+#define EFI_FILE_MODE_CREATE 0x8000000000000000ULL
 
 typedef struct {
     UINT16 Year;
@@ -370,12 +372,12 @@ typedef struct _EFI_FILE_PROTOCOL {
     EFI_FILE_CLOSE        Close;
     VOID                 *Delete;
     EFI_FILE_READ         Read;
-    VOID                 *Write;
+    EFI_STATUS (EFIAPI *Write)(struct _EFI_FILE_PROTOCOL *This, UINTN *BufferSize, VOID *Buffer);
     VOID                 *GetPosition;
     EFI_FILE_SET_POSITION SetPosition;
     EFI_FILE_GET_INFO     GetInfo;
     VOID                 *SetInfo;
-    VOID                 *Flush;
+    EFI_STATUS (EFIAPI *Flush)(struct _EFI_FILE_PROTOCOL *This);
 } EFI_FILE_PROTOCOL;
 
 struct _EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
@@ -445,6 +447,19 @@ static inline EFI_STATUS WaitForSingleEvent(EFI_EVENT Event, UINT64 Timeout)
     return BS->WaitForEvent(1, &Event, &idx);
 }
 
+/* Everything printed is also kept (ASCII) so the bootloader can save a boot
+ * log on machines whose console we cannot see (Apple Virtualization). */
+#define EFI_LOG_MAX 49152
+static char efi_log[EFI_LOG_MAX];
+static UINTN efi_log_len;
+
+static inline void efi_out(CHAR16 *s)
+{
+    for (UINTN i = 0; s[i] && efi_log_len < EFI_LOG_MAX; i++)
+        if (s[i] != L'\r') efi_log[efi_log_len++] = s[i] < 128 ? (char)s[i] : '?';
+    ST->ConOut->OutputString(ST->ConOut, s);
+}
+
 static inline void efi_puts_u16(const CHAR16 *s)
 {
     if (!ST || !ST->ConOut) return;
@@ -453,14 +468,14 @@ static inline void efi_puts_u16(const CHAR16 *s)
     for (UINTN i = 0; s[i] != 0; i++) {
         if (s[i] == L'\n') {
             buf[bi++] = L'\r';
-            if (bi >= 126) { buf[bi] = 0; ST->ConOut->OutputString(ST->ConOut, buf); bi = 0; }
+            if (bi >= 126) { buf[bi] = 0; efi_out(buf); bi = 0; }
         }
         buf[bi++] = s[i];
-        if (bi >= 126) { buf[bi] = 0; ST->ConOut->OutputString(ST->ConOut, buf); bi = 0; }
+        if (bi >= 126) { buf[bi] = 0; efi_out(buf); bi = 0; }
     }
     if (bi > 0) {
         buf[bi] = 0;
-        ST->ConOut->OutputString(ST->ConOut, buf);
+        efi_out(buf);
     }
 }
 
@@ -491,9 +506,9 @@ static inline UINTN Print(const CHAR16 *fmt, ...)
     CHAR16 ch[2] = { 0, 0 };
     for (UINTN i = 0; fmt[i] != 0; i++) {
         if (fmt[i] != L'%') {
-            if (fmt[i] == L'\n') { ch[0] = L'\r'; ST->ConOut->OutputString(ST->ConOut, ch); }
+            if (fmt[i] == L'\n') { ch[0] = L'\r'; efi_out(ch); }
             ch[0] = fmt[i];
-            ST->ConOut->OutputString(ST->ConOut, ch);
+            efi_out(ch);
             continue;
         }
         i++;
@@ -518,7 +533,7 @@ static inline UINTN Print(const CHAR16 *fmt, ...)
         }
         default:
             ch[0] = fmt[i];
-            ST->ConOut->OutputString(ST->ConOut, ch);
+            efi_out(ch);
             break;
         }
     }

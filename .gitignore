@@ -26,3 +26,6 @@ __pycache__/
 * [0-9].d
 * [0-9].efi
 * [0-9].obj
+
+# Apple wallpapers downloaded for personal use - never commit (copyright Apple)
+wallpapers/local/

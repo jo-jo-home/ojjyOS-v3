@@ -74,9 +74,45 @@ suite, live suites, screenshots in light AND dark at 2x, local commit.
 | Preview | already redone; add "Set as wallpaper" buttons |
 | Login | Liquid Glass card + glass buttons |
 
+## Phase W — real Tahoe wallpapers (Jonas: "add the official tahoe backgrounds")
+
+Sources he named: 512pixels.net (Light/Dark Tahoe + Tahoe Beach Dawn/Day/
+Dusk/Night, 6K PNG) and basicappleguy.com (11 Tahoe aerial stills, 6K HEIC).
+These are **Apple's images**: they are downloaded to a git-ignored local
+folder (`wallpapers/local/`) and baked only into Jonas's own disk image at
+build time — never committed, never pushed.
+
+- **W1** Kernel baseline-JPEG decoder (`kernel/src/image/jpeg.c`): Huffman,
+  integer IDCT, 4:4:4 / 4:2:2 / 4:2:0, restart markers; bounded and safe on
+  bad input. Host tests decode Pillow-made fixtures and compare pixels (small
+  tolerance), plus fuzzed corrupt files under ASan.
+- **W2** `tools/import_wallpapers.py`: `--fetch` downloads the listed files
+  into `wallpapers/local/` (macOS `sips` converts HEIC); the build converts
+  every image there to baseline JPEG 2880x1800 (q 88) + a 320x200 thumbnail
+  and puts them in `/Library/Desktop Pictures/` of the system image.
+- **W3** Wallpaper library: the compositor lists `/Library/Desktop Pictures`
+  plus the procedural Tahoe Light/Dark; decodes the chosen JPEG at boot or on
+  selection, scales it to the screen (bilinear + dither), caches blur/glass.
+  The old 4 MB BSS wallpaper buffer goes (runtime allocation).
+- **W4** Settings > Wallpaper becomes a scrolling thumbnail grid with names;
+  the choice is saved per user and restored at login.
+
+## Phase C — customisation (Jonas: "customizability for themes/ui/background in settings")
+
+Settings > Appearance gains:
+- Appearance: Light / Dark / Auto (dark 19:00-07:00 by the clock).
+- Accent colour: Blue (default, Tahoe), Purple, Pink, Red, Orange, Yellow,
+  Green, Graphite — everything that uses the accent follows it.
+- Liquid Glass: Clear / Tinted (Tahoe 26.1 option) + the existing Reduce
+  Transparency.
+- Menu bar: transparent glass / solid.
+- Window corners: Standard / Round; Dock: size + magnification (exists).
+- Terminal theme (S4) row.
+All saved in settings and applied live.
+
 ## Order of work
 
-LG1 -> LG2 -> LG3 -> LG4 -> S1 -> S2 -> S3 -> S4 -> A (Finder, Terminal,
+LG1 -> LG2 -> W1 -> W2 -> W3 -> W4 -> C -> LG3 -> LG4 -> S1 -> S2 -> S3 -> S4 -> A (Finder, Terminal,
 TextEdit, Notes, Calendar, Calculator, Activity Monitor, Settings, Web,
 About, Preview, Login). Commit after each; log below.
 
@@ -91,3 +127,4 @@ About, Preview, Login). Commit after each; log below.
   visibly refract the windows under them. Logo uses text colour in light
   mode (blue-on-blue was unreadable). Cost measured: 28 ms -> 33 ms per drag
   frame at 2x (build/expperf vs build/lg2perf3).
+- W1 done: kernel/src/image/jpeg.c baseline JPEG decoder (Huffman, integer IDCT, 1/3 components, 4:4:4/4:2:2/4:2:0, restart markers, progressive rejected). tests/test_jpeg.c: 6 Pillow vectors (tests/gen_jpeg_vectors.py) match, truncation at every length + 4000 corruption rounds under ASan/UBSan. Chroma is upsampled by repetition, so wallpapers are stored 4:4:4 (exact).

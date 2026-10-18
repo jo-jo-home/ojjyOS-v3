@@ -28,8 +28,9 @@ fi
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_web.c kernel/src/web/{url,http,html}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_web"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_crypto.c kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c kernel/src/string.c -o "$OUT/test_crypto"
 "$HOST_CC" "${FLAGS[@]}" tests/test_gfx.c kernel/src/{gfx,string}.c -o "$OUT/test_gfx"
+"$HOST_CC" "${FLAGS[@]}" -Itests tests/test_jpeg.c kernel/src/image/jpeg.c kernel/src/string.c -o "$OUT/test_jpeg"
 "$HOST_CC" "${FLAGS[@]}" tests/test_calc.c kernel/src/ui/calcmath.c kernel/src/string.c -o "$OUT/test_calc"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_calc test_gfx; do
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_calc test_gfx test_jpeg; do
     echo "Running $test"
     "$OUT/$test"
 done

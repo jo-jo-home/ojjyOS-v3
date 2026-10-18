@@ -26,25 +26,26 @@
 #define FR_BUSY         (1u << 3)
 #define FR_TXFF         (1u << 5)    /* Transmit FIFO full */
 
-static volatile uint32_t *uart = (volatile uint32_t *)UART0_BASE;
+#include "mmio.h"
+#define UART(off) ((uintptr_t)UART0_BASE + (off))
 
 void serial_init(uint16_t port)
 {
     (void)port;     /* Fixed UART base on this platform */
 
     /* Mask UART interrupts; the debug channel is polled */
-    uart[UART_IMSC / 4] = 0;
-    uart[UART_ICR / 4] = 0x7FF;
+    mmio_write32(UART(UART_IMSC), 0);
+    mmio_write32(UART(UART_ICR), 0x7FF);
 }
 
 void serial_putc(char c)
 {
     /* Wait until the transmit FIFO has room */
-    while (uart[UART_FR / 4] & FR_TXFF) {
+    while (mmio_read32(UART(UART_FR)) & FR_TXFF) {
         /* Busy wait */
     }
 
-    uart[UART_DR / 4] = (uint32_t)(uint8_t)c;
+    mmio_write32(UART(UART_DR), (uint32_t)(uint8_t)c);
 
     /* Mirror the x86 driver's LF -> CRLF behavior */
     if (c == '\n') {

@@ -21,6 +21,8 @@ import time
 
 # Same display as scripts/run-qemu.sh; OJJY_DISPLAY=ramfb tests the 4:3 firmware path.
 DISPLAY_DEVICE = os.environ.get("OJJY_DISPLAY", "virtio-gpu-device,xres=1440,yres=900")
+# OJJY_ACCEL=hvf runs ARM guests with Apple hardware virtualization (GICv3).
+ACCEL = os.environ.get("OJJY_ACCEL", "tcg")
 
 
 class VM:
@@ -37,7 +39,8 @@ class VM:
                          if (p / f"edk2-{fw_name}-code.fd").exists()), None)
         if firmware is None:
             raise RuntimeError("Cannot find QEMU edk2 firmware")
-        command = [f"qemu-system-{arch}", "-m", "2048", "-smp", "1", "-accel", "tcg",
+        hvf = arch == "aarch64" and ACCEL == "hvf"
+        command = [f"qemu-system-{arch}", "-m", "2048", "-smp", "1", "-accel", "hvf" if hvf else "tcg",
                    "-display", "none", "-no-reboot",
                    "-serial", f"file:{self.log}", "-qmp", f"unix:{self.socket_path},server=on,wait=off"]
         if arch == "x86_64" and (firmware.parent / "edk2-i386-vars.fd").exists():
@@ -49,7 +52,8 @@ class VM:
         else:
             command += ["-bios", str(firmware)]
         if arch == "aarch64":
-            command += ["-M", "virt,gic-version=2", "-cpu", "cortex-a72",
+            command += ["-M", "virt,gic-version=3" if hvf else "virt,gic-version=2",
+                        "-cpu", "host" if hvf else "cortex-a72",
                         "-global", "virtio-mmio.force-legacy=false", "-device", DISPLAY_DEVICE,
                         "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
                         "-drive", f"file={disk},format=raw,if=none,id=hd,cache=writeback",

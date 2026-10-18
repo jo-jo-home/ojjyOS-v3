@@ -3,7 +3,17 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## LATEST (2026-10-18): full-screen fix — virtio-gpu display (see §4.7)
+## LATEST (2026-10-18, later): renderer + HVF — see RENDERER_UI_PLAN.md
+
+Jonas: lag when windows open, everything pixelated/ugly, wants animations,
+icons, fonts. Plan + live log in `RENDERER_UI_PLAN.md` (phases 1-5). Done so
+far: `kernel/src/gfx.c` AA span renderer (frames 345 -> 31 ms on TCG),
+time-based eased animations, and **HVF now works** (`arch/aarch64/mmio.h`,
+GICv3 detection via MIDR) — run-qemu.sh defaults to HVF, 7 ms frames.
+Dev images: `OJJY_BUILD_DIR=build/dev-aarch64`; Jonas's VM may hold
+`build/aarch64/ojjyos3.img` (never stop it / overwrite it).
+
+## (2026-10-18): full-screen fix — virtio-gpu display (see §4.7)
 
 ARM runner now uses a kernel virtio-gpu driver at 1440x900 (16:10) with
 Zoom To Fit on, so macOS full screen has no black bars. All live suites pass

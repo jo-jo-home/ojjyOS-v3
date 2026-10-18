@@ -23,16 +23,17 @@
 #define RTC_IMSC        0x10    /* Interrupt mask */
 #define RTC_ICR         0x1C    /* Interrupt clear */
 
-static volatile uint32_t *rtc = (volatile uint32_t *)RTC_BASE;
+#include "mmio.h"
+#define RTC(off) ((uintptr_t)RTC_BASE + (off))
 
 void rtc_init(void)
 {
     /* Clear any pending interrupt; the RTC is polled */
-    rtc[RTC_IMSC / 4] = 0;
-    rtc[RTC_CR / 4] = 1;             /* Start counting */
+    mmio_write32(RTC(RTC_IMSC), 0);
+    mmio_write32(RTC(RTC_CR), 1);            /* Start counting */
 
     serial_printf("[RTC] PL031 ready (%d seconds since epoch)\n",
-        (int)rtc[RTC_DR / 4]);
+        (int)mmio_read32(RTC(RTC_DR)));
 }
 
 /*
@@ -77,7 +78,7 @@ void rtc_read_time(RtcTime *time)
 {
     if (!time) return;
 
-    uint64_t secs = rtc[RTC_DR / 4];
+    uint64_t secs = mmio_read32(RTC(RTC_DR));
 
     int64_t days = (int64_t)(secs / 86400);
     uint64_t rem = secs % 86400;

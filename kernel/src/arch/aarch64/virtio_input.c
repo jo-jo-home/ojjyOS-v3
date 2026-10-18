@@ -17,6 +17,7 @@
  */
 
 #include "virtio.h"
+#include "mmio.h"
 #include "virtio_devices.h"
 #include "drivers/input.h"
 #include "serial.h"
@@ -257,15 +258,14 @@ static void handle_event(InputDevState *dev, const VirtioInputEvent *ev)
  */
 static bool input_abs_range(uint32_t mmio, uint8_t axis, int32_t *min, int32_t *max)
 {
-    volatile uint8_t *cfg = (volatile uint8_t *)(uintptr_t)(mmio + VIO_CFG);
-    cfg[0] = VIRTIO_INPUT_CFG_ABS_INFO;
-    cfg[1] = axis;
+    uintptr_t cfg = (uintptr_t)mmio + VIO_CFG;
+    mmio_write8(cfg, VIRTIO_INPUT_CFG_ABS_INFO);
+    mmio_write8(cfg + 1, axis);
     virtio_memory_barrier();
 
     /* absinfo: min(u32), max(u32), fuzz, flat, res at CFG+8 */
-    if (cfg[2] < 20) return false;
-    volatile int32_t *data = (volatile int32_t *)(uintptr_t)(mmio + VIO_CFG + 8);
-    *min = data[0]; *max = data[1];
+    if (mmio_read8(cfg + 2) < 20) return false;
+    *min = (int32_t)mmio_read32(cfg + 8); *max = (int32_t)mmio_read32(cfg + 12);
     return *max > *min;
 }
 
@@ -308,7 +308,7 @@ int virtio_input_attach(uint32_t mmio_base)
     dev->vq.avail_idx = count;
     dev->vq.mem->avail.idx = count;
     virtio_memory_barrier();
-    *(volatile uint32_t *)(uintptr_t)(mmio_base + VIO_QUEUE_NOTIFY) = 0;
+    mmio_write32((uintptr_t)mmio_base + VIO_QUEUE_NOTIFY, 0);
 
     serial_printf("[VIRTIO-INPUT] Device %d attached (%s, abs %dx%d)\n",
         idx, dev->has_pointer ? "pointer" : "keyboard",
@@ -371,7 +371,7 @@ void virtio_input_poll(void)
 
         if (recycled) {
             virtio_memory_barrier();
-            *(volatile uint32_t *)(uintptr_t)(vq->mmio + VIO_QUEUE_NOTIFY) = 0;
+            mmio_write32((uintptr_t)vq->mmio + VIO_QUEUE_NOTIFY, 0);
         }
     }
 }

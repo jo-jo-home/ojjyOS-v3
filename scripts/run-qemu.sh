@@ -3,7 +3,7 @@
 # ojjyOS v3 QEMU Runner (Apple Silicon / aarch64 & x86_64)
 #
 # Runs an ARM64 guest on Apple Silicon Macs via qemu-system-aarch64
-# with single-vCPU TCG emulation (not HVF), ramfb GOP display,
+# with one vCPU (Apple HVF when available, else TCG), virtio-gpu display,
 # PL011 UART, PL031 RTC, and virtio-mmio keyboard/tablet/block devices.
 #
 # Usage:
@@ -13,6 +13,7 @@
 # full-screen area of a notched MacBook). Use 1600x900 on a 16:9 monitor.
 # OJJY_DISPLAY=ramfb restores the old 4:3-only firmware display.
 # OJJY_FULLSCREEN=1 starts in macOS full screen (Zoom To Fit is always on).
+# OJJY_ACCEL=hvf|tcg picks the accelerator (default: HVF when available).
 #
 # ojjyOS - Created by Jonas Lee
 #
@@ -79,12 +80,28 @@ if [ "$ARCH" = "aarch64" ]; then
         exit 1
     fi
 
-    # QEMU on macOS: Apple HVF does not emulate this machine config
-    # (GICv2/ramfb), so use multi-threaded TCG. The kernel is strictly
-    # single-CPU (secondary cores are parked in entry.S), so one vCPU
-    # is correct and fast; the io threads still run alongside.
-    ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "1")
-    ACCEL_DESC="MTTCG (ARM64 JIT, 1 vCPU)"
+    # Apple Silicon: hardware virtualization (HVF) runs the kernel on the
+    # real CPU, ~4-20x faster than emulation. HVF needs GICv3 (it cannot
+    # emulate GICv2) and every MMIO access must be a plain LDR/STR (see
+    # kernel/src/arch/aarch64/mmio.h). OJJY_ACCEL=tcg forces emulation.
+    # The kernel is single-CPU (secondary cores are parked in entry.S).
+    ACCEL="${OJJY_ACCEL:-auto}"
+    if [ "$ACCEL" = "auto" ]; then
+        ACCEL="tcg"
+        if [ "$(uname -s)" = "Darwin" ] && [ "$(uname -m)" = "arm64" ] &&
+           [ "$(sysctl -n kern.hv_support 2>/dev/null)" = "1" ]; then
+            ACCEL="hvf"
+        fi
+    fi
+    if [ "$ACCEL" = "hvf" ]; then
+        ACCEL_ARGS=("-accel" "hvf" "-cpu" "host" "-smp" "1")
+        MACHINE="virt,gic-version=3"
+        ACCEL_DESC="HVF (Apple hardware virtualization, 1 vCPU)"
+    else
+        ACCEL_ARGS=("-accel" "tcg,thread=multi" "-cpu" "cortex-a72" "-smp" "1")
+        MACHINE="virt,gic-version=2"
+        ACCEL_DESC="MTTCG (ARM64 JIT emulation, 1 vCPU)"
+    fi
 
     # virtio-gpu takes any screen size, so the guest can match the Mac's
     # screen shape; ramfb firmware only offers 4:3 modes (black bars).
@@ -127,7 +144,7 @@ if [ "$ARCH" = "aarch64" ]; then
     echo
 
     exec qemu-system-aarch64 \
-        -M virt,gic-version=2 \
+        -M "$MACHINE" \
         -m 2048 \
         "${ACCEL_ARGS[@]}" \
         "${DISPLAY_ARGS[@]}" \

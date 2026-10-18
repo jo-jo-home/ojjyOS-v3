@@ -17,6 +17,7 @@
  */
 
 #include "virtio.h"
+#include "mmio.h"
 #include "virtio_devices.h"
 #include "framebuffer.h"
 #include "memory.h"
@@ -144,9 +145,8 @@ bool virtio_gpu_display_init(BootInfo *info)
 {
     for (int i = 0; i < VIRTIO_MMIO_SLOTS && !gpu_ready; i++) {
         uint32_t base = VIRTIO_MMIO_BASE + (uint32_t)i * VIRTIO_MMIO_STRIDE;
-        volatile uint32_t *regs = (volatile uint32_t *)(uintptr_t)base;
-        if (regs[VIO_MAGIC / 4] != 0x74726976u || regs[VIO_VERSION / 4] != 2 ||
-            regs[VIO_DEVICE_ID / 4] != VIRTIO_ID_GPU) continue;
+        if (mmio_read32(base + VIO_MAGIC) != 0x74726976u || mmio_read32(base + VIO_VERSION) != 2 ||
+            mmio_read32(base + VIO_DEVICE_ID) != VIRTIO_ID_GPU) continue;
         if (virtio_dev_begin(base, 0) != 0) continue;
         if (virtio_queue_init_index(&ctrlq, base, &gpu_mem, 0) != 0) continue;
         virtio_dev_ready(base);

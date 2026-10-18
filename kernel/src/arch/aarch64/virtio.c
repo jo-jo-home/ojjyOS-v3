@@ -8,13 +8,9 @@
 #include "virtio_devices.h"
 #include "serial.h"
 #include "string.h"
+#include "mmio.h"
 
-#ifndef OJJY_HOST_TEST
-static inline volatile uint32_t *vio_reg(uint32_t base, uint32_t off)
-{
-    return (volatile uint32_t *)(uintptr_t)(base + off);
-}
-#else
+#ifdef OJJY_HOST_TEST
 uint32_t virtio_host_mmio_read(uint32_t base, uint32_t off);
 void virtio_host_mmio_write(uint32_t base, uint32_t off, uint32_t value);
 #endif
@@ -24,7 +20,7 @@ static inline uint32_t vio_read(uint32_t base, uint32_t off)
 #ifdef OJJY_HOST_TEST
     return virtio_host_mmio_read(base, off);
 #else
-    return *vio_reg(base, off);
+    return mmio_read32((uintptr_t)base + off);
 #endif
 }
 
@@ -33,7 +29,7 @@ static inline void vio_write(uint32_t base, uint32_t off, uint32_t value)
 #ifdef OJJY_HOST_TEST
     virtio_host_mmio_write(base, off, value);
 #else
-    *vio_reg(base, off) = value;
+    mmio_write32((uintptr_t)base + off, value);
 #endif
 }
 

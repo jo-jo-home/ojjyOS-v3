@@ -110,3 +110,18 @@ Results are appended to the log below.
   (window open 240 ms, overlays 200 ms), frame cap 30 -> 60 fps. Opens now a
   constant ~230 ms (`build/perf/p1-time2`); TCG still only fits 8-12 frames
   in that time (~30 ms/frame), which HVF should fix.
+- Phase 1.6 done — **HVF works**. Root causes: (1) MMIO through volatile
+  pointers let the compiler emit post-increment/pair forms with ISV=0, which
+  HVF can't emulate (`assert(isv)`); all ARM drivers now use
+  `arch/aarch64/mmio.h` (single LDR/STR asm). (2) Under HVF the CPU's
+  ID_AA64PFR0.GIC reads 0, so the GIC driver picked GICv2; it now treats an
+  Apple core (MIDR implementer 0x61) as GICv3 (probing GICD PIDR2 at 0xFFE8
+  faults on GICv2 — tried, reverted). `run-qemu.sh` defaults to HVF
+  (`OJJY_ACCEL=tcg` to force emulation); tests take `OJJY_ACCEL=hvf`.
+  HVF receipts (`build/perf/p1-hvf2`): frame avg **7 ms** (TCG 31 ms), opens
+  16 frames/240 ms (60 fps). `build/hvf-live/`: smoke --protected (EL0 fault
+  classes, timer limits), browser (local HTTPS 21 ms vs 641 ms), apps check,
+  network UI all PASS under HVF; ARM TCG smoke and x86 smoke also PASS.
+- Phases 1.4 (layer-based open animation) and 1.5 (damage rectangles) are
+  folded into Phase 5 / deferred: at 7 ms per full frame they are no longer
+  needed to remove the lag.

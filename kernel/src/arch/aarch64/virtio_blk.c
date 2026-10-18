@@ -11,6 +11,7 @@
  */
 
 #include "virtio.h"
+#include "mmio.h"
 #include "virtio_devices.h"
 #include "drivers/blockdev.h"
 #include "serial.h"
@@ -57,8 +58,8 @@ int virtio_blk_attach(uint32_t mmio_base, bool supports_flush)
     blk_flush_supported = supports_flush;
 
     /* Capacity: 8 bytes at config offset 0 (little-endian) */
-    volatile uint32_t *cfg = (volatile uint32_t *)(uintptr_t)(mmio_base + VIO_CFG);
-    uint64_t sectors = (uint64_t)cfg[0] | ((uint64_t)cfg[1] << 32);
+    uintptr_t cfg = (uintptr_t)mmio_base + VIO_CFG;
+    uint64_t sectors = (uint64_t)mmio_read32(cfg) | ((uint64_t)mmio_read32(cfg + 4) << 32);
     blk_sectors = sectors;
 
     serial_printf("[VIRTIO-BLK] Attached: %d MB (%d sectors)\n",

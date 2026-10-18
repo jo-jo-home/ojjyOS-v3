@@ -11,6 +11,7 @@
  */
 
 #include "virtio.h"
+#include "mmio.h"
 #include "virtio_devices.h"
 #include "net/net.h"
 #include "random.h"
@@ -91,8 +92,7 @@ int virtio_net_attach(uint32_t base, bool has_mac)
 
     uint8_t mac[6];
     if (has_mac) {
-        volatile uint8_t *cfg = (volatile uint8_t *)(uintptr_t)(base + VIO_CFG);
-        for (int i = 0; i < 6; i++) mac[i] = cfg[i];
+        for (int i = 0; i < 6; i++) mac[i] = mmio_read8((uintptr_t)base + VIO_CFG + (uintptr_t)i);
     } else {
         random_bytes(mac, 6);
         mac[0] = (uint8_t)((mac[0] & 0xFE) | 0x02);     /* local, unicast */

@@ -87,6 +87,19 @@ and launch bounce; menus/context menus fade + slide; Control Center, Spotlight
 and Launchpad spring in; Mission Control zoom; hover/press feedback on buttons;
 login → desktop cross-fade. "Reduce Motion" keeps turning them off.
 
+### Phase 6 — "Native" Mac app instead of QEMU (asked 2026-10-18)
+Jonas: "can we make the vm work natively and smooth instead of using qemu too".
+- CPU: already native via HVF (Phase 1.6); QEMU now only supplies devices and
+  the window.
+- Next step up: a small Swift `ojjyOS.app` on Apple's Virtualization.framework
+  (same hypervisor, native Retina window/full screen, no QEMU). Kernel work it
+  needs: PCIe ECAM enumeration + virtio-pci transport (VZ devices are PCI, not
+  virtio-mmio), virtio-gpu over PCI, USB xHCI + HID keyboard/pointer (VZ has no
+  virtio-input), virtio-console instead of PL011, no PL031 (time from the host
+  or ACPI), ACPI/DT-driven memory map, virtual timer. Do after Phases 2-5.
+- Bare metal on the Mac (no macOS): rejected — needs Asahi's m1n1 chain,
+  reduced boot security, and Apple AIC/DART/DCP/SPI-HID/NVMe-ANS drivers.
+
 ### Verification for every phase
 Host suite (+ sanitizers when C helpers change), both architecture builds with
 0 warnings, `qemu_smoke.py` (ARM virtio-gpu + ramfb fallback, x86), app and

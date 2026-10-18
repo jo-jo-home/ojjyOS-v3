@@ -58,6 +58,8 @@ int text_ascent(TextStyle st);
  * centres a line optically in a box (see text_y_center). */
 int text_cap_height(TextStyle st);
 int text_y_center(int top, int h, TextStyle st);
+/* True if the UI font has a real glyph for code point cp (no fallback). */
+bool text_has_glyph(uint32_t cp);
 /* Density used for drawing (1 or 2); set by the framebuffer's HiDPI mode. */
 void text_set_density(int density);
 

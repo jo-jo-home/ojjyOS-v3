@@ -58,7 +58,7 @@ static bool within_width(void)
 {
     for (int i = 0; i < doc.run_count; i++) {
         const WebRun *r = &doc.runs[i];
-        if (r->x < 0 || r->x + r->len * WEB_CELL_W * r->scale > doc.width) return false;
+        if (r->x < 0 || r->x + r->w > doc.width) return false;
     }
     return true;
 }
@@ -77,6 +77,82 @@ static bool strstr_local(const char *h, const char *n)
 }
 
 static void layout(const char *html, int width) { html_layout(&doc, html, strlen(html), width, false); }
+
+/* Fake proportional font: 'i' 'l' '.' ' ' = 3 px, 'm' 'w' = 11 px, any other
+ * character 7 px; bold +1 px per character; heading 1 doubles. Only e-acute
+ * (U+00E9) counts as a real glyph beyond ASCII. */
+static int fake_width(const char *s, int len, uint8_t style, uint8_t level)
+{
+    int w = 0;
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)s[i];
+        if ((c & 0xC0) == 0x80) continue;                  /* UTF-8 continuation */
+        int cw = (c == 'i' || c == 'l' || c == '.' || c == ' ') ? 3 : (c == 'm' || c == 'w') ? 11 : 7;
+        if (style & WS_BOLD) cw++;
+        w += level == 1 ? cw * 2 : cw;
+    }
+    return w;
+}
+/* Body lines (14) are shorter than code cells (16), so mixed lines need alignment. */
+static int fake_line(uint8_t style, uint8_t level) { (void)style; return level == 1 ? 30 : level ? 24 : 14; }
+static bool fake_glyph(uint32_t cp) { return cp == 0xE9; }
+static const WebMetrics fake = { fake_width, fake_line, fake_glyph };
+
+static const WebRun *run_with(const char *needle)
+{
+    for (int i = 0; i < doc.run_count; i++)
+        if (strstr_local(web_text(&doc, doc.runs[i].text), needle)) return &doc.runs[i];
+    return NULL;
+}
+
+static void proportional_tests(void)
+{
+    html_set_metrics(&fake);
+
+    layout("<p>iiii mmmmmm</p>", 80);                  /* 12 + 3 + 66 = 81 > 80 (80 = minimum width) */
+    const WebRun *a = run_with("iiii"), *b = run_with("mmmmmm");
+    CHECK(a && b && a->w == 12 && b->x == 0 && b->y > a->y && b->w == 66, "proportional: wraps at measured width");
+    layout("<p>iiii mmmmm</p>", 80);                   /* 12 + 3 + 55 = 70 fits */
+    CHECK(doc.run_count == 1 && doc.runs[0].w == 70, "proportional: fits when the measured width fits");
+
+    layout("<p>mmmmmmmmmmmmmmmmmmmm</p>", 100);         /* 220 px word, 9 per line */
+    CHECK(within_width() && doc.run_count >= 3 && doc.runs[0].len == 9, "proportional: long word breaks inside");
+
+    layout("<p><a href=\"/x\">mmm</a> tail</p>", 400);
+    const WebRun *l = run_with("mmm");
+    CHECK(l && l->w == 33 && web_link_at(&doc, l->x + 32, l->y + 2) == 0 &&
+          web_link_at(&doc, l->x + 33, l->y + 2) == -1, "proportional: link hit test ends at measured width");
+
+    layout("<pre>ab\ncd</pre>", 400);
+    const WebRun *p = run_with("ab");
+    CHECK(p && (p->style & WS_CODE) && p->w == 2 * WEB_CELL_W && p->h == WEB_CELL_H, "proportional: <pre> stays monospace (8x16 cells)");
+
+    layout("<h1>Big</h1><p>small</p>", 400);
+    const WebRun *h = run_with("Big"), *s = run_with("small");
+    CHECK(h && s && h->level == 1 && h->h == 30 && h->w == fake_width("Big", 3, WS_BOLD, 1) && h->w == 40 &&
+          s->y >= h->y + 30, "proportional: heading size and line height");
+
+    layout("<form><input type=submit value=mm></form>", 400);
+    CHECK(doc.box_count >= 1 && doc.boxes[0].w == 22 + 2 * WEB_CELL_W, "proportional: button width follows its label");
+
+    layout("<p>caf&eacute; na\xc3\xafve</p>", 400);
+    CHECK(has_text("caf\xc3\xa9", 0) && has_text("naive", 0), "proportional: drawable UTF-8 kept, others transliterated");
+
+    layout("<p>abc <code>x</code> def</p>", 400);
+    const WebRun *t = run_with("abc"), *c = run_with("x");
+    CHECK(t && c && (c->style & WS_CODE) && c->h == 16 && t->h == 14 && c->y + c->h == t->y + t->h &&
+          t->y == c->y + 2, "proportional: mixed sizes share a baseline");
+
+    layout("<p>the quick brown fox jumps over the lazy dog, again and again and again</p>", 500);
+    bool exact = true;
+    for (int i = 0; i < doc.run_count; i++) {
+        const WebRun *r = &doc.runs[i];
+        if (r->w != fake_width(web_text(&doc, r->text), r->len, r->style, r->level)) exact = false;
+    }
+    CHECK(exact && within_width(), "proportional: merged runs keep exact widths");
+
+    html_set_metrics(NULL);
+}
 
 int main(void)
 {
@@ -232,5 +308,6 @@ int main(void)
         if (!within_width() || !sorted_by_y() || doc.pool_len > WEB_TEXT_POOL) ok = false;
     }
     CHECK(ok, "3000 fuzzed documents stay inside width and tables");
+    proportional_tests();
     return finish();
 }

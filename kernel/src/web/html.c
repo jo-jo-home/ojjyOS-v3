@@ -51,6 +51,7 @@ typedef struct {
     int hide_depth;
     char word[WORD_MAX];
     int wlen;
+    int line_first_run;         /* first run of the current line */
 } Layout;
 
 /* ------------------------------------------------------------------ */
@@ -169,7 +170,11 @@ static void place(Layout *L, const char *s, int n)
         d->pool_len += (uint32_t)n;
         d->pool[d->pool_len - 1] = '\0';
         r->len = (uint16_t)(r->len + n);
-        r->w = (int16_t)(r->w + w);
+        /* Re-measure the whole run: per-word rounding would otherwise drift
+         * from the single draw call's sub-pixel pen and open visible gaps. */
+        int whole = text_w(L, d->pool + r->text, r->len);
+        w = whole - r->w;
+        r->w = (int16_t)whole;
     } else {
         if (d->run_count >= WEB_MAX_RUNS || d->pool_len + (uint32_t)n + 1 > WEB_TEXT_POOL) {
             d->truncated = true;
@@ -189,7 +194,16 @@ static void place(Layout *L, const char *s, int n)
 
 static void newline(Layout *L)
 {
+    /* Mixed sizes on one line (a link in a heading, bold in body text):
+     * bottom-align the runs so their baselines line up. */
+    if (metrics) {
+        for (int i = L->line_first_run; i < L->d->run_count; i++) {
+            WebRun *r = &L->d->runs[i];
+            if (r->y == L->y && r->h < L->line_h) r->y += L->line_h - r->h;
+        }
+    }
     L->y += L->line_h;
+    L->line_first_run = L->d->run_count;
     L->x = L->indent;
     L->line_h = base_line_px();
     L->line_empty = true;
@@ -1104,7 +1118,7 @@ int web_link_at(const WebDoc *doc, int32_t x, int32_t y)
 {
     for (int i = web_first_run_at(doc, y - 4 * WEB_CELL_H); i < doc->run_count; i++) {
         const WebRun *r = &doc->runs[i];
-        if (r->y > y) break;
+        if (r->y > y + 4 * WEB_CELL_H) break;     /* runs on one line share a bottom, not a top */
         if (r->link >= 0 && x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return r->link;
     }
     return -1;

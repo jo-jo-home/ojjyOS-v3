@@ -224,3 +224,9 @@ Results are appended to the log below.
   * Reduce Motion turns all of it off. Live: TCG + HVF(--protected) smoke,
     pointer, apps, browser, files, network UI PASS; 2x perf drag 29 ms avg
     with 7 VMs running in parallel.
+- Intel ATA: one Intel smoke run failed with "DRQ timeout during write"
+  (save failed) after this phase. ATA waits are now wall-clock (PIT ms) with
+  spin caps 4x the old budgets for the pre-timer probe, and a write failure
+  logs `[ATA] write lba N sector i/n: error|device fault|timeout (status)`.
+  Afterwards 9/9 Intel smokes passed (6 in parallel under load); root cause
+  of the single failure not yet confirmed — the new log line will show it.

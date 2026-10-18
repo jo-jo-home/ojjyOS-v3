@@ -14,6 +14,7 @@
 #include "../serial.h"
 #include "../string.h"
 #include "../console.h"
+#include "../timer.h"
 
 /* ATA I/O ports (relative to base) */
 #define ATA_REG_DATA        0x00
@@ -100,9 +101,21 @@ static Driver ata_driver = {
 /*
  * Wait for BSY to clear
  */
+/* Timeouts are wall-clock (PIT ms ticks), not loop counts: under emulation
+ * a busy host can stretch one status read far past the old spin budgets
+ * (seen as "DRQ timeout during write" when saving). The spin cap (4x the
+ * old loop budgets) only matters while the clock is not ticking yet, e.g.
+ * probing an empty channel during early boot. */
+static bool ata_expired(uint64_t deadline, uint32_t *spins, uint32_t cap)
+{
+    return timer_get_ticks() > deadline || ++*spins > cap;
+}
+
 static bool ata_wait_busy(AtaChannel *ch, int timeout_ms)
 {
-    for (int i = 0; i < timeout_ms * 1000; i++) {
+    uint64_t deadline = timer_get_ticks() + (uint64_t)timeout_ms;
+    uint32_t spins = 0;
+    while (!ata_expired(deadline, &spins, (uint32_t)timeout_ms * 4000u)) {
         uint8_t status = inb(ch->io_base + ATA_REG_STATUS);
         if (!(status & ATA_SR_BSY)) {
             return true;
@@ -118,7 +131,9 @@ static bool ata_wait_busy(AtaChannel *ch, int timeout_ms)
  */
 static int ata_wait_drq(AtaChannel *ch)
 {
-    for (int i = 0; i < 500000; i++) {
+    uint64_t deadline = timer_get_ticks() + 5000;
+    uint32_t spins = 0;
+    while (!ata_expired(deadline, &spins, 2000000u)) {
         uint8_t status = inb(ch->io_base + ATA_REG_STATUS);
 
         if (status & ATA_SR_ERR) {
@@ -479,7 +494,11 @@ int ata_write_sectors(AtaDevice *dev, uint64_t lba, uint32_t count, const void *
 
         /* Write each sector */
         for (uint32_t i = 0; i < chunk; i++) {
-            if (ata_wait_drq(ch) != 0) {
+            int drq = ata_wait_drq(ch);
+            if (drq != 0) {
+                serial_printf("[ATA] write lba %d sector %d/%d: %s (status 0x%x)\n", (int)lba, (int)i, (int)chunk,
+                              drq == -1 ? "error" : drq == -2 ? "device fault" : "timeout",
+                              (unsigned)inb(ch->io_base + ATA_REG_STATUS));
                 driver_report_error(&ata_driver, "DRQ timeout during write");
                 return -1;
             }

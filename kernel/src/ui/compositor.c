@@ -19,6 +19,7 @@
 #include "../proc.h"
 #include "../user.h"
 #include "netcmd.h"
+#include "calcmath.h"
 #include "browser.h"
 #include "draw.h"
 #include "../net/net.h"
@@ -168,7 +169,7 @@ typedef struct {
     bool msg_ok;
 } SettingsStateUi;
 
-#define TERMINAL_MAX_LINES 48
+#define TERMINAL_MAX_LINES 200
 #define TERMINAL_LINE_MAX  80
 
 typedef struct {
@@ -347,6 +348,10 @@ static int overlay_offset(int anim, int max_offset);
 static AppType app_type_from_bundle(const char *bundle_id);
 static int app_open_window(AppType type, const char *title);
 static void finder_refresh(FinderState *state);
+static void finder_update_preview(FinderState *state);
+static bool path_in_trash(const char *path);
+static void trash_dir(char *out, size_t size);
+static void empty_trash(void);
 static void draw_icon_scaled(const uint8_t *pixels, int src_size, int x, int y, int size);
 static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x, int y, int w, int h);
 static void textedit_load_file(TextEditState *edit, const char *path);
@@ -639,11 +644,20 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     int preview_w = 180;
     draw_rounded_rect_blend(content_x, content_y, sidebar_w, content_h, 12, theme->dock_tint, 130);
     fb_draw_string(content_x + 12, content_y + 12, "Favorites", theme->text_muted, theme->dock_tint);
-    fb_draw_string(content_x + 12, content_y + 32, "Applications", theme->text, theme->dock_tint);
-    fb_draw_string(content_x + 12, content_y + 52, "System", theme->text, theme->dock_tint);
-    fb_draw_string(content_x + 12, content_y + 72, "Users", theme->text, theme->dock_tint);
-    fb_draw_string(content_x + 12, content_y + 92, "Home", theme->accent, theme->dock_tint);
-    fb_draw_string(content_x + 12, content_y + 112, "Desktop", theme->text, theme->dock_tint);
+    {
+        /* Highlight the sidebar place the window is showing. */
+        char desktop[160], trash[160];
+        users_make_home_path(desktop, sizeof(desktop), "Desktop");
+        trash_dir(trash, sizeof(trash));
+        const char *places[6] = { "/Applications", "/System", "/Users", users_current_home(), desktop, trash };
+        const char *labels[6] = { "Applications", "System", "Users", "Home", "Desktop", "Trash" };
+        for (int i = 0; i < 6; i++) {
+            bool here = strcmp(state->path, places[i]) == 0;
+            if (here) draw_rounded_rect_blend(content_x + 6, content_y + 30 + i * 20, sidebar_w - 12, 18, 8, theme->accent, 45);
+            fb_draw_string(content_x + 12, content_y + 32 + i * 20, labels[i], here ? theme->accent : theme->text,
+                           theme->dock_tint);
+        }
+    }
 
     int main_x = content_x + sidebar_w + 10;
     int main_w = content_w - sidebar_w - preview_w - 20;
@@ -671,6 +685,17 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
         }
     } else {
         fb_draw_string(preview_x + 12, content_y + 32, "No selection", theme->text_muted, theme->dock_tint);
+    }
+    {
+        char trash[160];
+        trash_dir(trash, sizeof(trash));
+        if (strcmp(state->path, trash) == 0) {
+            bool has_items = state->entry_count > 0;
+            draw_rounded_rect_blend(preview_x + 12, content_y + content_h - 36, preview_w - 24, 24, 8,
+                                    RGB(215, 76, 70), has_items ? 220 : 90);
+            fb_draw_string(preview_x + 12 + (preview_w - 24 - 11 * FONT_WIDTH) / 2, content_y + content_h - 32,
+                           "Empty Trash", COLOR_WHITE, RGB(215, 76, 70));
+        }
     }
 
     if (state->view_mode == FINDER_VIEW_LIST) {
@@ -1207,20 +1232,24 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
     char num[8];
     utoa(cal->year, num, 10);
     str_append(title, sizeof(title), num);
-    fb_draw_string(header_x + 12, content_y + 12, title, theme->text, theme->dock_tint);
+    fb_draw_text_scaled(header_x + 10, content_y + 4, title, (int)strlen(title), theme->text, 1, true);
 
+    /* Navigation on the right; view tabs under the title (they used to
+     * collide in the ~300px header). Click geometry mirrors this. */
     int nav_y = content_y + 10;
-    fb_fill_rect(header_x + header_w - 90, nav_y, 18, 18, theme->accent_soft);
-    fb_fill_rect(header_x + header_w - 66, nav_y, 18, 18, theme->accent_soft);
-    fb_fill_rect(header_x + header_w - 42, nav_y, 36, 18, theme->accent);
-    fb_draw_string(header_x + header_w - 36, nav_y + 4, "Today", theme->text, theme->dock_tint);
+    draw_rounded_rect_blend(header_x + header_w - 98, nav_y, 20, 20, 6, theme->accent_soft, 200);
+    fb_draw_string(header_x + header_w - 92, nav_y + 2, "<", theme->text, theme->dock_tint);
+    draw_rounded_rect_blend(header_x + header_w - 74, nav_y, 20, 20, 6, theme->accent_soft, 200);
+    fb_draw_string(header_x + header_w - 68, nav_y + 2, ">", theme->text, theme->dock_tint);
+    draw_rounded_rect_blend(header_x + header_w - 50, nav_y, 46, 20, 8, theme->accent, 220);
+    fb_draw_string(header_x + header_w - 47, nav_y + 2, "Today", COLOR_WHITE, theme->accent);
 
-    int view_x = header_x + header_w - 200;
+    int view_x = header_x + 6;
     const char *views[] = { "Month", "Week", "Day", "Agenda" };
     for (int i = 0; i < 4; i++) {
-        int vx = view_x + i * 45;
+        int vx = view_x + i * 50;
         if (cal->view == (CalendarView)i) {
-            draw_rounded_rect_blend(vx, content_y + header_h - 18, 42, 16, 8, theme->accent, 50);
+            draw_rounded_rect_blend(vx, content_y + header_h - 18, 48, 16, 8, theme->accent, 60);
         }
         fb_draw_string(vx + 4, content_y + header_h - 16, views[i], theme->text_muted, theme->dock_tint);
     }
@@ -1272,9 +1301,10 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
                     int shown = count > 2 ? 2 : count;
                     for (int e = 0; e < shown; e++) {
                         CalendarEvent *ev = &cal->events[indices[e]];
-                        draw_rounded_rect_blend(cx + 6, chip_y, cell_w - 12, 12, 6, theme->accent, 70);
-                        fb_draw_string(cx + 10, chip_y + 2, ev->title, theme->text, theme->dock_tint);
-                        chip_y += 14;
+                        draw_rounded_rect_blend(cx + 3, chip_y, cell_w - 6, 14, 6, theme->accent, 90);
+                        int n = MIN((int)strlen(ev->title), (cell_w - 10) / FONT_WIDTH);
+                        fb_draw_text_scaled(cx + 6, chip_y - 1, ev->title, n, theme->text, 1, false);
+                        chip_y += 15;
                     }
                     if (count > 2) {
                         fb_draw_string(cx + 10, chip_y + 2, "+", theme->text_muted, theme->dock_tint);
@@ -1300,9 +1330,10 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
             int ey = grid_y + 24;
             for (int e = 0; e < count && e < 4; e++) {
                 CalendarEvent *ev = &cal->events[indices[e]];
-                draw_rounded_rect_blend(cx + 6, ey, cell_w - 12, 12, 6, theme->accent, 70);
-                fb_draw_string(cx + 10, ey + 2, ev->title, theme->text, theme->dock_tint);
-                ey += 14;
+                draw_rounded_rect_blend(cx + 3, ey, cell_w - 6, 14, 6, theme->accent, 90);
+                int n = MIN((int)strlen(ev->title), (cell_w - 10) / FONT_WIDTH);
+                fb_draw_text_scaled(cx + 6, ey - 1, ev->title, n, theme->text, 1, false);
+                ey += 15;
             }
         }
     } else if (cal->view == CAL_VIEW_DAY) {
@@ -1335,20 +1366,35 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
 
     int agenda_x = content_x + content_w - agenda_w;
     draw_rounded_rect_blend(agenda_x, content_y, agenda_w, content_h, 12, theme->dock_tint, 110);
-    fb_draw_string(agenda_x + 10, content_y + 10, "Agenda", theme->text_muted, theme->dock_tint);
+    {
+        static const char *short_months[] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+        char head[32];
+        head[0] = '\0';
+        str_append(head, sizeof(head), "Agenda  ");
+        str_append(head, sizeof(head), short_months[cal->month - 1]);
+        str_append(head, sizeof(head), " ");
+        char dn[4];
+        utoa((uint64_t)cal->selected_day, dn, 10);
+        str_append(head, sizeof(head), dn);
+        fb_draw_string(agenda_x + 10, content_y + 10, head, theme->text_muted, theme->dock_tint);
+    }
     int indices[8];
     int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 8);
-    int ay = content_y + 30;
+    int ay = content_y + 32;
+    if (count == 0) fb_draw_string(agenda_x + 10, ay, "No events", theme->text_muted, theme->dock_tint);
     for (int i = 0; i < count && i < 6; i++) {
+        /* Two lines per event: time, then the (clipped) title. */
         CalendarEvent *ev = &cal->events[indices[i]];
         char timebuf[16];
         calendar_format_time(ev, timebuf, sizeof(timebuf));
         if (indices[i] == cal->selected_event) {
-            draw_rounded_rect_blend(agenda_x + 6, ay - 2, agenda_w - 12, 16, 8, theme->accent, 40);
+            draw_rounded_rect_blend(agenda_x + 6, ay - 2, agenda_w - 12, 34, 8, theme->accent, 40);
         }
-        fb_draw_string(agenda_x + 10, ay, timebuf, theme->text_muted, theme->dock_tint);
-        fb_draw_string(agenda_x + 70, ay, ev->title, theme->text, theme->dock_tint);
-        ay += 18;
+        fb_draw_string(agenda_x + 12, ay, timebuf, theme->text_muted, theme->dock_tint);
+        int n = MIN((int)strlen(ev->title), (agenda_w - 24) / FONT_WIDTH);
+        fb_draw_text_scaled(agenda_x + 12, ay + 15, ev->title, n, theme->text, 1, true);
+        ay += 38;
     }
 
     if (cal->edit_mode && cal->selected_event >= 0) {
@@ -1476,73 +1522,59 @@ static void calc_reset(CalculatorState *calc)
     calc->has_error = false;
 }
 
+/* Display text <-> fixed-point value (ui/calcmath.c: 6 decimals, no FP). */
 static int64_t calc_parse_display(const CalculatorState *calc)
 {
-    if (!calc || !calc->display[0]) return 0;
-    const char *p = calc->display;
-    bool neg = false;
-    if (*p == '-') { neg = true; p++; }
     int64_t v = 0;
-    while (*p >= '0' && *p <= '9') {
-        v = v * 10 + (*p - '0');
-        p++;
-    }
-    return neg ? -v : v;
+    if (!calc || !calc_parse(calc->display, &v)) return 0;
+    return v;
 }
 
-static void calc_format_int64(int64_t v, char *out, size_t size)
+static void calc_show(CalculatorState *calc, int64_t v)
 {
-    if (!out || size < 4) return;
-    out[0] = '\0';
-    uint64_t u;
-    if (v < 0) {
-        str_append(out, size, "-");
-        u = (uint64_t)(-v);
-    } else {
-        u = (uint64_t)v;
-    }
-    char num[24];
-    utoa(u, num, 10);
-    str_append(out, size, num);
+    calc_format(v, calc->display, sizeof(calc->display));
+}
+
+static void calc_error(CalculatorState *calc, const char *msg)
+{
+    strncpy(calc->display, msg, sizeof(calc->display) - 1);
+    calc->display[sizeof(calc->display) - 1] = '\0';
+    calc->has_error = true;
+    calc->op = 0;
+    calc->clear_next = true;
 }
 
 static void calc_press_digit(CalculatorState *calc, char d)
 {
-    if (!calc || d < '0' || d > '9') return;
+    if (!calc || ((d < '0' || d > '9') && d != '.')) return;
     if (calc->has_error) calc_reset(calc);
     if (calc->clear_next || strcmp(calc->display, "0") == 0) {
-        calc->display[0] = d;
-        calc->display[1] = '\0';
+        if (d == '.') strcpy(calc->display, "0.");
+        else { calc->display[0] = d; calc->display[1] = '\0'; }
         calc->clear_next = false;
-    } else {
-        size_t len = strlen(calc->display);
-        if (len < 16) {
-            calc->display[len] = d;
-            calc->display[len + 1] = '\0';
-        }
+        return;
+    }
+    size_t len = strlen(calc->display);
+    if (d == '.') {
+        for (size_t i = 0; i < len; i++) if (calc->display[i] == '.') return;   /* one point */
+    }
+    if (len < 16) {
+        calc->display[len] = d;
+        calc->display[len + 1] = '\0';
+        int64_t probe;
+        if (!calc_parse(calc->display, &probe) && calc->display[len] != '.') calc->display[len] = '\0';
     }
 }
 
 static void calc_eval_pending(CalculatorState *calc)
 {
     if (!calc || calc->has_error) return;
-    int64_t cur = calc_parse_display(calc);
-    if (calc->op == '+') calc->acc = calc->acc + cur;
-    else if (calc->op == '-') calc->acc = calc->acc - cur;
-    else if (calc->op == '*') calc->acc = calc->acc * cur;
-    else if (calc->op == '/') {
-        if (cur == 0) {
-            strcpy(calc->display, "Error: Div 0");
-            calc->has_error = true;
-            calc->op = 0;
-            calc->clear_next = true;
-            return;
-        }
-        calc->acc = calc->acc / cur;
-    } else {
-        calc->acc = cur;
-    }
-    calc_format_int64(calc->acc, calc->display, sizeof(calc->display));
+    int64_t cur = calc_parse_display(calc), result;
+    CalcStatus st = calc_apply(calc->op ? calc->op : '=', calc->acc, cur, &result);
+    if (st == CALC_DIV_ZERO) { calc_error(calc, "Can't divide by 0"); return; }
+    if (st == CALC_OVERFLOW) { calc_error(calc, "Too large"); return; }
+    calc->acc = result;
+    calc_show(calc, calc->acc);
 }
 
 static void calc_press_op(CalculatorState *calc, char op)
@@ -1569,8 +1601,16 @@ static void calc_press_eq(CalculatorState *calc)
 static void calc_press_neg(CalculatorState *calc)
 {
     if (!calc || calc->has_error) return;
-    int64_t v = -calc_parse_display(calc);
-    calc_format_int64(v, calc->display, sizeof(calc->display));
+    calc_show(calc, -calc_parse_display(calc));
+}
+
+static void calc_press_percent(CalculatorState *calc)
+{
+    if (!calc || calc->has_error) return;
+    int64_t v;
+    calc_apply('/', calc_parse_display(calc), 100 * CALC_SCALE, &v);
+    calc_show(calc, v);
+    calc->clear_next = true;
 }
 
 static void draw_calculator_window(CalculatorState *calc, int content_x, int content_y, int content_w, int content_h)
@@ -1598,7 +1638,7 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
         { "7",  "8",   "9",  "*" },
         { "4",  "5",   "6",  "-" },
         { "1",  "2",   "3",  "+" },
-        { "0",  "00",  "BS", "=" }
+        { "0",  ".",   "BS", "=" }
     };
 
     int grid_y = lcd_y + lcd_h + 10;
@@ -1635,7 +1675,7 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     fb_draw_string(cx, content_y + 10, "ojjyOS Activity Monitor", theme->text, theme->dock_tint);
 
 #if defined(__aarch64__)
-    const char *arch_str = "Arch: Apple Silicon ARM64 (EL1 / HVF)";
+    const char *arch_str = "Arch: ARM64 (EL1) on QEMU virt";      /* TCG runner, not HVF */
 #else
     const char *arch_str = "Arch: x86_64 Long Mode";
 #endif
@@ -1685,31 +1725,51 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     str_append(mem_line, sizeof(mem_line), " blks)");
     fb_draw_string(cx, content_y + 66, mem_line, theme->text, theme->dock_tint);
 
-    int bar_w = content_w - 28;
-    draw_rounded_rect_blend(cx, content_y + 84, bar_w, 12, 6, theme->glass_aqua, 140);
+    int bar_x = cx + 64, bar_w = content_w - 28 - 64;
+    fb_draw_string(cx, content_y + 84, "Memory", theme->text_muted, theme->dock_tint);
+    draw_rounded_rect_blend(bar_x, content_y + 86, bar_w, 12, 6, theme->glass_aqua, 140);
     int fill_w = (int)((used_mb * (uint64_t)bar_w) / total_mb);
-    if (fill_w < 8) fill_w = 8;
+    if (fill_w < 12) fill_w = 12;
     if (fill_w > bar_w) fill_w = bar_w;
-    draw_rounded_rect_blend(cx, content_y + 84, fill_w, 12, 6, theme->accent, 220);
+    draw_rounded_rect_blend(bar_x, content_y + 86, fill_w, 12, 6, theme->accent, 220);
+
+    /* Network */
+    {
+        const NetInfo *ni = net_info();
+        char net_line[112], ip[16];
+        net_line[0] = '\0';
+        str_append(net_line, sizeof(net_line), "Network: ");
+        if (!ni->present) str_append(net_line, sizeof(net_line), "no adapter");
+        else if (!ni->enabled) str_append(net_line, sizeof(net_line), "off");
+        else if (!ni->configured) str_append(net_line, sizeof(net_line), "connecting");
+        else { net_format_ip(ni->ip, ip, sizeof(ip)); str_append(net_line, sizeof(net_line), ip); }
+        str_append(net_line, sizeof(net_line), "   in ");
+        utoa(ni->rx_bytes / 1024, num, 10);
+        str_append(net_line, sizeof(net_line), num);
+        str_append(net_line, sizeof(net_line), " KB   out ");
+        utoa(ni->tx_bytes / 1024, num, 10);
+        str_append(net_line, sizeof(net_line), num);
+        str_append(net_line, sizeof(net_line), " KB");
+        fb_draw_string(cx, content_y + 104, net_line, theme->text, theme->dock_tint);
+    }
 
     /* Kernel & User Process Table */
-    fb_draw_string(cx, content_y + 104, "Active Processes (PID / Task / User / State / Ticks / Mem)",
-                   theme->text, theme->dock_tint);
-    fb_draw_string(cx + 4,   content_y + 122, "PID",     theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 48,  content_y + 122, "Process", theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 188, content_y + 122, "User",    theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 268, content_y + 122, "State",   theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 348, content_y + 122, "Ticks",   theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 416, content_y + 122, "Mem KB",  theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx, content_y + 126, "Processes", theme->text, theme->dock_tint);
+    fb_draw_string(cx + 4,   content_y + 144, "PID",     theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 48,  content_y + 144, "Process", theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 188, content_y + 144, "User",    theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 268, content_y + 144, "State",   theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 348, content_y + 144, "Ticks",   theme->text_muted, theme->dock_tint);
+    fb_draw_string(cx + 416, content_y + 144, "Mem KB",  theme->text_muted, theme->dock_tint);
 
     int pcount = proc_count();
-    int max_rows = (content_h - 168) / 16;
+    int max_rows = (content_h - 190) / 16;
     if (max_rows > 10) max_rows = 10;
     if (max_rows < 3) max_rows = 3;
     for (int i = 0; i < pcount && i < max_rows; i++) {
         const ProcEntry *pe = proc_get_by_index(i);
         if (!pe) continue;
-        int ry = content_y + 140 + i * 16;
+        int ry = content_y + 162 + i * 16;
         utoa(pe->pid, num, 10);
         fb_draw_string(cx + 4,   ry, num, theme->text_muted, theme->dock_tint);
         fb_draw_string(cx + 48,  ry, pe->name, theme->text, theme->dock_tint);
@@ -3535,6 +3595,7 @@ static void finder_refresh(FinderState *state)
 
     VfsDirEntry entry;
     while (vfs_readdir(dir, &entry) == 0 && state->entry_count < FINDER_MAX_ENTRIES) {
+        if (entry.name[0] == '.') continue;            /* hidden (e.g. .Trash) */
         if (state->search[0]) {
             if (!str_contains_ci(entry.name, state->search)) {
                 continue;
@@ -3547,8 +3608,11 @@ static void finder_refresh(FinderState *state)
     }
     vfs_closedir(dir);
     state->needs_refresh = false;
-    /* Never leave the selection pointing at a stale entry (Delete/Enter). */
+    /* Never leave the selection pointing at a stale entry (Delete/Enter), and
+     * never keep previewing a file that is no longer selected. */
     if (state->selected >= state->entry_count) state->selected = state->entry_count - 1;
+    state->preview_ready = false;
+    if (state->selected >= 0) finder_update_preview(state);
 }
 
 static void finder_set_path(FinderState *state, const char *path)
@@ -3728,6 +3792,68 @@ static int unique_copy_path(char *out, size_t size, const char *dir, const char 
     return -1;
 }
 
+/* ------------------------------------------------------------------ */
+/* Trash: Finder's Delete moves items to ~/.Trash; emptying deletes.   */
+/* ------------------------------------------------------------------ */
+
+static void trash_dir(char *out, size_t size)
+{
+    users_make_home_path(out, size, ".Trash");
+}
+
+static bool path_in_trash(const char *path)
+{
+    char t[160];
+    trash_dir(t, sizeof(t));
+    size_t n = strlen(t);
+    return strncmp(path, t, n) == 0 && (path[n] == '\0' || path[n] == '/');
+}
+
+/* Remove a file or a whole folder tree (bounded depth). */
+static int delete_tree(const char *path, int depth)
+{
+    if (depth > 16) return -1;
+    if (vfs_isdir(path)) {
+        for (int pass = 0; pass < 64; pass++) {
+            char names[16][64];
+            int n = 0;
+            VfsDir *dir = vfs_opendir(path);
+            if (!dir) break;
+            VfsDirEntry entry;
+            while (n < 16 && vfs_readdir(dir, &entry) == 0) {
+                strncpy(names[n], entry.name, sizeof(names[n]) - 1);
+                names[n][sizeof(names[n]) - 1] = '\0';
+                n++;
+            }
+            vfs_closedir(dir);
+            if (!n) break;
+            for (int i = 0; i < n; i++) {
+                char child[256];
+                if (vfs_join_path(child, sizeof(child), path, names[i]) == 0) delete_tree(child, depth + 1);
+            }
+        }
+    }
+    return vfs_unlink(path);
+}
+
+static int move_to_trash(const char *path)
+{
+    char trash[160], dst[256];
+    trash_dir(trash, sizeof(trash));
+    if (!vfs_isdir(trash)) vfs_mkdir(trash);
+    if (unique_copy_path(dst, sizeof(dst), trash, vfs_basename(path)) != 0) return -1;
+    return vfs_rename(path, dst);
+}
+
+static void empty_trash(void)
+{
+    char trash[160];
+    trash_dir(trash, sizeof(trash));
+    if (!vfs_isdir(trash)) return;
+    delete_tree(trash, 0);
+    vfs_mkdir(trash);
+}
+
 static void terminal_append_line(TerminalState *term, const char *text)
 {
     if (!term || !text) return;
@@ -3898,9 +4024,14 @@ static void terminal_net_print(const char *line)
     mark_dirty();
 }
 
-static void terminal_exec(TerminalState *term, const char *cmd)
+static void terminal_exec(TerminalState *term, const char *raw)
 {
-    if (!term || !cmd) return;
+    if (!term || !raw) return;
+    /* Trailing spaces (e.g. left by Tab completion) are not part of a path. */
+    char cmd[TERMINAL_LINE_MAX];
+    strncpy(cmd, raw, sizeof(cmd) - 1);
+    cmd[sizeof(cmd) - 1] = '\0';
+    for (size_t n = strlen(cmd); n > 0 && cmd[n - 1] == ' '; n--) cmd[n - 1] = '\0';
 
     if (netcmd_exec(cmd, terminal_net_print)) return;
 
@@ -4611,9 +4742,105 @@ static void textedit_save(TextEditState *edit)
     search_index_init();
 }
 
+/* Tab completion: command names for the first word, file names after. */
+static void terminal_complete(TerminalState *term)
+{
+    static const char *commands[] = {
+        "adduser", "cat", "cd", "clear", "cp", "curl", "echo", "heap", "help", "ifconfig", "kill", "lock",
+        "logout", "ls", "mem", "mkdir", "mv", "net", "nslookup", "open", "passwd", "ping", "ps", "pwd",
+        "reboot", "rm", "run", "shutdown", "su", "sync", "top", "touch", "users", "whoami"
+    };
+    char *input = term->input;
+    int start = term->input_len;
+    while (start > 0 && input[start - 1] != ' ') start--;
+    const char *word = input + start;
+    size_t wlen = strlen(word);
+
+    char matches[24][64];
+    bool is_dir[24];
+    int count = 0;
+    if (start == 0) {
+        for (unsigned i = 0; i < ARRAY_SIZE(commands) && count < 24; i++) {
+            if (strncmp(commands[i], word, wlen) == 0) {
+                strncpy(matches[count], commands[i], 63);
+                matches[count][63] = '\0';
+                is_dir[count++] = false;
+            }
+        }
+    } else {
+        /* Split "dir/prefix"; list dir (relative to cwd) for names with prefix. */
+        const char *slash = NULL;
+        for (const char *c = word; *c; c++) if (*c == '/') slash = c;
+        char dir_arg[TERMINAL_LINE_MAX], dir[160];
+        const char *prefix = word;
+        if (slash) {
+            size_t dl = (size_t)(slash - word);
+            memcpy(dir_arg, word, dl ? dl : 1);
+            dir_arg[dl ? dl : 1] = '\0';
+            prefix = slash + 1;
+        } else {
+            strcpy(dir_arg, ".");
+        }
+        if (terminal_resolve_path(term, dir_arg, dir, sizeof(dir)) != 0) return;
+        VfsDir *d = vfs_opendir(dir);
+        if (!d) return;
+        VfsDirEntry entry;
+        size_t pl = strlen(prefix);
+        while (vfs_readdir(d, &entry) == 0 && count < 24) {
+            if (entry.name[0] == '.' && prefix[0] != '.') continue;
+            if (strncmp(entry.name, prefix, pl) != 0) continue;
+            strncpy(matches[count], entry.name, 63);
+            matches[count][63] = '\0';
+            is_dir[count++] = entry.type == VFS_TYPE_DIR;
+        }
+        vfs_closedir(d);
+        word = prefix;
+        wlen = pl;
+        start = (int)(word - input);
+    }
+    if (count == 0) return;
+
+    /* Longest common prefix of all matches */
+    size_t common = strlen(matches[0]);
+    for (int i = 1; i < count; i++) {
+        size_t k = 0;
+        while (k < common && matches[i][k] == matches[0][k]) k++;
+        common = k;
+    }
+    char add[66];
+    size_t n = 0;
+    for (size_t k = wlen; k < common && n < 63; k++) add[n++] = matches[0][k];
+    if (count == 1) add[n++] = is_dir[0] ? '/' : ' ';
+    add[n] = '\0';
+    if (n) {
+        if (term->input_len + (int)n < TERMINAL_LINE_MAX - 1) {
+            strcpy(term->input + term->input_len, add);
+            term->input_len += (int)n;
+        }
+        return;
+    }
+    /* Ambiguous: list the choices like a Unix shell */
+    char line[TERMINAL_LINE_MAX];
+    line[0] = '\0';
+    for (int i = 0; i < count; i++) {
+        if (strlen(line) + strlen(matches[i]) + 3 >= sizeof(line)) { terminal_append_line(term, line); line[0] = '\0'; }
+        str_append(line, sizeof(line), matches[i]);
+        if (is_dir[i]) str_append(line, sizeof(line), "/");
+        str_append(line, sizeof(line), "  ");
+    }
+    if (line[0]) terminal_append_line(term, line);
+    term->scroll = TERMINAL_MAX_LINES;
+    (void)start;
+}
+
 static void terminal_handle_key(TerminalState *term, char ascii, KeyCode key)
 {
     if (!term) return;
+
+    if (key == KEY_TAB) {
+        terminal_complete(term);
+        return;
+    }
 
     if (key == KEY_BACKSPACE) {
         if (term->input_len > 0) {
@@ -4968,7 +5195,9 @@ static int app_open_window(AppType type, const char *title)
         /* Restore if minimized, then bring to front */
         windows[idx].minimized = false;
         raise_window_to_top(idx);
-        return windows[window_count - 1].id;
+        CompositorWindow *top = &windows[window_count - 1];
+        serial_printf("[UI] window '%s' at %d,%d %dx%d\n", top->title, top->x, top->y, top->w, top->h);
+        return top->id;
     }
 
     int w = 560;
@@ -4988,7 +5217,7 @@ static int app_open_window(AppType type, const char *title)
         h = MIN(580, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 40);
     }
     if (type == APP_CALCULATOR) { w = 300; h = 360; }
-    if (type == APP_MONITOR) { w = 520; h = 340; }
+    if (type == APP_MONITOR) { w = 540; h = 380; }
 
     /* Keep new windows fully on screen (cascade offsets + large apps such as
      * Web could otherwise run past the right edge or under the Dock). */
@@ -5662,11 +5891,25 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                 return;
             }
             if (keycode == KEY_DELETE && finder->selected >= 0) {
+                /* Like macOS: Delete moves to the Trash; inside the Trash it
+                 * removes the item for good (folders included). */
                 FinderEntry *entry = &finder->entries[finder->selected];
                 char path[256];
                 if (vfs_join_path(path, sizeof(path), finder->path, entry->name) == 0 &&
-                    vfs_unlink(path) == 0) {
+                    (path_in_trash(finder->path) ? delete_tree(path, 0) : move_to_trash(path)) == 0) {
                     finder->needs_refresh = true;
+                }
+                return;
+            }
+            if ((modifiers & INPUT_MOD_SUPER) && (modifiers & INPUT_MOD_SHIFT) && keycode == KEY_N) {
+                char dst[256];
+                if (unique_copy_path(dst, sizeof(dst), finder->path, "untitled folder") == 0 && vfs_mkdir(dst) == 0) {
+                    finder_refresh(finder);
+                    for (int i = 0; i < finder->entry_count; i++)
+                        if (strcmp(finder->entries[i].name, vfs_basename(dst)) == 0) finder->selected = i;
+                    strncpy(finder->rename_buffer, vfs_basename(dst), sizeof(finder->rename_buffer) - 1);
+                    finder->rename_buffer[sizeof(finder->rename_buffer) - 1] = '\0';
+                    finder->rename_mode = true;
                 }
                 return;
             }
@@ -5831,8 +6074,10 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
             }
         } else if (state->type == APP_CALCULATOR) {
             CalculatorState *calc = &state->calc;
-            if (ascii >= '0' && ascii <= '9') {
+            if ((ascii >= '0' && ascii <= '9') || ascii == '.') {
                 calc_press_digit(calc, ascii);
+            } else if (ascii == '%') {
+                calc_press_percent(calc);
             } else if (ascii == '+' || ascii == '-' || ascii == '*' || ascii == '/') {
                 calc_press_op(calc, ascii);
             } else if (ascii == '=' || keycode == KEY_ENTER) {
@@ -6520,6 +6765,20 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     int content_y = win->y + 40;
                     int sidebar_w = 150;
 
+                    {
+                        /* Empty Trash button (preview pane, Trash folder only) */
+                        int content_w = win->w - 24, content_h = win->h - 52, preview_w = 180;
+                        int px = content_x + content_w - preview_w;
+                        char trash[160];
+                        trash_dir(trash, sizeof(trash));
+                        if (strcmp(state->finder.path, trash) == 0 && x >= px + 12 && x <= px + preview_w - 12 &&
+                            y >= content_y + content_h - 36 && y <= content_y + content_h - 12) {
+                            empty_trash();
+                            state->finder.needs_refresh = true;
+                            state->finder.selected = -1;
+                            return;
+                        }
+                    }
                     if (x >= content_x && x <= content_x + sidebar_w) {
                         int rel_y = y - content_y;
                         if (rel_y >= 32 && rel_y < 52) {
@@ -6534,6 +6793,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             char dpath[160];
                             users_make_home_path(dpath, sizeof(dpath), "Desktop");
                             finder_set_path(&state->finder, dpath);
+                        } else if (rel_y >= 132 && rel_y < 152) {
+                            char tpath[160];
+                            trash_dir(tpath, sizeof(tpath));
+                            if (!vfs_isdir(tpath)) vfs_mkdir(tpath);
+                            finder_set_path(&state->finder, tpath);
                         }
                     } else {
                         int main_x = content_x + sidebar_w + 10;
@@ -6770,10 +7034,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             if (x >= bx && x <= bx + cell_w && y >= by && y <= by + cell_h) {
                                 if (r == 0 && c == 0) calc_reset(calc);
                                 else if (r == 0 && c == 1) calc_press_neg(calc);
-                                else if (r == 0 && c == 2) {
-                                    int64_t v = calc_parse_display(calc) / 100;
-                                    calc_format_int64(v, calc->display, sizeof(calc->display));
-                                } else if (r == 0 && c == 3) calc_press_op(calc, '/');
+                                else if (r == 0 && c == 2) calc_press_percent(calc);
+                                else if (r == 0 && c == 3) calc_press_op(calc, '/');
                                 else if (r == 1 && c == 0) calc_press_digit(calc, '7');
                                 else if (r == 1 && c == 1) calc_press_digit(calc, '8');
                                 else if (r == 1 && c == 2) calc_press_digit(calc, '9');
@@ -6787,10 +7049,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                                 else if (r == 3 && c == 2) calc_press_digit(calc, '3');
                                 else if (r == 3 && c == 3) calc_press_op(calc, '+');
                                 else if (r == 4 && c == 0) calc_press_digit(calc, '0');
-                                else if (r == 4 && c == 1) {
-                                    calc_press_digit(calc, '0');
-                                    calc_press_digit(calc, '0');
-                                } else if (r == 4 && c == 2) {
+                                else if (r == 4 && c == 1) calc_press_digit(calc, '.');
+                                else if (r == 4 && c == 2) {
                                     size_t len = strlen(calc->display);
                                     if (len > 1 && !calc->clear_next && !calc->has_error) {
                                         calc->display[len - 1] = '\0';
@@ -6815,19 +7075,19 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     int header_x = content_x + sidebar_w + 10;
                     int header_w = content_w - sidebar_w - agenda_w - 20;
 
-                    if (y >= content_y + 10 && y <= content_y + 32) {
-                        int nav_left = header_x + header_w - 90;
-                        int nav_right = header_x + header_w - 66;
-                        int today_x = header_x + header_w - 42;
-                        if (x >= nav_left && x <= nav_left + 18) {
+                    if (y >= content_y + 10 && y <= content_y + 30) {
+                        int nav_left = header_x + header_w - 98;
+                        int nav_right = header_x + header_w - 74;
+                        int today_x = header_x + header_w - 50;
+                        if (x >= nav_left && x <= nav_left + 20) {
                             calendar_shift_month(cal, -1);
                             return;
                         }
-                        if (x >= nav_right && x <= nav_right + 18) {
+                        if (x >= nav_right && x <= nav_right + 20) {
                             calendar_shift_month(cal, 1);
                             return;
                         }
-                        if (x >= today_x && x <= today_x + 36) {
+                        if (x >= today_x && x <= today_x + 46) {
                             RtcTime now;
                             rtc_read_time(&now);
                             cal->year = now.year;
@@ -6838,11 +7098,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         }
                     }
 
-                    int view_x = header_x + header_w - 200;
+                    int view_x = header_x + 6;
                     if (y >= content_y + header_h - 18 && y <= content_y + header_h - 2) {
                         for (int i = 0; i < 4; i++) {
-                            int vx = view_x + i * 45;
-                            if (x >= vx && x <= vx + 42) {
+                            int vx = view_x + i * 50;
+                            if (x >= vx && x <= vx + 48) {
                                 cal->view = (CalendarView)i;
                                 return;
                             }
@@ -6891,7 +7151,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     if (x >= agenda_x && x <= agenda_x + agenda_w && y >= content_y + 30 && y <= content_y + content_h - 40) {
                         int indices[8];
                         int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 8);
-                        int row = (y - (content_y + 30)) / 18;
+                        int row = (y - (content_y + 30)) / 38;      /* two-line agenda rows */
                         /* Only the 6 rows that are actually drawn are
                          * clickable (the old row < count bound allowed
                          * selecting an event from uninitialized memory) */

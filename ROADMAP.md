@@ -31,7 +31,7 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 - [ ] Simple chat/mail-like app over a home-made protocol to a host server.
 
 ## Desktop & apps
-- [ ] Trash with restore; Finder tabs; Quick Look preview.
+- [x] Trash (Delete moves, Empty Trash). [ ] Put Back/restore; Finder tabs; Quick Look.
 - [ ] Multiple windows per app (two Finder/Terminal windows).
 - [ ] Notifications center (persist events, e.g. download done).
 - [ ] Screenshot shortcut that saves a .raw/.bmp into ~/Desktop.

@@ -221,3 +221,32 @@ See `ROADMAP.md` (kept current).
   `[NET] Network off`, Bluetooth message, tile on -> new DHCP lease,
   Settings > Network shows the lease. Smoke both arches PASS.
 - Next: apps pass (all built-in apps), then cert verification / images.
+
+### Apps pass — tour findings (`tests/qemu_apps_tour.py`, `build/apps-1`)
+1. Calendar: view tabs collide with header buttons; agenda event text
+   overlaps its time.
+2. Activity Monitor: claims "EL1 / HVF" (runner is TCG — inaccurate), stray
+   "#" line, no network stats.
+3. Calculator: integer-only, no keyboard input.
+4. Finder: Delete removes instantly (no Trash), no New Folder.
+5. Terminal: 48-line scrollback, no Tab completion.
+6. Preview only shows wallpapers; TextEdit 64x80 cap, no wrap (later).
+
+### 2026-10-17 — Apps pass DONE (first round)
+- Calendar: tabs under the title, < > Today buttons with glyphs, event chips
+  clipped to cells, agenda shows date + two-line items (hit rows 38 px).
+- Activity Monitor: accurate "ARM64 (EL1) on QEMU virt" (was "HVF"),
+  labelled memory bar, Network line (address + KB in/out), taller window.
+- Calculator: `ui/calcmath.c` fixed-point (6 decimals, no FP, overflow and
+  divide-by-zero reported), "." key and keyboard "." / "%"; test_calc 19.
+- Finder: Delete -> ~/.Trash (unique names, folders too); Trash sidebar
+  entry + Empty Trash (recursive delete); Cmd+Shift+N "untitled folder" +
+  rename; dotfiles hidden; sidebar highlights the current place; preview
+  follows the selection after refresh (stale preview bug fixed).
+- Terminal: 200-line scrollback; Tab completion (commands, then paths with
+  common-prefix + listing); commands trim trailing spaces (Tab left one and
+  broke `cat note.txt` - caught by the live check).
+- `[UI] window` receipt also on raise. Live: `tests/qemu_apps_tour.py`
+  (`build/apps-1`), `tests/qemu_apps_check.py` (`build/appscheck-3`).
+- Gate: host 1200+ C asserts normal + sanitized, both builds 0 warnings,
+  smoke both arches, browser test PASS.

@@ -344,6 +344,7 @@ static int ctx_menu_y = 0;
 
 static uint64_t last_frame_ms = 0;
 
+static int ease_out(int t);
 static uint8_t overlay_alpha(uint8_t base, int anim);
 static int overlay_offset(int anim, int max_offset);
 static AppType app_type_from_bundle(const char *bundle_id);
@@ -1779,7 +1780,7 @@ static void draw_window(int idx)
     if (anim < 0) anim = 0;
     if (anim > 1000) anim = 1000;
 
-    int scale = 900 + (anim / 10);
+    int scale = 920 + (ease_out(anim) * 80) / 1000;
     int draw_w = (win->w * scale) / 1000;
     int draw_h = (win->h * scale) / 1000;
     int draw_x = win->x + (win->w - draw_w) / 2;
@@ -2917,18 +2918,27 @@ static void launch_app_index(int index, uint64_t now_ms)
     }
 }
 
+/* Ease-out cubic on a 0..1000 progress value: fast start, gentle landing. */
+static int ease_out(int t)
+{
+    if (t <= 0) return 0;
+    if (t >= 1000) return 1000;
+    int u = 1000 - t;
+    return 1000 - (int)(((int64_t)u * u * u) / 1000000);
+}
+
 static uint8_t overlay_alpha(uint8_t base, int anim)
 {
     if (anim <= 0) return 0;
     if (anim >= 1000) return base;
-    return (uint8_t)((base * anim) / 1000);
+    return (uint8_t)((base * ease_out(anim)) / 1000);
 }
 
 static int overlay_offset(int anim, int max_offset)
 {
     if (anim <= 0) return max_offset;
     if (anim >= 1000) return 0;
-    return (max_offset * (1000 - anim)) / 1000;
+    return (max_offset * (1000 - ease_out(anim))) / 1000;
 }
 
 static size_t str_append(char *dest, size_t size, const char *src)
@@ -7386,6 +7396,12 @@ static bool update_animations(uint64_t now_ms)
 {
     bool changed = false;
     bool no_motion = settings_get()->reduced_motion;
+    /* Progress advances by elapsed time, so a slow frame skips ahead
+     * instead of stretching the animation (window open 240 ms, overlays 200 ms). */
+    static uint64_t last_ms;
+    int dt = last_ms ? (int)MIN(now_ms - last_ms, 100) : 16;
+    last_ms = now_ms;
+    int win_step = MAX(1, dt * 1000 / 240);
 
     for (int i = 0; i < window_count; i++) {
         CompositorWindow *win = &windows[i];
@@ -7397,7 +7413,7 @@ static bool update_animations(uint64_t now_ms)
                 win->anim_open = 1000;
                 win->animating = false;
             } else {
-                win->anim_open += 40;
+                win->anim_open += win_step;
                 if (win->anim_open >= 1000) {
                     win->anim_open = 1000;
                     win->animating = false;
@@ -7408,7 +7424,7 @@ static bool update_animations(uint64_t now_ms)
         }
     }
 
-    int step = no_motion ? 1000 : 120;
+    int step = no_motion ? 1000 : MAX(1, dt * 1000 / 200);
     int target_spotlight = (overlay == OVERLAY_SPOTLIGHT) ? 1000 : 0;
     int target_launchpad = (overlay == OVERLAY_LAUNCHPAD) ? 1000 : 0;
     int target_control = (overlay == OVERLAY_CONTROL_CENTER) ? 1000 : 0;
@@ -7429,6 +7445,7 @@ static bool update_animations(uint64_t now_ms)
 
     if (anim_app_switcher < target_switcher) { anim_app_switcher = MIN(1000, anim_app_switcher + step); changed = true; }
     if (anim_app_switcher > target_switcher) { anim_app_switcher = MAX(0, anim_app_switcher - step); changed = true; }
+    if (!changed) last_ms = 0;      /* next animation starts from a normal first step */
     return changed;
 }
 
@@ -7471,7 +7488,7 @@ void compositor_tick(uint64_t now_ms)
         if (cc_message[0] && now_ms >= cc_message_until && overlay == OVERLAY_CONTROL_CENTER) { cc_message[0] = '\0'; mark_dirty(); }
     }
     uint64_t delta = now_ms - last_frame_ms;
-    if (delta < 33) {
+    if (delta < 16) {               /* up to ~60 fps when frames are cheap */
         return;
     }
 

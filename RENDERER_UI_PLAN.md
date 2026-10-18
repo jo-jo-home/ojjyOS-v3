@@ -106,3 +106,7 @@ Results are appended to the log below.
   Compositor rounded rects/shadows/glass use it; glass is a cached pre-tinted
   blur. Result (`build/perf/p1-gfx`): opens 0.8 s (now capped by the 30 fps
   frame budget), drag **31 ms/frame** (11x faster).
+- Phase 1.3 done: animations advance by elapsed time with ease-out cubic
+  (window open 240 ms, overlays 200 ms), frame cap 30 -> 60 fps. Opens now a
+  constant ~230 ms (`build/perf/p1-time2`); TCG still only fits 8-12 frames
+  in that time (~30 ms/frame), which HVF should fix.

@@ -1,14 +1,46 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## >>> START HERE (2026-10-18): unfinished job — read `HANDOFF_NATIVE_VM.md` <<<
+## >>> START HERE (2026-10-18, latest): read `TODO.md` <<<
 
-Jonas stopped the previous session mid-task and asked for a handoff. The
-current job is replacing QEMU with a native Mac app on Apple's
-Virtualization.framework. Full, step-by-step instructions are in
-**`HANDOFF_NATIVE_VM.md`**; work continues on branch **`native-vm`**
-(`git checkout native-vm`; it contains unfinished step N2 and does not build
-until pci.h/pci.c exist — see the handoff). `main` builds and passes tests.
+Jonas stopped work and asked for full context so that another AI can "do what
+is needed in the project". **`TODO.md` is the master list** of everything still
+to do, in order, with a pointer to the detailed brief for each item.
+Copy-paste prompts for new sessions: `docs/handoff-prompts/`
+(`PROMPT_0_DO_WHAT_IS_NEEDED.md` = generic, `PROMPT_3_UI_CONTINUE.md`,
+`PROMPT_1_NATIVE_VM.md`).
 
+Two unfinished jobs were running in parallel (check `git worktree list`):
+
+| Job | Folder / branch | Brief | State |
+|---|---|---|---|
+| A. Native Mac app on Apple Virtualization.framework (replace laggy QEMU) | main folder `ojjyOS-v3`, branch `native-vm` | `HANDOFF_NATIVE_VM.md`, log `NATIVE_VM_PLAN.md` | N1 on main; N2-N3 committed on `native-vm`; N5/N6 were uncommitted in the main folder |
+| B. Liquid Glass, Tahoe wallpapers, Settings customisation, every app | worktree `ojjyOS-v3-ui`, branch `ui-polish-2` (fast-forwarded into `main` after each step) | `HANDOFF_UI.md`, plan/log `LIQUID_GLASS_APPS_PLAN.md` | LG1, LG2, W1-W4 done; next is C (Appearance customisation) |
+
+Never touch the other job's folder, branch or uncommitted changes.
+
+### LATEST (2026-10-18): Liquid Glass + official Tahoe wallpapers (job B)
+
+- Liquid Glass material `gfx_liquid_glass()` (`kernel/src/gfx.c`) on the
+  Dock, menus, menu bar, Control Center, Spotlight, login card etc.
+- Baseline JPEG decoder `kernel/src/image/jpeg.c`; desktop picture pack
+  reader `kernel/src/image/wallpack.c`.
+- 17 official Tahoe wallpapers via `tools/import_wallpapers.py --fetch` into
+  git-ignored `wallpapers/local/` (Apple's images: NEVER commit/push them).
+  `scripts/mkimg.sh` packs them into the data partition tail at
+  **LBA 102400**; `tools/finalize_image.py` now preserves only LBA
+  67584..102399 (user data) on rebuild and takes the pack from the new build.
+- Settings > Wallpaper grid, Preview = picture viewer, choice saved as
+  `wallpaper=` in system.conf, Light/Dark switch swaps paired pictures.
+- Fixed: boot (`cmd_ui(NULL)`) forced Light mode every boot.
+- Tests: `tests/test_jpeg.c`, `tests/test_wallpack.c`,
+  `tests/qemu_wallpapers.py`; test fresh-data wipes stop at LBA 102400.
+- Installed images `build/aarch64|x86_64/ojjyos3.img` NOT rebuilt yet (dev
+  images are in `ojjyOS-v3-ui/build/dev-*`).
+
+### Previous START HERE (native VM handoff, still valid for job A)
+
+The native VM job's step-by-step instructions are in
+**`HANDOFF_NATIVE_VM.md`**; work continues on branch **`native-vm`**.
 
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.

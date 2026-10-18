@@ -25,12 +25,18 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 - [x] Network stack + working browser over http:// (BROWSER_APPS_PLAN.md).
 - [x] HTTPS (TLS 1.3) in the browser (encrypted; identity not yet verified).
 - [ ] HTTPS certificate verification (X.509, RSA/ECDSA, root store).
-- [ ] PNG/GIF image decoding in the browser (inflate + palette).
+- [ ] PNG/GIF image decoding in the browser (inflate + palette); JPEG
+      baseline decoding exists (`kernel/src/image/jpeg.c`), progressive not.
 - [ ] Downloads to ~/Downloads with Finder integration.
 - [ ] Network time (NTP/SNTP) to correct the clock.
 - [ ] Simple chat/mail-like app over a home-made protocol to a host server.
 
 ## Desktop & apps
+- [x] Liquid Glass material on floating chrome; official Tahoe wallpapers
+      with a Settings grid and Preview viewer (`LIQUID_GLASS_APPS_PLAN.md`).
+- [~] Appearance customisation, window glass rims, notifications, window
+      snapping, live resize, Terminal themes, every-app polish
+      (`HANDOFF_UI.md`).
 - [x] Trash (Delete moves, Empty Trash). [ ] Put Back/restore; Finder tabs; Quick Look.
 - [ ] Multiple windows per app (two Finder/Terminal windows).
 - [ ] Notifications center (persist events, e.g. download done).

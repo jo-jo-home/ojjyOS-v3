@@ -110,6 +110,13 @@ Settings > Appearance gains:
 - Terminal theme (S4) row.
 All saved in settings and applied live.
 
+## Status (2026-10-18, job paused by Jonas)
+
+| Step | State |
+|---|---|
+| LG1, LG2, W1, W2, W3, W4 | done (see Log) |
+| C, LG3, LG4, S1, S2, S3, S4, A, leftovers, finish | not started — detailed instructions in `HANDOFF_UI.md` §5 |
+
 ## Order of work
 
 LG1 -> LG2 -> W1 -> W2 -> W3 -> W4 -> C -> LG3 -> LG4 -> S1 -> S2 -> S3 -> S4 -> A (Finder, Terminal,

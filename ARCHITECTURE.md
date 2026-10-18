@@ -972,11 +972,12 @@ for Microsoft's PE/COFF ABI on macOS.
 ### 1. GPT Disk Layout (`scripts/mkimg.sh`)
 Each 128 MiB raw image (`build/<arch>/ojjyos3.img`) contains two GPT partitions:
 1. **Partition 1 (LBA `2048..67583`, 32 MiB):** FAT EFI System Partition containing `\EFI\BOOT\BOOTAA64.EFI` (or `BOOTX64.EFI`) and `\EFI\ojjyos\kernel.bin`. The standalone Python path uses FAT16; the Linux mtools path uses FAT32.
-2. **Partition 2 (LBA `67584..262110`):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`).
+2. **Partition 2 (LBA `67584..262110`):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`). LBA `67584..102399` is user data (persistence slots); LBA `102400..262110` holds the read-only desktop picture pack (`WALLPACK_LBA`), refreshed by every build.
 
 `tools/finalize_image.py` validates GPT CRCs/layout, refuses a running VM's
-POSIX disk lock, backs up an existing image, copies the entire data partition
-into a separately assembled candidate, fsyncs, and atomically replaces the disk.
+POSIX disk lock, backs up an existing image, copies the user-data part of the
+data partition (LBA 67584..102399, `PACK_FIRST`) into a separately assembled
+candidate (whose picture pack is kept), fsyncs, and atomically replaces the disk.
 The first architecture-specific build can import legacy `build/ojjyos3.img`
 without altering it. Existing VirtualBox VDIs are never silently regenerated.
 

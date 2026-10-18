@@ -25,17 +25,22 @@ EXTRAS = ["•", "—", "–", "…", "←", "→", "↑", "↓",
           "©", "°", "·", "⌘", "✓", "×", "⌥", "⇧", "é",
           "÷", "−", "±", "⌫", "‹", "›", "⌃"]
 DIGITS = list(" 0123456789:APM")
+# Web pages: Latin-1 letters and the common typographic characters, only in
+# the styles the browser uses for page text (keeps the kernel image small).
+WEB = [chr(c) for c in range(0xA1, 0x100) if c not in (0xAD,)] + \
+      ["\u2018", "\u2019", "\u201a", "\u201c", "\u201d", "\u201e", "\u20ac", "\u2122", "\u2032", "\u2033",
+       "\u2264", "\u2265", "\u2260", "\u2248", "\u2039", "\u203a", "\u2020", "\u2021", "\u2030"]
 
 # (enum name, file, px size, charset)
 STYLES = [
     ("TEXT_SMALL",       "Inter-Regular.ttf",  11, ASCII + EXTRAS),
     ("TEXT_SMALL_BOLD",  "Inter-SemiBold.ttf", 11, ASCII + EXTRAS),
-    ("TEXT_BODY",        "Inter-Regular.ttf",  13, ASCII + EXTRAS),
+    ("TEXT_BODY",        "Inter-Regular.ttf",  13, ASCII + EXTRAS + WEB),
     ("TEXT_BODY_MEDIUM", "Inter-Medium.ttf",   13, ASCII + EXTRAS),
-    ("TEXT_BODY_BOLD",   "Inter-SemiBold.ttf", 13, ASCII + EXTRAS),
-    ("TEXT_TITLE",       "Inter-SemiBold.ttf", 15, ASCII + EXTRAS),
-    ("TEXT_HEADLINE",    "Inter-Bold.ttf",     20, ASCII + EXTRAS),
-    ("TEXT_LARGE",       "Inter-SemiBold.ttf", 28, ASCII + EXTRAS),
+    ("TEXT_BODY_BOLD",   "Inter-SemiBold.ttf", 13, ASCII + EXTRAS + WEB),
+    ("TEXT_TITLE",       "Inter-SemiBold.ttf", 15, ASCII + EXTRAS + WEB),
+    ("TEXT_HEADLINE",    "Inter-Bold.ttf",     20, ASCII + EXTRAS + WEB),
+    ("TEXT_LARGE",       "Inter-SemiBold.ttf", 28, ASCII + EXTRAS + WEB),
     ("TEXT_DISPLAY",     "Inter-Medium.ttf",   72, DIGITS),
 ]
 GAMMA = 0.85     # < 1 lifts mid coverage (slightly bolder, crisper strokes)

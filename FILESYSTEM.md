@@ -22,7 +22,7 @@ Purpose: system-owned assets required for the OS to boot and render the UI.
 Contents:
 - `/System/Library` - OS-level frameworks, shared system components, and service definitions.
 - `/System/Fonts` - system fonts used by the shell and default apps.
-- `/System/Wallpapers` - bundled wallpapers.
+- `/System/Wallpapers` - old 640x480 `.raw` wallpapers (unused by the desktop now; only Spotlight lists them). Desktop pictures come from the disk pack, see the data partition map below.
 - `/System/version.txt` - build/version metadata.
 
 Why: keeps immutable, system-critical files separated from user and application content.
@@ -80,7 +80,17 @@ overwriting the old record first. Autosaves write in bounded batches; shutdown
 and explicit sync wait for a durable commit. CRC-32 does not provide encryption
 or protection against intentional disk edits.
 
-Rebuilding `build/<arch>/ojjyos3.img` preserves its data partition and keeps a
+Data partition map (LBA = 512-byte sector):
+
+| LBA | Use |
+|---|---|
+| 67584..83967 | persistence slot 0 (8 MiB) |
+| 83968..100351 | persistence slot 1 (8 MiB) |
+| 100352..102399 | spare (user-data region) |
+| 102400..262110 | read-only desktop picture pack (`kernel/src/image/wallpack.h`), written by `scripts/mkimg.sh` from git-ignored `wallpapers/local/` |
+
+Rebuilding `build/<arch>/ojjyos3.img` preserves the user-data region
+(LBA 67584..102399), installs the new build's picture pack, and keeps a
 full backup. Do not run old image-building scripts against saved disks. Never
 share one writable disk between VMs. User home folders are separate directories,
 not yet enforced authorization boundaries.

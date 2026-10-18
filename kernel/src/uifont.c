@@ -45,6 +45,14 @@ static const UiGlyph *lookup(const UiFontFace *f, uint32_t cp)
     return f->count ? &f->glyphs[0] : 0;
 }
 
+bool text_has_glyph(uint32_t cp)
+{
+    const UiFontFace *f = &uifont_faces[TEXT_BODY][0];
+    if (cp >= 32 && cp < 127) return true;
+    for (int i = 0; i < f->count; i++) if (f->glyphs[i].cp == cp) return true;
+    return false;
+}
+
 static void blit_glyph(GfxSurface *s, const UiFontFace *f, const UiGlyph *g, int gx, int gy,
                        uint32_t color, uint8_t alpha)
 {

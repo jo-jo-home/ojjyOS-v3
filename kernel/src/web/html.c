@@ -51,6 +51,7 @@ typedef struct {
     int hide_depth;
     char word[WORD_MAX];
     int wlen;
+    int line_first_run;         /* first run of the current line */
 } Layout;
 
 /* ------------------------------------------------------------------ */
@@ -84,6 +85,63 @@ static int add_box(Layout *L, int kind, int32_t x, int32_t y, int32_t w, int32_t
 static int scale_of(const Layout *L) { return L->heading == 1 || L->heading == 2 ? 2 : 1; }
 static int cell(const Layout *L) { return WEB_CELL_W * scale_of(L); }
 
+/* ---- Measurement (WebMetrics, or fixed 8x16 cells when none) ---- */
+static const WebMetrics *metrics;
+
+void html_set_metrics(const WebMetrics *m) { metrics = m; }
+
+static uint8_t style_of(const Layout *L);
+static bool fixed_cells(const Layout *L) { return !metrics || L->code || L->pre; }
+
+/* Width of n bytes of s in the current style. */
+static int text_w(const Layout *L, const char *s, int n)
+{
+    if (n <= 0) return 0;
+    if (fixed_cells(L)) return n * cell(L);
+    return metrics->width(s, n, style_of(L), (uint8_t)L->heading);
+}
+
+/* Height of a line holding text in the current style. */
+static int line_px(const Layout *L)
+{
+    int fixed = WEB_CELL_H * scale_of(L);
+    if (!metrics) return fixed;
+    int h = metrics->line_height(style_of(L), (uint8_t)L->heading);
+    return (L->code || L->pre) && h < fixed ? fixed : h;
+}
+
+/* Default (body text) line height: empty lines, gaps, page end. */
+static int base_line_px(void) { return metrics ? metrics->line_height(0, 0) : WEB_CELL_H; }
+
+static int space_w(const Layout *L) { return text_w(L, " ", 1); }
+
+/* Width of a form label (buttons are drawn in body text). */
+static int label_w(const char *s)
+{
+    int n = (int)strlen(s);
+    return metrics ? metrics->width(s, n, 0, 0) : n * WEB_CELL_W;
+}
+
+/* Bytes of the UTF-8 character starting at s (1 for ASCII/invalid). */
+static int char_bytes(const char *s, int left)
+{
+    unsigned char c = (unsigned char)s[0];
+    int n = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+    return n > left ? left : n;
+}
+
+/* Longest prefix of s (n bytes, whole characters) not wider than avail. */
+static int fit_prefix(const Layout *L, const char *s, int n, int avail)
+{
+    int best = 0;
+    for (int i = 0; i < n;) {
+        int k = i + char_bytes(s + i, n - i);
+        if (text_w(L, s, k) > avail) break;
+        best = i = k;
+    }
+    return best;
+}
+
 static uint8_t style_of(const Layout *L)
 {
     uint8_t s = 0;
@@ -100,17 +158,23 @@ static void place(Layout *L, const char *s, int n)
 {
     WebDoc *d = L->d;
     if (n <= 0) return;
-    int scale = scale_of(L), cw = WEB_CELL_W * scale;
-    uint8_t style = style_of(L);
+    int scale = scale_of(L);
+    uint8_t style = style_of(L), level = (uint8_t)L->heading;
+    int w = text_w(L, s, n), h = line_px(L);
     int16_t link = (int16_t)L->link;
     WebRun *r = d->run_count ? &d->runs[d->run_count - 1] : NULL;
-    if (r && r->y == L->y && r->style == style && r->scale == scale && r->link == link &&
-        r->x + r->len * cw == L->x && r->text + r->len + 1 == d->pool_len &&
-        d->pool_len + (uint32_t)n < WEB_TEXT_POOL && r->len + n < 65000) {
+    if (r && r->y == L->y && r->style == style && r->scale == scale && r->level == level && r->link == link &&
+        r->x + r->w == L->x && r->text + r->len + 1 == d->pool_len &&
+        d->pool_len + (uint32_t)n < WEB_TEXT_POOL && r->len + n < 65000 && r->w + w < 30000) {
         memcpy(d->pool + d->pool_len - 1, s, (size_t)n);     /* overwrite the NUL, extend */
         d->pool_len += (uint32_t)n;
         d->pool[d->pool_len - 1] = '\0';
         r->len = (uint16_t)(r->len + n);
+        /* Re-measure the whole run: per-word rounding would otherwise drift
+         * from the single draw call's sub-pixel pen and open visible gaps. */
+        int whole = text_w(L, d->pool + r->text, r->len);
+        w = whole - r->w;
+        r->w = (int16_t)whole;
     } else {
         if (d->run_count >= WEB_MAX_RUNS || d->pool_len + (uint32_t)n + 1 > WEB_TEXT_POOL) {
             d->truncated = true;
@@ -120,18 +184,28 @@ static void place(Layout *L, const char *s, int n)
         r = &d->runs[d->run_count++];
         r->x = L->x; r->y = L->y; r->text = off; r->len = (uint16_t)n;
         r->style = style; r->scale = (uint8_t)scale; r->link = link;
+        r->w = (int16_t)w; r->h = (int16_t)h; r->level = level;
     }
-    L->x += n * cw;
+    L->x += w;
     L->line_empty = false;
     L->gap_done = 0;
-    if (L->line_h < WEB_CELL_H * scale) L->line_h = WEB_CELL_H * scale;
+    if (L->line_h < h) L->line_h = h;
 }
 
 static void newline(Layout *L)
 {
+    /* Mixed sizes on one line (a link in a heading, bold in body text):
+     * bottom-align the runs so their baselines line up. */
+    if (metrics) {
+        for (int i = L->line_first_run; i < L->d->run_count; i++) {
+            WebRun *r = &L->d->runs[i];
+            if (r->y == L->y && r->h < L->line_h) r->y += L->line_h - r->h;
+        }
+    }
     L->y += L->line_h;
+    L->line_first_run = L->d->run_count;
     L->x = L->indent;
-    L->line_h = WEB_CELL_H;
+    L->line_h = base_line_px();
     L->line_empty = true;
     L->pending_space = false;
 }
@@ -150,9 +224,8 @@ static void block(Layout *L, int gap)
 static void flush_word(Layout *L)
 {
     if (!L->wlen) return;
-    int cw = cell(L);
     bool space = L->pending_space && !L->line_empty;
-    int need = (space ? cw : 0) + L->wlen * cw;
+    int need = (space ? space_w(L) : 0) + text_w(L, L->word, L->wlen);
     if (!L->line_empty && L->x + need > L->width) { newline(L); space = false; }
     if (space) {
         /* The gap belongs to the preceding text: a link's underline must
@@ -163,15 +236,16 @@ static void flush_word(Layout *L)
         place(L, " ", 1);
         L->link = saved_link;
     }
+    /* A word wider than the line (long URLs) breaks between characters. */
     int i = 0;
     while (i < L->wlen) {
-        int avail = (L->width - L->x) / cw;
-        if (avail <= 0) {
-            newline(L);
-            avail = (L->width - L->x) / cw;
-            if (avail <= 0) avail = 1;
+        int rest = L->wlen - i;
+        int n = text_w(L, L->word + i, rest) <= L->width - L->x ? rest
+                                                                : fit_prefix(L, L->word + i, rest, L->width - L->x);
+        if (n == 0) {
+            if (!L->line_empty) { newline(L); continue; }
+            n = char_bytes(L->word + i, rest);       /* even one character is too wide */
         }
-        int n = L->wlen - i < avail ? L->wlen - i : avail;
         place(L, L->word + i, n);
         i += n;
         if (i < L->wlen) newline(L);
@@ -209,7 +283,8 @@ static void text_char(Layout *L, char c)
         return;
     }
     if (c == '\x01') c = ' ';
-    if (L->wlen >= WORD_MAX - 1) flush_word(L);
+    /* Split over-long words only at a character start (keep UTF-8 whole). */
+    if (L->wlen >= WORD_MAX - 1 || (L->wlen >= WORD_MAX - 5 && ((unsigned char)c & 0xC0) != 0x80)) flush_word(L);
     L->word[L->wlen++] = c;
 }
 
@@ -225,6 +300,18 @@ static const char *latin1_base = "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYPsaaaaaaaceeeeii
 static void emit_cp(Layout *L, uint32_t cp)
 {
     if (cp < 0x80) { if (cp >= 32 || cp == '\n' || cp == '\t' || cp == '\r') text_char(L, (char)cp); return; }
+    /* Proportional text keeps characters the font can draw as UTF-8. */
+    if (metrics && metrics->has_glyph && !L->pre && !L->code && !L->capture && cp != 0xA0 &&
+        cp < 0x10000 && metrics->has_glyph(cp)) {
+        if (cp < 0x800) {
+            text_char(L, (char)(0xC0 | (cp >> 6)));
+        } else {
+            text_char(L, (char)(0xE0 | (cp >> 12)));
+            text_char(L, (char)(0x80 | ((cp >> 6) & 0x3F)));
+        }
+        text_char(L, (char)(0x80 | (cp & 0x3F)));
+        return;
+    }
     if (cp >= 0xC0 && cp <= 0xFF) { text_char(L, latin1_base[cp - 0xC0]); if (cp == 0xC6 || cp == 0xE6) text_char(L, 'e'); if (cp == 0xDF) text_char(L, 's'); return; }
     const char *s = NULL;
     switch (cp) {
@@ -437,7 +524,7 @@ static int add_field(Layout *L, int kind, const char *name, const char *value)
 static int inline_box(Layout *L, int kind, int w, int h, int field)
 {
     flush_word(L);
-    if (L->pending_space && !L->line_empty) L->x += WEB_CELL_W;
+    if (L->pending_space && !L->line_empty) L->x += space_w(L);
     L->pending_space = false;
     if (w > L->width - L->indent) w = L->width - L->indent;
     if (!L->line_empty && L->x + w > L->width) newline(L);
@@ -541,12 +628,12 @@ static void open_tag(Layout *L, const char *t, Attr *a, int na)
             size_t n = strlen(num);
             num[n] = '.'; num[n + 1] = '\0';
             int32_t save = L->x;
-            L->x = L->indent - (int)(n + 2) * WEB_CELL_W;
+            L->x = L->indent - text_w(L, num, (int)n + 1) - space_w(L);
             if (L->x < 0) L->x = 0;
             place(L, num, (int)n + 1);
             L->x = save;
         } else {
-            add_box(L, BOX_BULLET, L->indent - 14, L->y + 6, 5, 5, -1);
+            add_box(L, BOX_BULLET, L->indent - 14, L->y + base_line_px() / 2 - 2, 5, 5, -1);
         }
         L->line_empty = true;   /* bullet does not count as content for wrapping */
         return;
@@ -653,7 +740,7 @@ static void open_tag(Layout *L, const char *t, Attr *a, int na)
             if (f < 0) return;
             if (is(type, "button") || is(type, "reset")) d->fields[f].name[0] = '\0';   /* never submitted */
             strncpy(d->fields[f].label, label, sizeof(d->fields[f].label) - 1);
-            inline_box(L, BOX_BUTTON, (int)(strlen(d->fields[f].label) + 2) * WEB_CELL_W, 18, f);
+            inline_box(L, BOX_BUTTON, label_w(d->fields[f].label) + 2 * WEB_CELL_W, 18, f);
             return;
         }
         if (is(type, "checkbox") || is(type, "radio")) {
@@ -803,7 +890,7 @@ static void close_tag(Layout *L, const char *t)
             if (n > (int)sizeof(fl->label) - 1) n = sizeof(fl->label) - 1;
             memcpy(fl->label, start, (size_t)n);
             fl->label[n] = '\0';
-            inline_box(L, BOX_BUTTON, (n + 2) * WEB_CELL_W, 18, f);
+            inline_box(L, BOX_BUTTON, label_w(fl->label) + 2 * WEB_CELL_W, 18, f);
         }
         L->select_field = -1;
         return;
@@ -829,8 +916,7 @@ static void close_tag(Layout *L, const char *t)
         if (f >= 0) {
             WebField *fl = &d->fields[f];
             fl->kind = FIELD_HIDDEN;     /* fixed choice; shown read-only */
-            int n = (int)strlen(fl->label);
-            inline_box(L, BOX_BUTTON, (n + 4) * WEB_CELL_W, 18, f);
+            inline_box(L, BOX_BUTTON, label_w(fl->label) + 4 * WEB_CELL_W, 18, f);
         }
         L->select_field = -1;
         return;
@@ -943,7 +1029,7 @@ void html_layout(WebDoc *doc, const char *html, size_t len, int width, bool plai
     memset(&L, 0, sizeof(L));
     L.d = doc;
     L.width = doc->width;
-    L.line_h = WEB_CELL_H;
+    L.line_h = base_line_px();
     L.line_empty = true;
     L.link = -1;
     L.form = -1;
@@ -1014,7 +1100,7 @@ void html_layout(WebDoc *doc, const char *html, size_t len, int width, bool plai
     }
     flush_word(&L);
     if (!L.line_empty) newline(&L);
-    doc->height = L.y + WEB_CELL_H;
+    doc->height = L.y + base_line_px();
 }
 
 int web_first_run_at(const WebDoc *doc, int32_t y)
@@ -1023,18 +1109,17 @@ int web_first_run_at(const WebDoc *doc, int32_t y)
     while (lo < hi) {
         int mid = (lo + hi) / 2;
         const WebRun *r = &doc->runs[mid];
-        if (r->y + WEB_CELL_H * r->scale <= y) lo = mid + 1; else hi = mid;
+        if (r->y + r->h <= y) lo = mid + 1; else hi = mid;
     }
     return lo;
 }
 
 int web_link_at(const WebDoc *doc, int32_t x, int32_t y)
 {
-    for (int i = web_first_run_at(doc, y - 2 * WEB_CELL_H); i < doc->run_count; i++) {
+    for (int i = web_first_run_at(doc, y - 4 * WEB_CELL_H); i < doc->run_count; i++) {
         const WebRun *r = &doc->runs[i];
-        if (r->y > y) break;
-        int h = WEB_CELL_H * r->scale, w = r->len * WEB_CELL_W * r->scale;
-        if (r->link >= 0 && x >= r->x && x < r->x + w && y >= r->y && y < r->y + h) return r->link;
+        if (r->y > y + 4 * WEB_CELL_H) break;     /* runs on one line share a bottom, not a top */
+        if (r->link >= 0 && x >= r->x && x < r->x + r->w && y >= r->y && y < r->y + r->h) return r->link;
     }
     return -1;
 }

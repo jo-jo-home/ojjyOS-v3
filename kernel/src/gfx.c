@@ -361,3 +361,160 @@ void gfx_draw_rgba_scaled(GfxSurface *s, const uint8_t *rgba, int src_w, int src
         }
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* Liquid Glass                                                        */
+/* ------------------------------------------------------------------ */
+static uint32_t *glass_scratch;
+static size_t glass_scratch_px;
+static uint32_t glass_line[4096];
+
+void gfx_set_scratch(uint32_t *pixels, size_t count) { glass_scratch = pixels; glass_scratch_px = count; }
+
+/* One box-blur pass over n pixels spaced `stride` apart (in place). */
+static void glass_blur_line(uint32_t *p, int n, int stride, int radius)
+{
+    if (n <= 1 || radius <= 0 || n > 4096) return;
+    for (int i = 0; i < n; i++) glass_line[i] = p[i * stride];
+    int win = radius * 2 + 1;
+    uint32_t sr = 0, sg = 0, sb = 0;
+    for (int k = -radius; k <= radius; k++) {
+        uint32_t c = glass_line[k < 0 ? 0 : k >= n ? n - 1 : k];
+        sr += (c >> 16) & 255; sg += (c >> 8) & 255; sb += c & 255;
+    }
+    for (int i = 0; i < n; i++) {
+        p[i * stride] = 0xFF000000u | ((sr / win) << 16) | ((sg / win) << 8) | (sb / win);
+        int o = i - radius, a = i + radius + 1;
+        uint32_t co = glass_line[o < 0 ? 0 : o], ca = glass_line[a >= n ? n - 1 : a];
+        sr += ((ca >> 16) & 255) - ((co >> 16) & 255);
+        sg += ((ca >> 8) & 255) - ((co >> 8) & 255);
+        sb += (ca & 255) - (co & 255);
+    }
+}
+
+static uint32_t saturate_px(uint32_t c, int boost)
+{
+    int r = (c >> 16) & 255, g = (c >> 8) & 255, b = c & 255;
+    int l = (r * 77 + g * 150 + b * 29) >> 8;
+    r = l + ((r - l) * (256 + boost) >> 8);
+    g = l + ((g - l) * (256 + boost) >> 8);
+    b = l + ((b - l) * (256 + boost) >> 8);
+    r = r < 0 ? 0 : r > 255 ? 255 : r;
+    g = g < 0 ? 0 : g > 255 ? 255 : g;
+    b = b < 0 ? 0 : b > 255 ? 255 : b;
+    return 0xFF000000u | (uint32_t)(r << 16 | g << 8 | b);
+}
+
+void gfx_liquid_glass(GfxSurface *s, int x, int y, int w, int h, int r, const GfxGlass *g)
+{
+    if (!g || !g->alpha || w <= 0 || h <= 0) return;
+    SCALE_IN(s);
+    int blur = g->blur * k_, refract = g->refract * k_, band = g->band * k_ ? g->band * k_ : 1;
+    x *= k_; y *= k_; w *= k_; h *= k_; r *= k_;
+    if (r * 2 > w) r = w / 2;
+    if (r * 2 > h) r = h / 2;
+
+    /* Backdrop box (surface bounds; refraction reads up to `refract` in). */
+    int m = blur + 2;
+    int bx0 = x - m < 0 ? 0 : x - m, by0 = y - m < 0 ? 0 : y - m;
+    int bx1 = x + w + m > s->width ? s->width : x + w + m, by1 = y + h + m > s->height ? s->height : y + h + m;
+    int bw = bx1 - bx0, bh = by1 - by0;
+    if (bw <= 0 || bh <= 0) return;
+    if (!glass_scratch || (size_t)bw * (size_t)bh > glass_scratch_px || bw > 4096 || bh > 4096) {
+        /* No scratch: plain tinted fill keeps the UI usable. */
+        Paint p = { MODE_SOLID, g->tint & 0xFFFFFF, (uint32_t)(g->tint_alpha + 40 > 255 ? 255 : g->tint_alpha + 40) * g->alpha / 255, 0, 0, 0 };
+        fill_shape(s, x, y, w, h, r, &p);
+        return;
+    }
+    /* The blurred backdrop is smooth, so it is built at half resolution
+     * (2x2 average) whenever there is real blur: ~4x less work per frame. */
+    int sh = blur >= 4 ? 1 : 0;
+    int aw = (bw + sh) >> sh, ah = (bh + sh) >> sh;
+    uint32_t *A = glass_scratch;
+    for (int yy = 0; yy < ah; yy++) {
+        const uint32_t *s0 = s->pixels + (size_t)(by0 + (yy << sh)) * s->pitch + bx0;
+        const uint32_t *s1 = sh && (yy << sh) + 1 < bh ? s0 + s->pitch : s0;
+        for (int xx = 0; xx < aw; xx++) {
+            int x0 = xx << sh, x1 = sh && x0 + 1 < bw ? x0 + 1 : x0;
+            if (!sh) { A[(size_t)yy * aw + xx] = s0[x0]; continue; }
+            uint32_t a = s0[x0], b = s0[x1], c = s1[x0], d = s1[x1];
+            uint32_t rb = ((a & 0xFF00FF) + (b & 0xFF00FF) + (c & 0xFF00FF) + (d & 0xFF00FF)) >> 2;
+            uint32_t g2 = ((a & 0x00FF00) + (b & 0x00FF00) + (c & 0x00FF00) + (d & 0x00FF00)) >> 2;
+            A[(size_t)yy * aw + xx] = 0xFF000000u | (rb & 0xFF00FF) | (g2 & 0x00FF00);
+        }
+    }
+    if (blur > 0) {
+        int br = ((blur >> sh) / 2) + 1;
+        for (int pass = 0; pass < 2; pass++) {
+            for (int yy = 0; yy < ah; yy++) glass_blur_line(A + (size_t)yy * aw, aw, 1, br);
+            for (int xx = 0; xx < aw; xx++) glass_blur_line(A + xx, ah, aw, br);
+        }
+    }
+
+    int x1 = x < s->clip_x1 ? s->clip_x1 : x, x2 = x + w > s->clip_x2 ? s->clip_x2 : x + w;
+    int y1 = y < s->clip_y1 ? s->clip_y1 : y, y2 = y + h > s->clip_y2 ? s->clip_y2 : y + h;
+    int cx16 = x * 16 + w * 8, cy16 = y * 16 + h * 8;           /* centre, 1/16 px */
+    int hw16 = w * 8 - r * 16, hh16 = h * 8 - r * 16;           /* inner box half sizes */
+    int band16 = band * 16, rim16 = (k_ * 3) * 16;              /* specular rim ~3 logical px */
+    uint32_t ta = g->tint_alpha, tint = g->tint & 0xFFFFFF;
+
+    /* Deep interior (beyond corners, refraction band and rim): no edge
+     * maths at all, just backdrop + saturation + tint. */
+    int edge = band > r ? band : r;
+    if (k_ * 3 > edge) edge = k_ * 3;
+    edge += 1;
+    for (int py = y1; py < y2; py++) {
+        uint32_t *row = s->pixels + (size_t)py * s->pitch;
+        bool mid_row = py >= y + edge && py < y + h - edge;
+        int ix1 = x + edge, ix2 = x + w - edge;
+        for (int px = x1; px < x2; px++) {
+            if (mid_row && px >= ix1 && px < ix2) {
+                uint32_t c = A[(size_t)((py - by0) >> sh) * aw + ((px - bx0) >> sh)];
+                if (g->saturate) c = saturate_px(c, g->saturate);
+                c = gfx_blend(c, tint, ta);
+                row[px] = g->alpha >= 255 ? c : gfx_blend(row[px], c, g->alpha);
+                continue;
+            }
+            int d = rr_sdf16(px, py, x, y, w, h, r);          /* > 0 outside */
+            if (d >= 8) continue;
+            uint32_t cov = d <= -8 ? 256 : (uint32_t)(8 - d) * 16;
+            int t16 = -d < 0 ? 0 : -d;                         /* depth inside, 1/16 px */
+
+            /* Outward normal (n16x, n16y), unit length 16. */
+            int pcx = px * 16 + 8 - cx16, pcy = py * 16 + 8 - cy16;
+            int qx = (pcx < 0 ? -pcx : pcx) - hw16, qy = (pcy < 0 ? -pcy : pcy) - hh16;
+            int nx = 0, ny = 0;
+            if (qx > 0 && qy > 0) {
+                int len = (int)gfx_isqrt((uint32_t)(qx * qx + qy * qy));
+                if (len < 1) len = 1;
+                nx = qx * 16 / len; ny = qy * 16 / len;
+            } else if (qx > qy) nx = 16; else ny = 16;
+            if (pcx < 0) nx = -nx;
+            if (pcy < 0) ny = -ny;
+
+            /* Refraction: near the rim, sample further inside. */
+            int sxp = px, syp = py;
+            if (t16 < band16 && refract) {
+                int f = band16 - t16;                          /* 0..band16 */
+                int disp = refract * f / band16 * f / band16;  /* (1 - t/band)^2 */
+                sxp -= nx * disp / 16;
+                syp -= ny * disp / 16;
+            }
+            sxp = sxp < bx0 ? bx0 : sxp >= bx1 ? bx1 - 1 : sxp;
+            syp = syp < by0 ? by0 : syp >= by1 ? by1 - 1 : syp;
+            uint32_t c = A[(size_t)((syp - by0) >> sh) * aw + ((sxp - bx0) >> sh)];
+            if (g->saturate) c = saturate_px(c, g->saturate);
+            c = gfx_blend(c, tint, ta);
+
+            /* Specular rim: light from above (strong top, faint bottom). */
+            if (t16 < rim16 && g->specular) {
+                int up = -ny;                                  /* +16 on the top edge */
+                int lit = up > 0 ? 6 + up * 10 / 16 : 6 + (-up) * 3 / 16;   /* 6..16 */
+                uint32_t a = (uint32_t)g->specular * (uint32_t)(rim16 - t16) / (uint32_t)rim16 * (uint32_t)lit / 16;
+                c = gfx_blend(c, 0xFFFFFF, a > 255 ? 255 : a);
+            }
+            uint32_t a = (uint32_t)g->alpha * cov >> 8;
+            row[px] = a >= 255 ? c : gfx_blend(row[px], c, a);
+        }
+    }
+}

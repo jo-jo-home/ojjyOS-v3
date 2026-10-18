@@ -107,6 +107,32 @@ int main(void)
     gfx_blit_scaled(&surf, layer, 20, 0, 0, 20, 10, 50, 40, 40, 40, 0, 255);
     CHECK(guard_intact(), "layer blit clipped");
 
+    /* Liquid Glass */
+    static uint32_t scratch[(W + 4) * (H + 4) * 2];
+    GfxGlass glass = { 0xFFFFFF, 64, 2, 4, 8, 200, 0, 255 };
+    reset(0x808080);
+    gfx_set_scratch(scratch, sizeof(scratch) / sizeof(scratch[0]));
+    gfx_liquid_glass(&surf, 10, 8, 40, 30, 10, &glass);
+    uint32_t expect = gfx_blend(0x808080, 0xFFFFFF, 64) & 0xFFFFFF;
+    CHECK((at(30, 23) & 0xFFFFFF) == expect, "glass interior = tinted backdrop");
+    CHECK(at(5, 5) == 0x808080 && at(55, 44) == 0x808080, "glass leaves outside pixels alone");
+    CHECK(red(at(30, 8)) > red(at(30, 37)) && red(at(30, 37)) > red(at(30, 23)), "specular rim: top brighter than bottom, both above interior");
+    CHECK(guard_intact(), "glass stays inside the surface");
+    /* Refraction: a dark stripe just inside the left edge is replaced by
+     * backdrop pulled from further in (light), so the rim pixel is light. */
+    reset(0xFFFFFF);
+    for (int y = 0; y < H; y++) for (int x = 10; x < 13; x++) surf.pixels[y * surf.pitch + x] = 0x000000;
+    GfxGlass clear = { 0xFFFFFF, 0, 0, 6, 8, 0, 0, 255 };
+    gfx_liquid_glass(&surf, 10, 4, 40, 40, 4, &clear);
+    CHECK(red(at(10, 24)) > 200 && red(at(30, 24)) > 200, "refraction pulls inner backdrop to the rim");
+    surf.clip_x1 = 0; surf.clip_x2 = 20;
+    gfx_liquid_glass(&surf, -10, -10, 90, 70, 20, &glass);
+    CHECK(guard_intact() && at(25, 20) == 0xFFFFFF, "glass honours the clip box");
+    gfx_set_scratch(0, 0);
+    reset(0x000000);
+    gfx_liquid_glass(&surf, 4, 4, 20, 20, 6, &glass);
+    CHECK(red(at(14, 14)) > 0 && guard_intact(), "no scratch: plain tinted fallback");
+
     reset(0x000000);
     gfx_round_rect_stroke(&surf, 4, 4, 40, 30, 8, 0xFFFFFF, 255);
     CHECK(at(20, 4) == 0xFFFFFF && at(20, 5) == 0 && at(4, 20) == 0xFFFFFF && at(20, 20) == 0, "hairline border");

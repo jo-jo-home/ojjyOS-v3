@@ -143,6 +143,8 @@ Outputs are isolated under `build/aarch64/` and `build/x86_64/`. Shut down a VM 
 ```
 `scripts/run-qemu.sh` locates firmware, uses one vCPU, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. On Apple Silicon the runner uses Apple's hardware virtualization (HVF, GICv3) and a `virtio-gpu` display at 2880x1800, a Retina-density (2x) rendering of a 1440x900 desktop; `OJJY_ACCEL=tcg` falls back to emulation at 1440x900. QEMU Zoom To Fit is on by default. `OJJY_RES=3200x1800` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display. The UI uses the Inter typeface (SIL OFL, `fonts/Inter-OFL-LICENSE.txt`) and JetBrains Mono for terminals.
 
+**Official Tahoe wallpapers (optional, personal use):** run `python3 tools/import_wallpapers.py --fetch` once; every later build bakes the 17 pictures into your local disk image (they stay in git-ignored `wallpapers/local/` and are never committed). Pick one in Settings > Wallpaper or in Preview. Without them you get the built-in ojjyOS Waves. The picture pack is build-owned at LBA 102400 onward; rebuilds preserve the user-data region before it, and refresh the pack from local assets.
+
 The VirtualBox runner preserves an existing VDI rather than recreating it and refuses to force-stop a running VM. A VDI has its own saved data; rebuilding a raw QEMU image does not update that VDI.
 
 ---

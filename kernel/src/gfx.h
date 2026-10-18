@@ -49,6 +49,25 @@ void gfx_round_rect_vgradient(GfxSurface *s, int x, int y, int w, int h, int r,
  * dy, darkest alpha at the edge. The shape's interior is left untouched. */
 void gfx_shadow(GfxSurface *s, int x, int y, int w, int h, int r, int spread, int dy,
                 uint32_t color, uint8_t alpha);
+/* Liquid Glass (macOS Tahoe-style material): the pixels already drawn
+ * behind the shape are blurred and saturated, bent toward the inside near
+ * the rim (refraction), lightly tinted, and lit by a specular rim from
+ * above. All sizes LOGICAL. Needs a scratch buffer (gfx_set_scratch) at
+ * least as large as the shape's box plus margins; without one it falls
+ * back to a plain tinted fill. */
+typedef struct {
+    uint32_t tint;          /* glass tint colour */
+    uint8_t tint_alpha;     /* 0..255 */
+    uint8_t blur;           /* backdrop blur radius (logical px) */
+    uint8_t refract;        /* max edge displacement (logical px) */
+    uint8_t band;           /* width of the refracting rim (logical px) */
+    uint8_t specular;       /* rim highlight strength 0..255 */
+    uint8_t saturate;       /* backdrop saturation boost 0..255 */
+    uint8_t alpha;          /* overall opacity (fades) */
+} GfxGlass;
+void gfx_set_scratch(uint32_t *pixels, size_t count);
+void gfx_liquid_glass(GfxSurface *s, int x, int y, int w, int h, int r, const GfxGlass *g);
+
 /* Anti-aliased ring segment centred at (cx, cy): radii [r_in, r_out],
  * limited to directions within `half_angle_deg` of straight up (90 = a
  * semicircle, 180 = full ring). Used for Wi-Fi fans, spinners, gauges. */

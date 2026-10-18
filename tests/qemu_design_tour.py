@@ -16,7 +16,7 @@ def run(args):
     out = Path(args.output).resolve(); out.mkdir(parents=True, exist_ok=False)
     disk = out / 'test-disk.img'; shutil.copyfile(args.image, disk)
     with disk.open('r+b') as file:      # fresh data partition (private copy only)
-        file.seek(67584 * 512); file.write(bytes((262144 - 34 - 67584 + 1) * 512))
+        file.seek(67584 * 512); file.write(bytes((102400 - 67584) * 512))  # user data only; the picture pack follows
     vm = VM('aarch64', disk, out, 'tour')
     try:
         vm.wait('Entering main loop'); time.sleep(3)
@@ -53,6 +53,11 @@ def run(args):
             click(cx + 200, cy + 86 + i * 40); vm.type(value)
         click(cx + 200, cy + 309)
         vm.wait("User 'jonas' logged in"); vm.wait('[UI] Desktop presented')
+        if args.dark:
+            # Control Center > Appearance tile (third tile: left column, second row)
+            click(width - 40, 13); time.sleep(.6)
+            click(width - 340 + 16 + 69, 36 + 106 + 28); time.sleep(.6)
+            vm.press('esc'); click(700, 500)
         snap('02-desktop', 1.5)
 
         click(140, 13); snap('03-file-menu', .5); vm.press('esc'); click(700, 500)
@@ -75,4 +80,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--output', required=True)
+    parser.add_argument('--dark', action='store_true', help='switch to Dark appearance after login')
     run(parser.parse_args())

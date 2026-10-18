@@ -3,9 +3,12 @@
  *
  * One pass: a tolerant tokenizer feeds a flow-layout state machine that
  * produces a display list (positioned text runs, boxes, links, form fields)
- * for a given width, using the kernel's fixed 8x16 font (integer only).
- * There is no DOM and no JavaScript: <script>/<style> contents are skipped,
- * <noscript> content is shown. Text is transliterated to the ASCII font.
+ * for a given width. Text is measured by pluggable metrics (WebMetrics):
+ * the browser plugs in the proportional Inter UI font; without metrics the
+ * engine uses fixed 8x16 cells (host tests, plain consoles). Code and <pre>
+ * always use fixed cells (the monospace font). There is no DOM and no
+ * JavaScript: <script>/<style> contents are skipped, <noscript> content is
+ * shown. Characters the font lacks are transliterated to ASCII.
  *
  * ojjyOS - Created by Jonas Lee
  */
@@ -35,13 +38,27 @@
 #define WS_FIELD      0x80      /* text drawn inside an input box */
 
 typedef struct {
-    int32_t x, y;               /* page pixels */
+    int32_t x, y;               /* page pixels (top-left of the run) */
     uint32_t text;              /* offset into pool */
-    uint16_t len;               /* characters */
+    uint16_t len;               /* bytes (UTF-8) */
     uint8_t style;
-    uint8_t scale;              /* 1 or 2 */
+    uint8_t scale;              /* 1 or 2: fixed-cell scale (h1/h2, code) */
     int16_t link;               /* -1 or link index */
+    int16_t w, h;               /* measured size in pixels (hit tests, underline) */
+    uint8_t level;              /* heading level 1..6, 0 = body text */
 } WebRun;
+
+/* Text measurement. width(): pixel width of len bytes of UTF-8 in the given
+ * run style/heading level. line_height(): line box height for that style.
+ * has_glyph(): whether a code point can be drawn as itself (else it is
+ * transliterated to ASCII). Pass NULL to html_set_metrics for fixed cells. */
+typedef struct {
+    int (*width)(const char *s, int len, uint8_t style, uint8_t level);
+    int (*line_height)(uint8_t style, uint8_t level);
+    bool (*has_glyph)(uint32_t cp);
+} WebMetrics;
+
+void html_set_metrics(const WebMetrics *metrics);
 
 typedef enum { BOX_RULE, BOX_BULLET, BOX_INPUT, BOX_BUTTON, BOX_IMAGE, BOX_QUOTE_BAR, BOX_CODE } WebBoxKind;
 

@@ -355,11 +355,12 @@ static void cmd_ui(const char *arg)
      * every UI entry, not just the first compositor initialization. */
     fb_use_backbuffer(true);
 
-    bool use_dark = (arg && strcmp(arg, "dark") == 0);
-    settings_get()->dark_mode = use_dark;
-    compositor_set_dark_mode(use_dark);
-    compositor_set_wallpaper(use_dark ? "/System/Wallpapers/Tahoe Dark.raw"
-                                      : "/System/Wallpapers/Tahoe Light.raw");
+    /* "ui dark" / "ui light" pick an appearance; plain "ui" (and boot) keep
+     * the saved one, which compositor_init already applied. */
+    if (arg && (strcmp(arg, "dark") == 0 || strcmp(arg, "light") == 0)) {
+        bool use_dark = strcmp(arg, "dark") == 0;
+        if (use_dark != settings_get()->dark_mode) compositor_toggle_appearance();
+    }
 
     compositor_set_active_app("Finder");
     compositor_open_default_apps();

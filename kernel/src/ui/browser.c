@@ -38,6 +38,28 @@ typedef enum { FOCUS_PAGE, FOCUS_ADDRESS, FOCUS_FIELD } Focus;
 static uint8_t *page_buf;
 static WebDoc *docp;
 #define doc (*docp)
+
+/* ---- Page text in the Inter UI font (proportional) ---- */
+static TextStyle web_style(uint8_t style, uint8_t level)
+{
+    if (level == 1) return TEXT_LARGE;
+    if (level == 2) return TEXT_HEADLINE;
+    if (level == 3) return TEXT_TITLE;
+    if (level >= 4 || (style & WS_BOLD)) return TEXT_BODY_BOLD;
+    return TEXT_BODY;
+}
+
+static int web_width(const char *s, int len, uint8_t style, uint8_t level)
+{
+    return text_width_n(s, len, web_style(style, level));
+}
+
+static int web_line_height(uint8_t style, uint8_t level)
+{
+    return text_line_height(web_style(style, level)) + (level ? 4 : 2);
+}
+
+static const WebMetrics web_metrics = { web_width, web_line_height, text_has_glyph };
 static HttpFetch fetch;
 static char aux_html[8192];             /* generated error/info pages */
 
@@ -458,6 +480,7 @@ void browser_open(void)
     if (B.opened) return;
     if (!page_buf) page_buf = (uint8_t *)pmm_alloc_bytes(PAGE_BUF);
     if (!docp) docp = (WebDoc *)pmm_alloc_bytes(sizeof(WebDoc));
+    html_set_metrics(&web_metrics);
     if (!page_buf || !docp) { serial_printf("[WEB] not enough memory for the browser\n"); return; }
     B.opened = true;
     B.field = -1;
@@ -477,6 +500,13 @@ const char *browser_title(void)
 /* ------------------------------------------------------------------ */
 /* Drawing                                                             */
 /* ------------------------------------------------------------------ */
+
+
+
+/* Dark appearance = light text tokens. Fields and the page follow it. */
+static bool dark_ui(const ThemeTokens *t) { return ((t->text >> 16) & 0xFF) > 128; }
+static Color field_bg(const ThemeTokens *t) { return dark_ui(t) ? RGB(20, 26, 38) : COLOR_WHITE; }
+static Color field_fg(const ThemeTokens *t) { return dark_ui(t) ? t->text : COLOR_TEXT; }
 
 static GfxSurface *surf(void)
 {
@@ -557,29 +587,33 @@ static void draw_field(const WebBox *b, int ox, int oy)
     if (b->kind == BOX_BUTTON) {
         ui_rounded_rect(x, y, b->w, b->h, 6, t->accent_soft, f->kind == FIELD_SUBMIT ? 230 : 140);
         const char *label = f->label[0] ? f->label : f->value;
-        int n = (int)strlen(label), max = (b->w - 8) / FONT_WIDTH;
-        if (n > max) n = max;
-        fb_draw_text_scaled(x + (b->w - n * FONT_WIDTH) / 2, y + 1, label, n, t->text, 1, false);
+        int lw = text_width(label, TEXT_BODY_MEDIUM);
+        if (lw > b->w - 8) lw = b->w - 8;
+        text_draw_fit(surf(), x + (b->w - lw) / 2, text_y_center(y, b->h, TEXT_BODY_MEDIUM), label,
+                      TEXT_BODY_MEDIUM, t->text, b->w - 8);
         return;
     }
-    ui_rounded_rect(x, y, b->w, b->h, 4, COLOR_WHITE, 235);
+    ui_rounded_rect(x, y, b->w, b->h, 4, field_bg(t), 235);
     ui_rounded_rect(x, y + b->h - 2, b->w, 2, 1, focused ? t->accent : t->text_muted, focused ? 255 : 120);
     if (f->kind == FIELD_CHECKBOX) {
-        if (f->checked) fb_draw_text_scaled(x + 3, y - 1, "x", 1, t->accent, 1, true);
+        if (f->checked) ui_rounded_rect(x + 3, y + 3, b->w - 6, b->h - 6, 2, t->accent, 255);
         return;
     }
+    /* Value (or placeholder), scrolled so its end stays visible, then caret. */
     char shown[128];
     const char *v = f->value;
     bool placeholder = !v[0] && !focused && f->label[0];
     if (placeholder) v = f->label;
-    size_t n = strlen(v);
-    int max = (b->w - 10) / FONT_WIDTH - (focused ? 1 : 0);
-    size_t start = (int)n > max ? n - (size_t)max : 0;
     size_t k = 0;
-    for (size_t i = start; i < n && k + 1 < sizeof(shown); i++) shown[k++] = (f->kind == FIELD_PASSWORD && !placeholder) ? '*' : v[i];
-    if (focused) shown[k++] = '|';
+    for (size_t i = 0; v[i] && k + 1 < sizeof(shown); i++)
+        shown[k++] = (f->kind == FIELD_PASSWORD && !placeholder) ? '*' : v[i];
     shown[k] = '\0';
-    fb_draw_text_scaled(x + 5, y + 2, shown, (int)k, placeholder ? t->text_muted : COLOR_TEXT, 1, false);
+    const char *p = shown;
+    int room = b->w - 12;
+    while (*p && text_width(p, TEXT_BODY) > room) p++;
+    int ty = text_y_center(y, b->h, TEXT_BODY);
+    int tw = text_draw(surf(), x + 5, ty, p, TEXT_BODY, placeholder ? t->text_muted : field_fg(t));
+    if (focused) ui_rounded_rect(x + 6 + tw, y + 3, 1, b->h - 6, 0, t->accent, 255);
 }
 
 void browser_draw(int x, int y, int w, int h)
@@ -603,7 +637,7 @@ void browser_draw(int x, int y, int w, int h)
     int ax = x + 122, aw = w - 128;
     bool editing = B.focus == FOCUS_ADDRESS;
     GfxSurface *s = surf();
-    ui_rounded_rect(ax, by, aw, 24, 8, COLOR_WHITE, editing ? 245 : 170);
+    ui_rounded_rect(ax, by, aw, 24, 8, field_bg(t), editing ? 245 : (dark_ui(t) ? 200 : 170));
     if (editing) {
         gfx_round_rect_stroke(s, ax - 1, by - 1, aw + 2, 26, 9, t->accent, 255);
         gfx_round_rect_stroke(s, ax - 2, by - 2, aw + 4, 28, 10, t->accent, 90);
@@ -617,7 +651,7 @@ void browser_draw(int x, int y, int w, int h)
         fb_set_clip(ax, by, aw - 4, 24);
         int tw = text_width(a, TEXT_BODY);
         if (B.select_all && *a) ui_rounded_rect(tx - 2, by + 4, tw + 4, 16, 3, t->accent_soft, 170);
-        text_draw(s, tx, ty, a, TEXT_BODY, COLOR_TEXT);
+        text_draw(s, tx, ty, a, TEXT_BODY, field_fg(t));
         if (!B.select_all) ui_rounded_rect(tx + tw + 1, by + 4, 2, 16, 1, t->accent, 255);
         fb_reset_clip();
     } else {
@@ -644,7 +678,7 @@ void browser_draw(int x, int y, int w, int h)
 
     /* Page */
     int px = page_x(), py = page_y(), pw = page_w(), ph = page_h();
-    ui_rounded_rect(px, py, pw, ph, 8, ui_blend(t->dock_tint, COLOR_WHITE, 120), 238);
+    ui_rounded_rect(px, py, pw, ph, 8, dark_ui(t) ? RGB(24, 30, 42) : ui_blend(t->dock_tint, COLOR_WHITE, 120), 238);
     fb_set_clip(px, py, pw, ph);
     int ox = px + PAD, oy = py + 8 - B.scroll;
     for (int i = 0; i < doc.box_count; i++) {
@@ -663,9 +697,17 @@ void browser_draw(int x, int y, int w, int h)
         if (r->y > B.scroll + ph) break;
         Color c = run_color(r->style);
         const char *s = web_text(&doc, r->text);
-        fb_draw_text_scaled(ox + r->x, oy + r->y, s, r->len, c, r->scale, (r->style & WS_BOLD) != 0);
+        if (r->style & WS_CODE) {
+            /* Code and <pre> keep the monospace font (columns line up). */
+            fb_draw_text_scaled(ox + r->x, oy + r->y, s, r->len, c, r->scale, (r->style & WS_BOLD) != 0);
+            if (r->style & WS_LINK) fb_fill_rect(ox + r->x, oy + r->y + FONT_HEIGHT * r->scale - 2, r->w, 1, c);
+            continue;
+        }
+        TextStyle ts = web_style(r->style, r->level);
+        int ty = oy + r->y + (r->h - text_line_height(ts)) / 2;
+        text_draw_n(surf(), ox + r->x, ty, s, r->len, ts, c, 255);
         if (r->style & WS_LINK)
-            fb_fill_rect(ox + r->x, oy + r->y + FONT_HEIGHT * r->scale - 2, r->len * FONT_WIDTH * r->scale, 1, c);
+            fb_fill_rect(ox + r->x, ty + text_ascent(ts) + 2, r->w, 1, c);
     }
     /* Scrollbar */
     if (doc.height + 16 > ph) {

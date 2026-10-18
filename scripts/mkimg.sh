@@ -263,6 +263,19 @@ with open(img_path, "wb") as f:
 PYEOF
 fi
 
+# Desktop pictures: the official Tahoe wallpapers are Apple's images, kept
+# only in the git-ignored wallpapers/local/ (tools/import_wallpapers.py
+# --fetch). When present they are packed into the data partition's tail
+# (LBA 102400, kernel/src/image/wallpack.h); without them the region stays
+# empty and only the built-in wallpapers are offered.
+PACK_FIRST=102400
+if [ -d "$ROOT_DIR/wallpapers/local/originals" ]; then
+    PACK="$ROOT_DIR/wallpapers/local/wallpapers.pack"
+    python3 -I "$ROOT_DIR/tools/import_wallpapers.py" --pack "$PACK" \
+        --limit $(( (PART_LAST - PACK_FIRST + 1) * 512 ))
+    dd if="$PACK" of="$IMAGE" bs=512 seek=$PACK_FIRST conv=notrunc 2>/dev/null
+fi
+
 # Migrate saved data from the old shared build path only on the first build
 # of each architecture. The legacy disk remains untouched.
 python3 "$ROOT_DIR/tools/finalize_image.py" "$IMAGE" "$FINAL_IMAGE" \

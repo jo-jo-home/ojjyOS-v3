@@ -18,7 +18,7 @@ def run(args):
     out = Path(args.output).resolve(); out.mkdir(parents=True, exist_ok=False)
     disk = out / 'test-disk.img'; shutil.copyfile(args.image, disk)
     with disk.open('r+b') as file:
-        file.seek(67584 * 512); file.write(bytes((262144 - 34 - 67584 + 1) * 512))
+        file.seek(67584 * 512); file.write(bytes((102400 - 67584) * 512))  # user data only; the picture pack follows
     server = web_server.start()
     port = server.server_address[1]
     tls_server = web_server.start_tls(str(out))
@@ -29,6 +29,7 @@ def run(args):
         vm.wait('Entering main loop'); vm.wait('[NET] DHCP lease', timeout=30); time.sleep(2)
         shot = out / 'setup.png'; vm.screenshot(shot)
         width, height = Image.open(shot).size
+        if width >= 2560: width, height = width // 2, height // 2   # HiDPI: logical coordinates
 
         def move(x, y):
             vm.qmp('input-send-event', {'events': [

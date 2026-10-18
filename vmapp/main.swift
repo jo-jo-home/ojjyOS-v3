@@ -117,6 +117,22 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     var serialHandle: FileHandle?
     var controlServer: ControlServer?
     var held: Set<Int> = []
+    /* Full-screen transitions: styleMask flips before the Space animation
+     * settles and AppKit silently drops toggleFullScreen calls made while
+     * one is in flight (measured: windowed-size captures while "full
+     * screen"). The delegate callbacks are the only completion signal. */
+    var fullscreenBusy = 0, fullscreenStage = 0
+    var fullscreenEventAt: TimeInterval = 0
+
+    /* A transition can be dropped mid-flight (will... without did...),
+     * which would leave the busy count stuck forever. Nothing is actually
+     * animating that long after the last callback, so clear the stale
+     * count instead of poisoning every later toggle. Main thread only. */
+    func fullscreenQuiesce(_ stale: TimeInterval) {
+        if fullscreenBusy != 0, ProcessInfo.processInfo.systemUptime - fullscreenEventAt > stale {
+            fullscreenBusy = 0
+        }
+    }
     init(_ options: Options) { self.options = options }
     func applicationDidFinishLaunching(_ notification: Notification) {
         makeMenus()
@@ -226,6 +242,10 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     }
     func applicationWillTerminate(_ notification: Notification) { controlServer?.close() }
     func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
+    func windowWillEnterFullScreen(_ notification: Notification) { fullscreenBusy += 1; fullscreenEventAt = ProcessInfo.processInfo.systemUptime }
+    func windowDidEnterFullScreen(_ notification: Notification) { fullscreenBusy -= 1; fullscreenStage += 1; fullscreenEventAt = ProcessInfo.processInfo.systemUptime }
+    func windowWillExitFullScreen(_ notification: Notification) { fullscreenBusy += 1; fullscreenEventAt = ProcessInfo.processInfo.systemUptime }
+    func windowDidExitFullScreen(_ notification: Notification) { fullscreenBusy -= 1; fullscreenStage += 1; fullscreenEventAt = ProcessInfo.processInfo.systemUptime }
     var flags: NSEvent.ModifierFlags {
         var result: NSEvent.ModifierFlags = []
         for (usages,flag) in [([224,228],NSEvent.ModifierFlags.control),([225,229],.shift),([226,230],.option),([227,231],.command)] {
@@ -288,9 +308,14 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     }
     func prepareScreenshot() {
         // Metal surfaces can be uncomposited when their window is occluded.
-        // An explicit test capture brings only our own window forward first.
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps:true)
+        // Front the window ONLY when it is not already visible, key and
+        // active: unconditional makeKeyAndOrderFront/activate during a
+        // settling full-screen Space fires stray transition callbacks and
+        // gets later toggles dropped (measured on this host).
+        if !window.isVisible || !window.isKeyWindow || !NSApp.isActive {
+            window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         window.displayIfNeeded()
         view.displayIfNeeded()
     }
@@ -375,7 +400,35 @@ final class ControlServer {
             "visible":$0.window.isVisible,
             "viewWidth":$0.view.bounds.width,"viewHeight":$0.view.bounds.height] } }
         if line == "hide" { try onMain { $0.window.orderOut(nil) }; return ["ok":true] }
-        if line == "fullscreen" { try onMain { $0.fullScreen() }; return ["ok":true] }
+        if line == "fullscreen" {
+            // Settle any in-flight Space animation first: a toggle issued
+            // mid-transition is dropped without error. Then flip and wait
+            // for the delegate's completion callback, re-issuing once if
+            // macOS ignored the request. styleMask alone is not proof.
+            let settleEnd = ProcessInfo.processInfo.systemUptime + 6
+            while try onMain({ host in host.fullscreenQuiesce(2.5); return host.fullscreenBusy > 0 }) {
+                if ProcessInfo.processInfo.systemUptime > settleEnd { throw HostError("previous full-screen transition did not settle") }
+                usleep(100000)
+            }
+            let before = try onMain { $0.fullscreenStage }
+            try onMain { $0.fullScreen() }
+            let toggledAt = ProcessInfo.processInfo.systemUptime
+            let completeEnd = toggledAt + 10
+            var attempts = 0
+            while true {
+                if try onMain({ host in host.fullscreenQuiesce(2.5); return host.fullscreenStage > before }) { break }
+                if ProcessInfo.processInfo.systemUptime > completeEnd { throw HostError("macOS did not complete the full-screen transition") }
+                // Re-issue periodically: a toggle made during a settling
+                // animation is dropped without error, and re-issuing while
+                // a real transition runs is harmless.
+                if attempts < 3, ProcessInfo.processInfo.systemUptime > toggledAt + Double(attempts + 1) * 2.0 {
+                    try onMain { $0.fullScreen() }
+                    attempts += 1
+                }
+                usleep(100000)
+            }
+            return ["ok":true]
+        }
         if line == "start" { try onMain { try $0.start() }; return ["ok":true] }
         if line == "quit" {
             try onMain {

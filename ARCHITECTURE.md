@@ -26,7 +26,7 @@
 ojjyOS v3 is a custom operating system built entirely from scratch by **Jonas Lee** with the following goals:
 
 - **Not based on Linux, BSD, Windows, or macOS** - A truly custom kernel and userspace
-- **Dual-Architecture Guests (`aarch64` & `x86_64`)** - Runs in QEMU using UEFI GOP. The ARM64 runner currently uses TCG with one vCPU, not HVF or bare-metal Apple Silicon support.
+- **Dual-Architecture Guests (`aarch64` & `x86_64`)** - ARM64 runs in the native Apple Virtualization.framework app or QEMU (HVF/TCG); Intel uses QEMU/VirtualBox. All use the custom kernel and UEFI loader, not a host OS guest. No bare-metal Mac support.
 - **macOS Tahoe-inspired UI** - Blue liquid-glass glassmorphism aesthetic
 - **Educational & Functional** - Clean, well-documented code that actually works
 
@@ -950,20 +950,28 @@ for Microsoft's PE/COFF ABI on macOS.
 
 ### Architecture Comparison Table
 
-| Subsystem | `x86_64` (`QEMU -M pc` / VirtualBox) | `aarch64` (`QEMU -M virt,gic-version=2 -accel tcg`) |
+| Subsystem | `x86_64` (`QEMU -M pc` / VirtualBox) | `aarch64` (Apple VZ / QEMU virt HVF or TCG) |
 |-----------|--------------------------------------|-----------------------------------------------------|
 | **UEFI Bootloader** | `BOOTX64.EFI` (`EM_X86_64 = 62`) | `BOOTAA64.EFI` (`EM_AARCH64 = 183`) |
-| **Kernel Link Base** | `0x04000000` (`kernel/linker.ld`, above OVMF's reserved low-memory ranges) | `0x41000000` (`kernel/linker-aarch64.ld`) |
+| **Kernel Link Base** | `0x04000000` (`kernel/linker.ld`, above OVMF's reserved low-memory ranges) | `0x71000000` (`kernel/linker-aarch64.ld`, RAM on VZ and QEMU) |
 | **Entry Assembly** | `src/entry.asm` (NASM, 64 KB stack) | `src/arch/aarch64/entry.S` (clang, EL3/EL2$\rightarrow$EL1 drop, 128 KB stack) |
 | **Exception Handling** | 256-entry IDT (`idt.c`) + direct-scanout panic screen | `VBAR_EL1` vector table + direct-scanout panic screen (`ESR_EL1`, `ELR_EL1`, `SPSR_EL1`) |
-| **Page Tables / MMU** | Custom 4-level page tables (`paging.c`) + on-demand `paging_map()` for high GOP framebuffers | Owned supervisor identity tables and private EL0 mappings (`user_arch.c`); supported physical range below 4 GiB |
-| **Interrupt Controller** | Dual 8259 PIC (remapped to vectors `32..47`, auto-unmasking IRQ2 cascade) | ARM GICv2 (`gicv2.c`, GICD `0x08000000`, GICC `0x08010000`) |
-| **System Timer** | 8254 PIT at 1000 Hz (IRQ 0) | ARM Generic Physical Timer (`CNTP_*_EL0`, PPI 30) at 1000 Hz |
-| **Serial Console** | 16550 UART on I/O port `0x3F8` (`serial.c`) | ARM PL011 UART at MMIO `0x09000000` (`pl011.c`) + shared `serial_core.c` |
-| **Real-Time Clock** | CMOS RTC on ports `0x70`/`0x71` (`drivers/rtc.c`) | ARM PL031 RTC at MMIO `0x09010000` (`pl031.c`, UNIX epoch $\rightarrow$ civil calendar) |
-| **Keyboard & Pointer** | IRQ-driven PS/2 keyboard (`0xE0` extended scancodes + Super release) & 3-button scroll mouse | `virtio-mmio` v2 (`0x0A000000`..`+0x3E00`) `virtio-keyboard` & `virtio-tablet` polled each frame via `a64_poll_input()` |
-| **Disk / Block I/O** | PIIX4 ATA PIO (LBA28/LBA48), explicit flush through `blockdev_x86.c` | `virtio-blk` over `virtio-mmio` v2, negotiated FLUSH, bounded request wait |
+| **Page Tables / MMU** | Custom 4-level page tables (`paging.c`) + on-demand `paging_map()` for high GOP framebuffers | Owned supervisor tables and private EL0 mappings (`user_arch.c`); UEFI-informed 2 MiB RAM/device blocks below 4 GiB, device window at 4–8 GiB, CPU-supported IPS including 36 bits |
+| **Interrupt Controller** | Dual 8259 PIC (remapped to vectors `32..47`, auto-unmasking IRQ2 cascade) | ACPI-described GICv2/v3; VZ GICD `0x10000000`, GICR `0x10010000`; QEMU known fallback layout |
+| **System Timer** | 8254 PIT at 1000 Hz (IRQ 0) | ARM virtual timer (`CNTV_*`, GTDT PPI normally 27), 1 kHz requests; architectural counter-based uptime independent of delivered IRQ count |
+| **Serial Console** | 16550 UART on I/O port `0x3F8` (`serial.c`) | PCI virtio-console on VZ, PL011 on QEMU; shared early boot-log ring replays when the sink attaches |
+| **Real-Time Clock** | CMOS RTC on ports `0x70`/`0x71` (`drivers/rtc.c`) | EFI boot epoch + uptime on VZ; PL031 on QEMU; UTC civil calendar |
+| **Keyboard & Pointer** | IRQ-driven PS/2 keyboard (`0xE0` extended scancodes + Super release) & 3-button scroll mouse | Polled xHCI + USB boot keyboard/descriptor-driven absolute HID pointer on VZ; virtio-input on QEMU; both feed shared input/repeat policy |
+| **Disk / Block I/O** | PIIX4 ATA PIO (LBA28/LBA48), explicit flush through `blockdev_x86.c` | `virtio-blk` over modern PCI or MMIO, negotiated FLUSH, wall-clock bounded waits |
 | **Power Management** | ACPI S5 (`\_S5` AML scan + `PM1a_CNT`) & 8042 reset (`drivers/acpi.c`) | ARM PSCI (`hvc #0` with `smc #0` fallback: `SYSTEM_OFF = 0x84000008`, `SYSTEM_RESET = 0x84000009` in `psci.c`) |
+
+The native host (`vmapp/main.swift`) is a signed AppKit executable built without
+an Xcode project. `VZVirtualMachineView` displays a fixed 2880×1800 virtio GPU
+scanout (1440×900 logical desktop); native window/full-screen scaling does not
+change the guest mode. VZ supplies PCI virtio block/net/RNG/console and directly
+connected USB HID. The host keeps disk and builder-sidecar locks, and an optional
+owner-only Unix socket injects only view-local test events and captures only its
+own window. xHCI DMA rings live for the boot; no hubs/hot-plug enumeration yet.
 
 ---
 
@@ -972,11 +980,12 @@ for Microsoft's PE/COFF ABI on macOS.
 ### 1. GPT Disk Layout (`scripts/mkimg.sh`)
 Each 128 MiB raw image (`build/<arch>/ojjyos3.img`) contains two GPT partitions:
 1. **Partition 1 (LBA `2048..67583`, 32 MiB):** FAT EFI System Partition containing `\EFI\BOOT\BOOTAA64.EFI` (or `BOOTX64.EFI`) and `\EFI\ojjyos\kernel.bin`. The standalone Python path uses FAT16; the Linux mtools path uses FAT32.
-2. **Partition 2 (LBA `67584..262110`):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`).
+2. **Partition 2 (LBA `67584..262110`):** Raw `ojjyOS Data` partition (`OJJY_DATA_START_SECTOR = 67584`). LBA `67584..102399` is user data (persistence slots); LBA `102400..262110` holds the read-only desktop picture pack (`WALLPACK_LBA`), refreshed by every build.
 
 `tools/finalize_image.py` validates GPT CRCs/layout, refuses a running VM's
-POSIX disk lock, backs up an existing image, copies the entire data partition
-into a separately assembled candidate, fsyncs, and atomically replaces the disk.
+POSIX disk lock, backs up an existing image, copies the user-data part of the
+data partition (LBA 67584..102399, `PACK_FIRST`) into a separately assembled
+candidate (whose picture pack is kept), fsyncs, and atomically replaces the disk.
 The first architecture-specific build can import legacy `build/ojjyos3.img`
 without altering it. Existing VirtualBox VDIs are never silently regenerated.
 

@@ -60,6 +60,50 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- Integration final receipts (2026-10-18): the delivered-image native smoke
+  failed three times at the host full-screen step. Measured root cause, not
+  a guest problem and not load flakiness: `styleMask` reports `.fullScreen`
+  before the Space animation settles, so the smoke screenshotted a
+  windowed-size window while believing it was full screen, and the opposite
+  `toggleFullScreen` issued in that window was silently dropped by AppKit.
+  A minimal probe proved fresh toggles work (0.6–0.7 s) while the smoke's
+  hide/screenshot churn broke them: unconditional
+  `makeKeyAndOrderFront`+`activate` during a settling Space fires stray
+  will/did callbacks, and a transition dropped mid-flight left the in-flight
+  count stuck, poisoning every later toggle. Host fix (test assertions
+  unchanged): `prepareScreenshot` fronts the window only when it is not
+  already visible+key+active; the `fullscreen` control command now settles
+  any in-flight transition (self-healing a stale count after 2.5 s without
+  an event), toggles, waits for the NSWindowDelegate completion callback,
+  and re-issues up to three times if macOS dropped the request. Evidence:
+  `build/vz-resume/fs-minimal-2` (four transitions incl. post-churn, correct
+  3024x1898 fullscreen vs 2240x1400 windowed geometry) and
+  `merged-delivered-native-final/report.json` — native three-boot smoke with
+  USB setup/clicks, pixel pointer alignment, Retina + true full-screen
+  captures, 256 editing cycles, all 19 protected-app cases, sync/shutdown,
+  cold login and corrupt-checkpoint fallback, source image unchanged.
+  Combined-source matrix all green: host+sanitized suites, warning-free
+  ARM/Intel builds with the 17-picture pack, 102 Swift + 5 pixel-gate
+  guards, QEMU TCG/HVF/Intel smokes, pointer/apps/browser/files/net/
+  network-UI/wallpapers/animation/design/perf suites, installed-image VZ
+  boot, and installed user-data SHA-256 equal to pre-build values and
+  retained backups (`merged-installed-data-verified.json`). Local merge of
+  the UI job's commits follows; nothing pushed.
+
+- Integration correction: local `main` had independently advanced to
+  `ca29f6a` with browser Inter text, Liquid Glass, JPEG/desktop-picture support
+  and handoffs. A fast-forward refused safely. Per TODO.md and the native
+  prompt's explicit normal-merge allowance, merged main into native-vm with
+  no commit pending combined-source verification. Preserved both Makefile
+  additions, both host-test lists and both doc streams. The sibling worktree
+  and branch are unchanged. Reused its existing wallpaper originals/cache
+  read-only into this checkout's git-ignored local assets (no downloads).
+  Combined ARM/Intel development builds include all 17 pictures, are warning-
+  free, and normal/sanitized host suites pass (`merged-{arm,x86,host,sanitized}.log`).
+  Native fresh-data smoke now clears only LBA 67584..102399, not the picture
+  pack at LBA 102400. Running combined QEMU/VZ + app/browser/file/wallpaper
+  regressions before installing combined images or advancing main.
+
 - N11 final exact-source gate passes: `n11-host-final.log`,
   `n11-app-guards.log` (102 Swift + five Python capture probes),
   `n11-{arm,x86}-final.log` (zero warnings/errors) and

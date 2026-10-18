@@ -56,7 +56,7 @@ This document defines core app layouts, data models, and implementation details 
 - Main panel:
   - Appearance: Light/Dark toggle, 24-Hour Time toggle, Reduced Transparency toggle, Reduced Motion toggle.
   - Users & Accounts: Active user profile card (`Full Name (@username)` + home directory), Change Password form (`Current`, `New PW`, `Save PW` hashed with salted SHA-256), Registered Accounts list, and action buttons (`+ Add Account`, `Lock Screen`, `Switch User`).
-  - Wallpaper: Light/Dark thumbnails.
+  - Wallpaper: scrolling 3-column grid of every desktop picture (the two built-in "ojjyOS Waves" plus the official Tahoe pictures when installed), names, selection ring, scroll indicator.
   - Dock & Menu: Dock size + magnification sliders.
   - Keyboard: Shortcuts toggle.
   - Mouse/Trackpad: Tracking speed slider.
@@ -65,14 +65,15 @@ This document defines core app layouts, data models, and implementation details 
 ### Data model
 
 - `SettingsState`:
-  - `dark_mode`, `wifi_enabled`, `bluetooth_enabled`, `volume`, `brightness`, `dock_size`, `dock_magnify`, `mouse_speed`, `shortcuts_enabled`, `reduced_transparency`, `reduced_motion`.
+  - `dark_mode`, `wifi_enabled`, `bluetooth_enabled`, `volume`, `brightness`, `dock_size`, `dock_magnify`, `mouse_speed`, `shortcuts_enabled`, `reduced_transparency`, `reduced_motion`, `wallpaper` (picture name, saved as `wallpaper=<name>`; system-wide).
 
 ### Implementation
 
 - Settings writes to `/Library/Preferences/system.conf` (RAMFS-backed + persisted to disk).
 - Users & Accounts reads/writes `/Library/Accounts/users.db` via `users.c`.
-- Appearance toggle updates compositor theme + wallpaper.
-- Wallpaper page switches between Tahoe Light/Dark.
+- Appearance toggle updates the compositor theme; a paired picture follows (Tahoe Light <-> Tahoe Dark, Beach Day <-> Night, Dawn <-> Dusk, Waves Light <-> Dark). All Light/Dark switches go through `toggle_appearance()`.
+- Clicking a picture applies it immediately (`wallpaper_choose()`); Light/Dark pictures also switch the appearance to match. The window is 700x460.
+- Planned (see `HANDOFF_UI.md` step C): Light/Dark/Auto, accent colour, Liquid Glass Clear/Tinted, menu bar style, window corners, Terminal theme.
 
 ## Terminal
 
@@ -138,12 +139,13 @@ This document defines core app layouts, data models, and implementation details 
 
 ### Layout
 
-- Two wallpaper thumbnails with selection.
+- Desktop picture viewer: the picture at full resolution (16:10, rounded), ‹ › buttons, its name, and "Set as Desktop Picture" (shows a check mark for the current one).
 
 ### Implementation
 
-- Loads Tahoe Light/Dark thumbnails from `/System/Wallpapers`.
-- Clicking a thumbnail updates the system wallpaper.
+- Opens on the current desktop picture; pack pictures are decoded from the disk pack (`wallpaper_decode`), the built-in waves are rendered at the viewer's size.
+- "Set as Desktop Picture" calls `wallpaper_choose()` (same as Settings).
+- Not yet: opening arbitrary image files from Finder (the JPEG decoder exists).
 
 ## Calendar
 

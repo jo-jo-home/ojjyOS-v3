@@ -172,7 +172,7 @@ def run(args):
     if args.fresh_data:
         with disk.open('r+b') as file:
             file.seek(67584 * 512)
-            remaining = (262144 - 34 - 67584 + 1) * 512
+            remaining = (102400 - 67584) * 512  # preserve build-owned picture pack
             while remaining:
                 chunk = bytes(min(1024 * 1024, remaining))
                 file.write(chunk)

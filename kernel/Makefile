@@ -95,7 +95,9 @@ ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
                  src/arch/aarch64/virtio_net.c \
                  src/arch/aarch64/virtio_rng.c \
                  src/arch/aarch64/virtio_console.c \
-                 src/arch/aarch64/virtio_gpu.c \
+                  src/arch/aarch64/virtio_gpu.c \
+                  src/arch/aarch64/xhci.c \
+                  src/arch/aarch64/usb_hid.c \
                  src/arch/aarch64/psci.c
 
 ASM_SOURCES = src/arch/aarch64/entry.S src/arch/aarch64/user_entry.S
@@ -147,7 +149,9 @@ ALL_CLEAN_OBJECTS = $(COMMON_C_SOURCES:.c=.o) \
                     src/arch/aarch64/pl031.o src/arch/aarch64/virtio.o \
                     src/arch/aarch64/virtio_input.o src/arch/aarch64/virtio_blk.o \
                     src/arch/aarch64/virtio_net.o src/arch/aarch64/virtio_rng.o \
-                    src/arch/aarch64/virtio_gpu.o \
+                     src/arch/aarch64/virtio_gpu.o \
+                     src/arch/aarch64/xhci.o \
+                     src/arch/aarch64/usb_hid.o \
                     src/arch/aarch64/virtio_console.o \
                     src/arch/aarch64/platform.o src/arch/aarch64/pci.o \
                     src/arch/aarch64/psci.o src/arch/aarch64/entry.o

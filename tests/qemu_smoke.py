@@ -26,6 +26,7 @@ ACCEL = os.environ.get("OJJY_ACCEL", "tcg")
 # Opt-in modern PCI transport coverage with the same full smoke flow.
 # highmem=off keeps PCI ECAM and BARs within the kernel's mapped range.
 PCI = os.environ.get("OJJY_PCI", "0") == "1"
+USB = os.environ.get("OJJY_USB", "0") == "1"
 
 
 class VM:
@@ -56,7 +57,7 @@ class VM:
             command += ["-bios", str(firmware)]
         if arch == "aarch64":
             machine = "virt,gic-version=3" if hvf else "virt,gic-version=2"
-            if PCI:
+            if PCI or USB:
                 machine += ",highmem=off"
             display = DISPLAY_DEVICE
             if PCI and display.startswith("virtio-gpu-device"):
@@ -64,12 +65,16 @@ class VM:
             command += ["-M", machine,
                          "-cpu", "host" if hvf else "cortex-a72",
                          "-global", "virtio-mmio.force-legacy=false", "-device", display,
-                        "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
                         "-drive", f"file={disk},format=raw,if=none,id=hd,cache=writeback",
                          "-device", "virtio-blk-pci,disable-legacy=on,drive=hd" if PCI else "virtio-blk-device,drive=hd",
                          "-netdev", "user,id=net0", "-device",
                          "virtio-net-pci,disable-legacy=on,netdev=net0" if PCI else "virtio-net-device,netdev=net0",
                          "-device", "virtio-rng-pci,disable-legacy=on" if PCI else "virtio-rng-device"]
+            if USB:
+                command += ["-device", "qemu-xhci,id=usb", "-device", "usb-kbd,bus=usb.0",
+                            "-device", "usb-tablet,bus=usb.0"]
+            else:
+                command += ["-device", "virtio-keyboard-device", "-device", "virtio-tablet-device"]
             if PCI:
                 self.console_log = output / f"console-{run}.log"
                 command += ["-chardev", f"file,id=clog,path={self.console_log}",

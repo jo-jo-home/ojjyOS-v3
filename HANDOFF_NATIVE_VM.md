@@ -2,6 +2,11 @@
 
 ## Current correction (2026-10-18 resumed session)
 
+N8 kernel USB component now exists and passes full QEMU xHCI input/persistence
+smoke and pointer QA; VZ enumerates keyboard + absolute pointer. Native input
+acceptance awaits the not-yet-built N9/N10 app/control channel. Read the newest
+AGENTS.md section and NATIVE_VM_PLAN.md log before restarting any driver work.
+
 The paused snapshot below is historical. The guest now boots VZ with all
 five virtio devices and a real DHCP lease. Fresh evidence and current next
 steps are in the newest `NATIVE_VM_PLAN.md` log entries and `AGENTS.md`.

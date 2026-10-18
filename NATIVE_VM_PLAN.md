@@ -60,6 +60,45 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- N8 kernel component verified (native interaction acceptance pending N9):
+  `xhci.c` / `usb_hid.c` implement bounded polling rings, direct-port HID
+  enumeration, boot keyboard transitions, absolute X/Y report parsing with
+  IDs/logical ranges, buttons/wheel and central repeat handling. Runtime DMA
+  storage remains pinned for the boot even for failed slots. No hubs or
+  hot-plug enumeration. BAR0 verified at 0x50001000, CAPLENGTH=0x20,
+  xHCI=1.10, 16 slots/16 ports, 32-byte contexts, DB=0x940, RT=0x520.
+  VZ ports 9/10 enumerate 05ac:8105 keyboard and 05ac:8106 absolute pointer.
+  Root causes during bring-up: CONFIG must precede DCBAAP (first VZ crash
+  was cached-array bounds at native image offset 0x232ef0); each control
+  stage is its own TD, not CH-chained (second crash in transfer handling).
+  Crash reports plus focused local disassembly informed these two fixes;
+  REA native providers were unavailable, so no decompiler evidence claimed.
+  Fresh VZ boot passes after both changes, with IRQ/clock progress and DHCP.
+  QEMU USB keyboard at slow service intervals lost transitions under the
+  unchanged 256-cycle 5ms stress, leaving keys held (FIFO pressure inferred,
+  not measured). Capping FS/HS HID service to <=1ms
+  fixes this without relaxing the test. Original and corrected evidence:
+  `usb-qemu.log` (fails) vs `usb-interval-qemu.log` and `n8-usb-qemu.log` (pass).
+  The full USB smoke includes protected app faults/timeouts, persistence,
+  shutdown, rebuild, saved login and corrupt-checkpoint recovery. USB pointer
+  QA and standard virtio-input HVF smoke pass, as do normal/ASan/UBSan host
+  suites and warning-free ARM/Intel builds. Final receipts:
+  `build/vz-resume/n8-{usb-qemu,usb-pointer,hvf,host,sanitized,arm,x86}.log`,
+  `n8-vz-checked/report.json`. Tests use private disks only. Next: N9 app,
+  N10 native input/screenshot/persistence smoke; installed images untouched.
+
+- N8 implementation plan: inspect assigned xHCI BAR capability registers
+  on the private VZ boot rig before resetting hardware. Then implement
+  bounded, polled command/event/transfer rings with runtime DMA allocation;
+  enumerate directly connected USB HID devices (no hubs/isochronous USB in
+  this milestone). Use boot keyboard reports and parse pointer report
+  descriptors (X/Y logical ranges, buttons, wheel, report IDs). Feed existing
+  input APIs; keep QEMU virtio-input unchanged. Host regressions cover malformed
+  HID descriptors, keyboard transitions and absolute scaling; QEMU xHCI
+  injection exercises actual DMA transport; native input acceptance follows
+  in N9/N10's app/control tests. Failures must retain device-owned buffers
+  until the controller/slot is stopped; no spin-count waits or blind probes.
+
 - N4/N7 backend verified: native boot emits a once-only 5-second health
   sample outside the ISR; separate IRQ delivery count prevents a healthy
   counter from hiding broken interrupt routing. `timer-final-vz/report.json`

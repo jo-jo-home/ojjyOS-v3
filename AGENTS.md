@@ -1,5 +1,31 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-18): N8 USB driver implemented; native app is next
+
+`native-vm`: N5/N6 boot fixes committed as `a094d68`, N4/N7 timer/clock
+health as `65d26d3`. N8 adds original `xhci.c` / `usb_hid.c`, runtime DMA
+rings, polled direct-port enumeration, boot keyboard and descriptor-driven
+absolute pointer, shared input translation/repeat policy. VZ enumerates its
+Apple keyboard (05ac:8105) and pointer (05ac:8106); QEMU USB full smoke
+(setup/editing, 256 fast o/Backspace cycles, protected programs, sync/shutdown,
+rebuild/cold login and checkpoint fallback) and USB pointer QA pass.
+Receipts: `build/vz-resume/n8-{usb-qemu,usb-pointer,hvf,host,sanitized,arm,x86}.log`
+and `n8-vz-checked/report.json`. Both builds warning-free; normal/sanitized
+host tests include actual xHCI ring/control construction plus HID decoding.
+
+N8's **native typed/clicked acceptance awaits N9/N10**. There is no native
+window app or control socket yet. Implement those from HANDOFF_NATIVE_VM.md
+§N9/N10, then visually verify the clock/animations and actual VZ USB input.
+No installed disk changed or remote pushed. The controller currently supports
+directly attached HID devices only, not hubs or hot-plug enumeration.
+
+Two VZ host-crash traps: set CONFIG.MaxSlotsEn before DCBAAP (VZ caches its
+array length on base publication); do not CH-chain the separate Setup/Data/
+Status TDs. Probe delegates now report host VM failures and return exit 3.
+HID service intervals are capped at 1ms for FS/HS: slow service lost
+transitions under QEMU's unchanged 5ms stress and left keys held. FIFO
+pressure is the inference; host queue occupancy was not measured.
+
 ## LATEST (2026-10-18, resumed): VZ boots with all five PCI devices
 
 Work continues on `native-vm` from `1411d0e`; not paused. Read the newest

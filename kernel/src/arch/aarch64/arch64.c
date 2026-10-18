@@ -16,6 +16,7 @@
 #include "types.h"
 #include "platform.h"
 #include "pci.h"
+#include "xhci.h"
 #include "arch_power.h"
 
 /* Implemented in timer_a64.c: re-arms the EL1 virtual timer and
@@ -38,6 +39,7 @@ void a64_init(BootInfo *boot_info)
     if (platform.ecam) {
         pci_init();
         virtio_pci_init();
+        xhci_init();
     }
 
     /* Real-time clock (PL031 on QEMU; boot-time clock elsewhere) */
@@ -118,5 +120,6 @@ void a64_poll_input(void)
     virtio_rng_poll();
     virtio_gpu_poll();
     virtio_console_poll();
+    xhci_poll();
     a64_timer_report_health();
 }

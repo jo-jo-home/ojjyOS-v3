@@ -47,6 +47,7 @@ def run(args):
     required = ["[PLATFORM] Apple Virtualization", "[VIRTIO-CONSOLE] Serial output attached",
                 "attached (PCI)", "[GIC] GICv3 ready", "[VIRTIO-BLK] Attached",
                 "[VIRTIO-RNG] Entropy source attached", "[VIRTIO-PCI] 5 virtio device(s) attached",
+                "[USB-HID] Boot keyboard attached", "[USB-HID] Absolute pointer attached",
                 "[INIT] Entering main loop", "[NET] DHCP lease"]
     missing = [marker for marker in required if marker not in text]
     if missing or "[PANIC]" in text or "rejected features" in text:
@@ -65,7 +66,7 @@ def run(args):
         raise RuntimeError("RTC calendar did not advance by guest uptime")
     if digest(source) != before:
         raise RuntimeError("Source image changed while running the private-disk test")
-    report = {"boot": "passed", "pci_devices": 5, "dhcp": "passed",
+    report = {"boot": "passed", "virtio_devices": 5, "usb_hid_enumerated": 2, "dhcp": "passed",
               "clock_offset_seconds": round(epoch - started, 3),
               "timer_sample_ms": ms, "timer_irqs": irqs, "clock_progression": "passed",
               "source_sha256": before, "source_unchanged": True,

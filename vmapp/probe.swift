@@ -37,7 +37,15 @@ cfg.networkDevices = [net]
 cfg.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
 do { try cfg.validate() } catch { print("invalid: \(error)"); exit(1) }
 
+final class ProbeDelegate: NSObject, VZVirtualMachineDelegate {
+    func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
+        print("VM failed: \(error)")
+        exit(3)
+    }
+}
+let delegate = ProbeDelegate()
 let vm = VZVirtualMachine(configuration: cfg)
+vm.delegate = delegate
 vm.start { r in
     if case .failure(let e) = r { print("start failed: \(e)"); exit(2) }
     print("started")
@@ -47,7 +55,7 @@ Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { t in
     if vm.state == .stopped || vm.state == .error {
         print(String(format: "stopped-after %.2fs state %d",
                      Date().timeIntervalSince(bootTime), vm.state.rawValue))
-        exit(0)
+        exit(vm.state == .error ? 3 : 0)
     }
 }
 DispatchQueue.main.asyncAfter(deadline: .now() + seconds) {

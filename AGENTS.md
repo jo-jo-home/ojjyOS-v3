@@ -3,15 +3,30 @@
 **READ THIS ENTIRE FILE BEFORE TOUCHING ANYTHING.** It is the handoff
 document: project constraints, history, current state, verification, and roadmap.
 
-## LATEST (2026-10-18, later): renderer + HVF — see RENDERER_UI_PLAN.md
+## LATEST (2026-10-18, later): renderer, HVF, HiDPI, Inter, icons, animations — DONE
 
 Jonas: lag when windows open, everything pixelated/ugly, wants animations,
-icons, fonts. Plan + live log in `RENDERER_UI_PLAN.md` (phases 1-5). Done so
-far: `kernel/src/gfx.c` AA span renderer (frames 345 -> 31 ms on TCG),
-time-based eased animations, and **HVF now works** (`arch/aarch64/mmio.h`,
-GICv3 detection via MIDR) — run-qemu.sh defaults to HVF, 7 ms frames.
-Dev images: `OJJY_BUILD_DIR=build/dev-aarch64`; Jonas's VM may hold
-`build/aarch64/ojjyos3.img` (never stop it / overwrite it).
+icons, better fonts and UI; also "make the vm work natively". Plan + full
+log with receipts: `RENDERER_UI_PLAN.md` (Phases 1-5 done, Phase 6 =
+native Virtualization.framework app, not started; Phase 4.3 = HTML page text
+in Inter, not started). Key facts for the next session:
+- `run-qemu.sh` defaults to **HVF** (GICv3, `-cpu host`) at **2880x1800**
+  (2x HiDPI of a 1440x900 layout); `OJJY_ACCEL=tcg` -> 1440x900 emulation.
+  HVF needs every MMIO access to be a single LDR/STR (`arch/aarch64/mmio.h`)
+  and GICv3 is detected from MIDR (Apple core), not ID_AA64PFR0.
+- Rendering: `kernel/src/gfx.c` (AA spans, shadows, gradients, layer blit),
+  framebuffer stores physical pixels with a logical API (`fb_ui_scale()`),
+  Inter UI text `kernel/src/uifont.{h,c}` (generated `uifont_data.c` from
+  `tools/mkuifont.py`), icons `tools/mkicons.py` -> `ui/icons_data.c`,
+  procedural wallpaper `ui/wallpaper.c`, AA cursor `tools/mkcursor.py`.
+- Animations: layer + ghost system in compositor (`draw_window_animated`,
+  `ghost_capture`), menu/Dock easing; Reduce Motion disables.
+- Device waits must be wall-clock (virtio-blk/gpu `virtio_now_ms`, Intel ATA
+  PIT ticks): HVF and loaded hosts broke spin-count timeouts.
+- Tests: `tests/qemu_perf.py`, `qemu_design_tour.py`, `qemu_anim_check.py`
+  (+ all older suites) honour `OJJY_ACCEL=hvf` and `OJJY_DISPLAY=...`.
+- Dev builds: `OJJY_BUILD_DIR=build/dev-aarch64`; the installed images were
+  rebuilt at the end with data partitions hash-identical to backups.
 
 ## (2026-10-18): full-screen fix — virtio-gpu display (see §4.7)
 

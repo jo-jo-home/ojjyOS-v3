@@ -86,7 +86,7 @@ Outputs are isolated under `build/aarch64/` and `build/x86_64/`. Shut down a VM 
 ```bash
 ./scripts/run-qemu.sh aarch64
 ```
-`scripts/run-qemu.sh` locates firmware, uses TCG with one vCPU, attaches the devices above, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. The ARM display is now `virtio-gpu` at 1440x900 (16:10, the full-screen area of a notched MacBook), with QEMU Zoom To Fit on by default: View -> Enter Fullscreen fills the screen with no bars. `OJJY_RES=1600x900` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display.
+`scripts/run-qemu.sh` locates firmware, uses TCG with one vCPU, attaches the devices above, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. On Apple Silicon the runner uses Apple's hardware virtualization (HVF, GICv3) and a `virtio-gpu` display at 2880x1800, a Retina-density (2x) rendering of a 1440x900 desktop; `OJJY_ACCEL=tcg` falls back to emulation at 1440x900. QEMU Zoom To Fit is on by default: View -> Enter Fullscreen fills the screen with no bars. `OJJY_RES=3200x1800` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display. The UI uses the Inter typeface (SIL OFL, `fonts/Inter-OFL-LICENSE.txt`) and JetBrains Mono for terminals.
 
 The VirtualBox runner preserves an existing VDI rather than recreating it and refuses to force-stop a running VM. A VDI has its own saved data; rebuilding a raw QEMU image does not update that VDI.
 

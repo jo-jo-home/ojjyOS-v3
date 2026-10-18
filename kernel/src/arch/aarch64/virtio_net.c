@@ -84,6 +84,16 @@ static int virtio_net_tx(const uint8_t *frame, size_t len)
 int virtio_net_attach(VirtioDev *dev, bool has_mac)
 {
     if (attached) return -1;
+    if (dev->features & (1u << 3)) {
+        unsigned mtu = virtio_dev_cfg16(dev, 10);
+        /* The stack currently emits at most 1500-byte IP packets. A larger
+         * device MTU is fine, a smaller one needs fragmentation support. */
+        if (mtu < 1500) {
+            serial_printf("[VIRTIO-NET] MTU %d is below the stack's 1500-byte limit\n", (int)mtu);
+            return -1;
+        }
+        serial_printf("[VIRTIO-NET] Device MTU %d (stack uses 1500)\n", (int)mtu);
+    }
     if (virtio_dev_queue_init(dev, &rxq, &rx_mem, 0) != 0 ||
         virtio_dev_queue_init(dev, &txq, &tx_mem, 1) != 0) {
         serial_printf("[VIRTIO-NET] queue setup failed\n");

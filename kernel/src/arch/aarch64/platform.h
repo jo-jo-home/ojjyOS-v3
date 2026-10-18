@@ -31,4 +31,12 @@ extern Platform platform;
 
 void platform_init(const BootInfo *info);
 
+/* Tables cover <= 8 GiB, so use at most 40 PA bits, never truncate a
+ * supported 36-bit CPU to 32 bits (Apple VZ reports PARange=1). */
+static inline uint64_t platform_table_ips(uint64_t mmfr0)
+{
+    uint64_t range = mmfr0 & 15;
+    return range > 2 ? 2 : range;
+}
+
 #endif /* _OJJY_ARCH_PLATFORM_H */

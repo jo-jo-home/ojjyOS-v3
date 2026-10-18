@@ -918,6 +918,7 @@ void kernel_main(BootInfo *boot_info)
     user_arch_init();
     kheap_init();
 #ifndef __x86_64__
+    virtio_pci_console_init();
     /* Prefer virtio-gpu (any screen shape) over the 4:3-only ramfb. */
     if (virtio_gpu_display_init(boot_info)) {
         console_init();

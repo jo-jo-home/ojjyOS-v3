@@ -21,6 +21,8 @@ fi
     kernel/src/arch/aarch64/virtio_input.c kernel/src/string.c -o "$OUT/test_input"
 "$HOST_CC" "${FLAGS[@]}" tests/test_persist.c kernel/src/fs/{persist,ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_persist"
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_virtqueue.c kernel/src/arch/aarch64/virtio.c kernel/src/string.c -o "$OUT/test_virtqueue"
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST -DOJJY_HOST_PCI_TEST tests/test_virtio_pci.c \
+    kernel/src/arch/aarch64/{virtio,pci}.c kernel/src/string.c -o "$OUT/test_virtio_pci"
 "$HOST_CC" "${FLAGS[@]}" tests/test_acpi_aml.c kernel/src/drivers/acpi_aml.c kernel/src/string.c -o "$OUT/test_acpi_aml"
 "$HOST_CC" "${FLAGS[@]}" tests/test_user.c kernel/src/{user,user_image,string}.c -o "$OUT/test_user"
 "$HOST_CC" "${FLAGS[@]}" tests/test_framebuffer.c kernel/src/{framebuffer,gfx,cursor_image,string}.c -o "$OUT/test_framebuffer"
@@ -29,7 +31,7 @@ fi
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_crypto.c kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c kernel/src/string.c -o "$OUT/test_crypto"
 "$HOST_CC" "${FLAGS[@]}" tests/test_gfx.c kernel/src/{gfx,string}.c -o "$OUT/test_gfx"
 "$HOST_CC" "${FLAGS[@]}" tests/test_calc.c kernel/src/ui/calcmath.c kernel/src/string.c -o "$OUT/test_calc"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_calc test_gfx; do
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_calc test_gfx; do
     echo "Running $test"
     "$OUT/$test"
 done

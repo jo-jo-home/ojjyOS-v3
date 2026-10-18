@@ -23,6 +23,9 @@ import time
 DISPLAY_DEVICE = os.environ.get("OJJY_DISPLAY", "virtio-gpu-device,xres=1440,yres=900")
 # OJJY_ACCEL=hvf runs ARM guests with Apple hardware virtualization (GICv3).
 ACCEL = os.environ.get("OJJY_ACCEL", "tcg")
+# Opt-in modern PCI transport coverage with the same full smoke flow.
+# highmem=off keeps PCI ECAM and BARs within the kernel's mapped range.
+PCI = os.environ.get("OJJY_PCI", "0") == "1"
 
 
 class VM:
@@ -52,14 +55,26 @@ class VM:
         else:
             command += ["-bios", str(firmware)]
         if arch == "aarch64":
-            command += ["-M", "virt,gic-version=3" if hvf else "virt,gic-version=2",
-                        "-cpu", "host" if hvf else "cortex-a72",
-                        "-global", "virtio-mmio.force-legacy=false", "-device", DISPLAY_DEVICE,
+            machine = "virt,gic-version=3" if hvf else "virt,gic-version=2"
+            if PCI:
+                machine += ",highmem=off"
+            display = DISPLAY_DEVICE
+            if PCI and display.startswith("virtio-gpu-device"):
+                display = display.replace("virtio-gpu-device", "virtio-gpu-pci,disable-legacy=on", 1)
+            command += ["-M", machine,
+                         "-cpu", "host" if hvf else "cortex-a72",
+                         "-global", "virtio-mmio.force-legacy=false", "-device", display,
                         "-device", "virtio-keyboard-device", "-device", "virtio-tablet-device",
                         "-drive", f"file={disk},format=raw,if=none,id=hd,cache=writeback",
-                        "-device", "virtio-blk-device,drive=hd",
-                        "-netdev", "user,id=net0", "-device", "virtio-net-device,netdev=net0",
-                        "-device", "virtio-rng-device"]
+                         "-device", "virtio-blk-pci,disable-legacy=on,drive=hd" if PCI else "virtio-blk-device,drive=hd",
+                         "-netdev", "user,id=net0", "-device",
+                         "virtio-net-pci,disable-legacy=on,netdev=net0" if PCI else "virtio-net-device,netdev=net0",
+                         "-device", "virtio-rng-pci,disable-legacy=on" if PCI else "virtio-rng-device"]
+            if PCI:
+                self.console_log = output / f"console-{run}.log"
+                command += ["-chardev", f"file,id=clog,path={self.console_log}",
+                            "-device", "virtio-serial-pci,disable-legacy=on,id=vs0",
+                            "-device", "virtconsole,bus=vs0.0,chardev=clog"]
         else:
             command += ["-M", "pc", "-vga", "std", "-drive", f"file={disk},format=raw,cache=writeback"]
         self.stderr = (output / f"qemu-{run}.log").open("wb")
@@ -110,6 +125,10 @@ class VM:
             if self.process.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError(f"Guest did not produce {text!r}; see {self.log}")
             time.sleep(0.05)
+        if text == "Entering main loop" and hasattr(self, "console_log"):
+            console = self.console_log.read_text(errors="replace")
+            if "[INIT] Entering main loop" not in console:
+                raise RuntimeError(f"PCI serial sink failed to replay boot output: {self.console_log}")
 
     def key(self, code, down):
         self.qmp("input-send-event", {"events": [{"type": "key", "data": {

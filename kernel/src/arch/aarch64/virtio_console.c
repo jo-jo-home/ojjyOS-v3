@@ -12,10 +12,11 @@
  *
  * Apple's binary says it plainly: "Cannot transmit data for closed port
  * id." The host drops data for a port until the guest has sent
- * VIRTIO_CONSOLE_DEVICE_READY, then VIRTIO_CONSOLE_PORT_READY(1) and
- * VIRTIO_CONSOLE_PORT_OPEN(1) on the control-out queue (Apple does not
- * implement the num_queues register, so detect the layout by device id
- * instead: every console we attach on PCI is Apple's).
+ * VIRTIO_CONSOLE_DEVICE_READY(1), then VIRTIO_CONSOLE_PORT_READY(1) and
+ * VIRTIO_CONSOLE_PORT_OPEN(1) on the control-out queue. QEMU advertises
+ * MULTIPORT and the transport negotiates it. VZ's serialPorts device on
+ * macOS 26 exposes four queues and requires this handshake even though
+ * its offered low feature word is 0x30000000 (no MULTIPORT bit).
  *
  * Registering with serial_set_sink() replays the boot-log ring, so the
  * host's serial file receives everything from the banner onward. Transmit
@@ -44,7 +45,6 @@ typedef struct {
 #define CONSOLE_TX_LIMIT       256   /* flush threshold without newline */
 #define CONSOLE_CTRL_TIMEOUT_MS 2000 /* control round-trip deadline */
 #define CONSOLE_DATA_TIMEOUT_MS 100  /* data flush deadline */
-#define CONSOLE_GIVEUP_LIMIT   3      /* consecutive timeouts before muting */
 
 static VirtQueueMem console_tx_mem, console_ctrl_mem, console_ctrl_in_mem;
 static VirtQueue console_txq, console_ctrlq, console_ctrl_in;
@@ -52,7 +52,6 @@ static uint8_t console_ctrl_in_buf[128] __attribute__((aligned(16)));
 static uint8_t *console_buf;        /* 4 KiB, from the page allocator */
 static uint32_t console_len;
 static bool console_attached, console_muted, ctrl_ready;
-static unsigned console_timeouts;
 
 static void console_flush(void)
 {
@@ -71,9 +70,9 @@ static void console_flush(void)
     uint64_t deadline = virtio_now_ms() + CONSOLE_DATA_TIMEOUT_MS;
     while (!virtio_poll_used(&console_txq, NULL)) {
         if (virtio_now_ms() > deadline) {
-            if (++console_timeouts >= CONSOLE_GIVEUP_LIMIT) {
-                console_muted = true;   /* Dead device: drop, never hang */
-            }
+            /* The device still owns this descriptor/buffer. Do not reuse
+             * or free either after timeout, even if logging is lost. */
+            console_muted = true;
             break;
         }
     }
@@ -84,7 +83,7 @@ static void console_flush(void)
  * boot-log replay that serial_set_sink() performs at registration. */
 static void console_sink(char c)
 {
-    if (!console_buf) return;
+    if (!console_buf || console_muted) return;
     if (console_len >= 4096) console_flush();
     console_buf[console_len++] = (uint8_t)c;
     if (c == '\n' || console_len >= CONSOLE_TX_LIMIT) console_flush();
@@ -117,6 +116,9 @@ static bool console_send_control(uint16_t event, uint16_t value)
 int virtio_console_attach(VirtioDev *dev)
 {
     if (console_attached) return -1;
+    serial_printf("[VIRTIO-CONSOLE] queues=%d features=%x offered=%x\n",
+                  (int)virtio_dev_num_queues(dev), dev->features,
+                  virtio_dev_offered(dev, 0));
 
     if (virtio_dev_queue_init(dev, &console_txq, &console_tx_mem, 1) != 0 ||
         virtio_dev_queue_init(dev, &console_ctrl_in, &console_ctrl_in_mem, 2) != 0 ||
@@ -135,7 +137,7 @@ int virtio_console_attach(VirtioDev *dev)
     if (rxh != 0xFFFF) virtio_submit(&console_ctrl_in, rxh);
 
     /* Open port 0 (the serial attachment). */
-    if (!console_send_control(VIRTIO_CONSOLE_DEVICE_READY, 0) ||
+    if (!console_send_control(VIRTIO_CONSOLE_DEVICE_READY, 1) ||
         !console_send_control(VIRTIO_CONSOLE_PORT_READY, 1) ||
         !console_send_control(VIRTIO_CONSOLE_PORT_OPEN, 1)) {
         serial_printf("[VIRTIO-CONSOLE] Control queue setup failed\n");
@@ -153,6 +155,15 @@ int virtio_console_attach(VirtioDev *dev)
 
 void virtio_console_poll(void)
 {
+    /* Keep a buffer available for port/control notifications. Ignoring
+     * optional names/resizes must not leave the host's control queue full. */
+    if (ctrl_ready && console_attached && virtio_poll_used(&console_ctrl_in, NULL)) {
+        console_ctrl_in.free_head = 0;
+        uint16_t head = virtio_desc_add(&console_ctrl_in,
+            (uint64_t)(uintptr_t)console_ctrl_in_buf,
+            sizeof(console_ctrl_in_buf), VRING_DESC_F_WRITE);
+        if (head != 0xFFFF) virtio_submit(&console_ctrl_in, head);
+    }
     /* Push partial lines so progress output without newlines still flows. */
     if (console_attached && !console_muted && console_len) console_flush();
 }

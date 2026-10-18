@@ -1,5 +1,31 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-18, resumed): VZ boots with all five PCI devices
+
+Work continues on `native-vm` from `1411d0e`; not paused. Read the newest
+log entries in `NATIVE_VM_PLAN.md` before the historical handoff below.
+The VZ guest now reaches the main loop with PCI GPU, console, disk, RNG,
+and networking (real DHCP lease). USB input and the native app remain next.
+
+Root causes verified this session: VZ reports PARange=1 (36 PA bits), which
+must not fall back to 32; PCI reset/ACK/DRIVER must be sequenced; console
+DEVICE_READY must carry value 1 (0 signals failure); NET_F_MTU must be
+negotiated when VZ offers it; RNG has no device-config capability. The early
+GPU must not read QEMU-only MMIO slots on VZ. Console comes up before GPU/GIC
+and survives the later device scan. Prior marker-based claims in the handoff,
+especially "num_queues is unimplemented", were not reliable observations.
+Fresh console register reads report **4 queues**, offered low features
+`0x30000000` (no MULTIPORT bit). The working VZ serialPorts device still
+requires the control handshake. QEMU advertises MULTIPORT normally; the
+transport requests it but never writes unsupported bits. Feature masks are
+intersected with device offers after reset/ACK/DRIVER, not before reset.
+
+New checks: `tests/test_virtio_pci.c` exercises the actual PCI transport at
+an MMIO boundary; `OJJY_PCI=1 tests/qemu_smoke.py` tests all PCI virtio devices
+under QEMU (`highmem=off`, keeping a PL011 log); `tests/vz_boot.py` checks VZ
+boot, five attached devices, DHCP and clock on a private disk. Never confuse
+this boot check with the still-pending USB/account-persistence VZ smoke.
+
 ## >>> START HERE (2026-10-18, later): native-vm job PAUSED mid-N5/N6 <<<
 
 Jonas paused the session again. Read **`HANDOFF_NATIVE_VM.md` — the

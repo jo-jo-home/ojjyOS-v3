@@ -200,8 +200,9 @@ fail:
 
 bool virtio_gpu_display_init(BootInfo *info)
 {
-    /* virtio-mmio (QEMU virt): fixed slots. */
-    for (int i = 0; i < VIRTIO_MMIO_SLOTS && !gpu_ready; i++) {
+    /* These fixed slots exist only on QEMU virt. Reading them on VZ
+     * aborts before the PCI GPU or the late serial sink can be reached. */
+    for (int i = 0; platform.qemu && i < VIRTIO_MMIO_SLOTS && !gpu_ready; i++) {
         uint32_t base = VIRTIO_MMIO_BASE + (uint32_t)i * VIRTIO_MMIO_STRIDE;
         if (mmio_read32(base + VIO_MAGIC) != 0x74726976u || mmio_read32(base + VIO_VERSION) != 2 ||
             mmio_read32(base + VIO_DEVICE_ID) != VIRTIO_ID_GPU) continue;

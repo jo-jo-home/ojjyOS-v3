@@ -1,5 +1,25 @@
 # HANDOFF — Native VM (ojjyOS.app on Apple Virtualization.framework)
 
+## Current correction (2026-10-18 resumed session)
+
+The paused snapshot below is historical. The guest now boots VZ with all
+five virtio devices and a real DHCP lease. Fresh evidence and current next
+steps are in the newest `NATIVE_VM_PLAN.md` log entries and `AGENTS.md`.
+
+Do NOT repeat the earlier marker deductions as facts: markers accidentally
+left at earlier boot points invalidated downstream conclusions. In particular,
+VZ reports **PARange=1 (36 physical bits)**, not >=2 (40 bits). The old
+IPS fallback to 32 made every above-4GiB BAR inaccessible. PCI status requires
+a separate ACK step; console DEVICE_READY's value is **1**, not 0; NET_F_MTU
+must be negotiated; RNG legitimately has no DEVICE capability. The GPU's
+QEMU-MMIO scan must be guarded by platform.qemu. These are actual code fixes
+with fresh live serial evidence, not a new queue-layout guess.
+
+Fast PCI test rig is now supported: `OJJY_PCI=1 python3 -B tests/qemu_smoke.py
+--arch aarch64 --image build/dev-aarch64/ojjyos3.img --output <new-dir>
+--fresh-data --protected`. It uses QEMU `highmem=off`, keeping ECAM and BARs
+within the owned mappings without inventing a giant high-memory map.
+
 Written 2026-10-18 by the previous AI session, which was stopped mid-task by
 Jonas. You (the next AI) have NO other context: read this whole file, then
 `AGENTS.md` (project rules + history), `NATIVE_VM_PLAN.md` (probe facts),

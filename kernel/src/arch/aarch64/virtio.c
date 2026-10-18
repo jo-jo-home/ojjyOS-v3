@@ -10,10 +10,9 @@
 #include "string.h"
 #include "mmio.h"
 
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
 #include "pci.h"
 #include "platform.h"
-#include "arch_power.h"
 #endif
 
 #ifdef OJJY_HOST_TEST
@@ -73,7 +72,7 @@ VirtioDev *virtio_dev_mmio_slot(uint32_t base)
 /* virtio-pci modern transport (VirtIO 1.0 spec 4.1). Host build only: */
 /* the host ring tests exercise the virtqueue logic, not the bus.     */
 /* ------------------------------------------------------------------ */
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
 
 /* Common configuration offsets within the COMMON capability region. */
 #define VPCI_DF_SEL        0x00    /* device_feature_select */
@@ -144,7 +143,8 @@ int virtio_dev_pci_setup(const PciDev *pci, VirtioDev **out)
         }
         cap = next;
     }
-    if (!d->common || !d->notify_base || !d->devcfg) goto fail;
+    /* Entropy devices have no device-specific configuration capability. */
+    if (!d->common || !d->notify_base || (!d->devcfg && d->device_id != VIRTIO_ID_RNG)) goto fail;
     if (out) *out = d;
     return 0;
 fail:
@@ -156,7 +156,18 @@ fail:
 static int pci_negotiate(VirtioDev *d, uint32_t features)
 {
     mmio_write8(d->common + VPCI_STATUS, 0);
+    uint64_t deadline = virtio_now_ms() + 100;
+    while (mmio_read8(d->common + VPCI_STATUS) != 0) {
+        if (virtio_now_ms() >= deadline) return -1;
+    }
+    mmio_write8(d->common + VPCI_STATUS, VIO_STATUS_ACKNOWLEDGE);
+    virtio_memory_barrier();
     mmio_write8(d->common + VPCI_STATUS, VIO_STATUS_ACKNOWLEDGE | VIO_STATUS_DRIVER);
+    /* Read offered features as part of the initialization sequence, after
+     * ACKNOWLEDGE and DRIVER, not from a pre-reset snapshot. */
+    mmio_write32(d->common + VPCI_DF_SEL, 0);
+    features &= mmio_read32(d->common + VPCI_DF);
+    d->features = features;
     mmio_write32(d->common + VPCI_DDF_SEL, 0);
     mmio_write32(d->common + VPCI_DDF, features);
     /* Word 1 bit 0 = VIRTIO_F_VERSION_1: mandatory for modern PCI. */
@@ -165,8 +176,13 @@ static int pci_negotiate(VirtioDev *d, uint32_t features)
     mmio_write8(d->common + VPCI_STATUS,
                 VIO_STATUS_ACKNOWLEDGE | VIO_STATUS_DRIVER | VIO_STATUS_FEATURES_OK);
     if (!(mmio_read8(d->common + VPCI_STATUS) & VIO_STATUS_FEATURES_OK)) {
-        serial_printf("[VIRTIO-PCI] %x:%x rejected features\n",
-            (unsigned int)d->pci_vendor, (unsigned int)d->pci_device);
+        mmio_write32(d->common + VPCI_DF_SEL, 0);
+        unsigned low = mmio_read32(d->common + VPCI_DF);
+        mmio_write32(d->common + VPCI_DF_SEL, 1);
+        unsigned high = mmio_read32(d->common + VPCI_DF);
+        serial_printf("[VIRTIO-PCI] %x:%x rejected features %x:1 (offers %x:%x status %x)\n",
+            (unsigned int)d->pci_vendor, (unsigned int)d->pci_device,
+            features, low, high, (unsigned)mmio_read8(d->common + VPCI_STATUS));
         return -1;
     }
     return 0;
@@ -184,7 +200,11 @@ static int pci_queue_init(VirtioDev *d, VirtQueue *vq, VirtQueueMem *mem, uint16
 
     mmio_write16(d->common + VPCI_Q_SEL, index);
     uint32_t max = mmio_read16(d->common + VPCI_Q_SIZE);
-    if (max == 0) return -1;
+    if (max == 0) {
+        serial_printf("[VIRTIO-PCI] device %x queue %d absent (common %p)\n",
+                      (unsigned)d->pci_device, (int)index, (void *)d->common);
+        return -1;
+    }
 
     uint16_t size = VQ_SIZE;
     while (size > max) size >>= 1;
@@ -220,7 +240,11 @@ static int pci_queue_init(VirtioDev *d, VirtQueue *vq, VirtQueueMem *mem, uint16
 static int mmio_negotiate(VirtioDev *d, uint32_t features)
 {
     vio_write(d->mmio, VIO_STATUS, 0);                  /* Reset */
+    vio_write(d->mmio, VIO_STATUS, VIO_STATUS_ACKNOWLEDGE);
     vio_write(d->mmio, VIO_STATUS, VIO_STATUS_ACKNOWLEDGE | VIO_STATUS_DRIVER);
+    vio_write(d->mmio, VIO_DEVFEAT_SEL, 0);
+    features &= vio_read(d->mmio, VIO_DEVFEAT);
+    d->features = features;
 
     /* Selector 0: device-specific features (flush/mac/...).
      * Selector 1: negotiate VIRTIO_F_VERSION_1 (word 1 bit 0), required
@@ -286,7 +310,7 @@ static int mmio_queue_init(VirtioDev *d, VirtQueue *vq, VirtQueueMem *mem, uint1
 
 int virtio_dev_negotiate(VirtioDev *dev, uint32_t features)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) return pci_negotiate(dev, features);
 #endif
     return mmio_negotiate(dev, features);
@@ -299,7 +323,7 @@ int virtio_dev_begin(VirtioDev *dev, uint32_t features)
 
 void virtio_dev_ready(VirtioDev *dev)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) {
         uint8_t status = mmio_read8(dev->common + VPCI_STATUS);
         mmio_write8(dev->common + VPCI_STATUS, status | VIO_STATUS_DRIVER_OK);
@@ -312,7 +336,7 @@ void virtio_dev_ready(VirtioDev *dev)
 
 int virtio_dev_queue_init(VirtioDev *dev, VirtQueue *vq, VirtQueueMem *mem, uint16_t index)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) return pci_queue_init(dev, vq, mem, index);
 #endif
     return mmio_queue_init(dev, vq, mem, index);
@@ -320,7 +344,7 @@ int virtio_dev_queue_init(VirtioDev *dev, VirtQueue *vq, VirtQueueMem *mem, uint
 
 uint32_t virtio_dev_offered(const VirtioDev *dev, uint32_t word)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) {
         mmio_write32(dev->common + VPCI_DF_SEL, word);
         return mmio_read32(dev->common + VPCI_DF);
@@ -333,15 +357,16 @@ uint32_t virtio_dev_offered(const VirtioDev *dev, uint32_t word)
 /* Number of virtqueues the device exposes (0 on virtio-mmio). */
 uint32_t virtio_dev_num_queues(const VirtioDev *dev)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) return mmio_read16(dev->common + VPCI_NUM_QUEUES);
 #endif
+    (void)dev;
     return 0;
 }
 
 uint32_t virtio_dev_cfg32(const VirtioDev *dev, uint32_t off)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) return mmio_read32(dev->devcfg + off);
 #endif
     return vio_read(dev->mmio, VIO_CFG + off);
@@ -349,7 +374,7 @@ uint32_t virtio_dev_cfg32(const VirtioDev *dev, uint32_t off)
 
 uint16_t virtio_dev_cfg16(const VirtioDev *dev, uint32_t off)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) return mmio_read16(dev->devcfg + off);
     return mmio_read16((uintptr_t)dev->mmio + VIO_CFG + off);
 #else
@@ -360,7 +385,7 @@ uint16_t virtio_dev_cfg16(const VirtioDev *dev, uint32_t off)
 
 uint8_t virtio_dev_cfg8(const VirtioDev *dev, uint32_t off)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) return mmio_read8(dev->devcfg + off);
     /* Byte access: the register may not be 4-byte aligned (input config). */
     return mmio_read8((uintptr_t)dev->mmio + VIO_CFG + off);
@@ -372,7 +397,7 @@ uint8_t virtio_dev_cfg8(const VirtioDev *dev, uint32_t off)
 
 void virtio_dev_cfg_write8(const VirtioDev *dev, uint32_t off, uint8_t value)
 {
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (dev->kind == VIRTIO_TRANSPORT_PCI) {
         mmio_write8(dev->devcfg + off, value);
         return;
@@ -391,7 +416,7 @@ void virtio_dev_cfg_write8(const VirtioDev *dev, uint32_t off, uint8_t value)
 void virtio_notify(const VirtQueue *vq)
 {
     virtio_memory_barrier();
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
     if (vq->dev->kind == VIRTIO_TRANSPORT_PCI) {
         mmio_write16(vq->notify_addr, vq->index);
         return;
@@ -467,21 +492,25 @@ int virtio_poll_used(VirtQueue *vq, uint32_t *out_len)
 
 static int virtio_attach_one(VirtioDev *d)
 {
+    if (d->attached) return 0;
     if (d->device_id == VIRTIO_ID_GPU) {
         /* Brought up early as the display; never reset it here. */
         return virtio_gpu_owns(d) ? 0 : -1;
     }
 
-    uint32_t offered = virtio_dev_offered(d, 0);
     uint32_t features = 0;
     switch (d->device_id) {
-    case VIRTIO_ID_BLOCK: features = offered & (1u << 9); break;  /* BLK_F_FLUSH */
-    case VIRTIO_ID_NET:   features = offered & (1u << 5); break;  /* NET_F_MAC */
+    case VIRTIO_ID_BLOCK: features = 1u << 9; break;  /* BLK_F_FLUSH */
+    /* VZ rejects NET_F_MAC alone when it offers the mandatory MTU field.
+     * No checksum/segmentation offloads or alternate ring format requested. */
+    case VIRTIO_ID_NET:   features = (1u << 5) | (1u << 3); break;
+    case VIRTIO_ID_CONSOLE: features = 1u << 1; break; /* MULTIPORT */
     default: break;
     }
     if (virtio_dev_negotiate(d, features) != 0) {
         return -1;
     }
+    features = d->features;
 
     switch (d->device_id) {
     case VIRTIO_ID_BLOCK:
@@ -489,11 +518,13 @@ static int virtio_attach_one(VirtioDev *d)
     case VIRTIO_ID_INPUT:
         return virtio_input_attach(d);
     case VIRTIO_ID_NET:
-        return virtio_net_attach(d, features != 0);
+        return virtio_net_attach(d, (features & (1u << 5)) != 0);
     case VIRTIO_ID_RNG:
         return virtio_rng_attach(d);
     case VIRTIO_ID_CONSOLE:
-        return virtio_console_attach(d);
+        if (virtio_console_attach(d) != 0) return -1;
+        d->attached = true;
+        return 0;
     default:
         serial_printf("[VIRTIO] device id %d not supported\n", (int)d->device_id);
         return -1;
@@ -534,7 +565,16 @@ void virtio_mmio_init(void)
     serial_printf("[VIRTIO] %d virtio device(s) attached\n", found);
 }
 
-#ifndef OJJY_HOST_TEST
+#if !defined(OJJY_HOST_TEST) || defined(OJJY_HOST_PCI_TEST)
+void virtio_pci_console_init(void)
+{
+    PciDev pci;
+    VirtioDev *dev;
+    if (pci_find(0x1af4, 0x1043, &pci) != 0) return;
+    pci_enable(&pci);
+    if (virtio_dev_pci_setup(&pci, &dev) == 0) virtio_attach_one(dev);
+}
+
 void virtio_pci_init(void)
 {
     if (!platform.ecam) return;

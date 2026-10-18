@@ -6,6 +6,7 @@
 #include "panic.h"
 #include "memory.h"
 #include "boot_info.h"
+#include "platform.h"
 
 #define TABLE 3ULL
 #define AF (1ULL << 10)
@@ -90,7 +91,10 @@ void user_arch_init(void)
      * places virtio BARs just above 4 GiB. */
     uint64_t parange = 0;
     __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(parange));
-    uint64_t ips = ((parange & 0xF) >= 2) ? 2 : 0;
+    /* PARange=1 is 36 bits, not 32. VZ on M2 reports this value and
+     * places PCI BARs above 4 GiB, so silently falling back to IPS=0
+     * makes every access to those BARs fault. */
+    uint64_t ips = platform_table_ips(parange);
     uint64_t tcr = 16 | (1ULL << 8) | (1ULL << 10) | (3ULL << 12) |
                    (16ULL << 16) | (1ULL << 23) | (ips << 32);
     /* Preserve architectural RES1 bits. Little-endian, no EL0 cache/DAIF
@@ -106,7 +110,7 @@ void user_arch_init(void)
                          "r"(on), "r"(cpacr) : "memory");
     ready = true;
     serial_printf("[USER] Owned ARM64 tables ready (IPS=%d bits, RAM 2MiB-mapped)\n",
-                  (int)(ips ? 40 : 32));
+                  (int)(ips == 2 ? 40 : ips == 1 ? 36 : 32));
 }
 
 bool user_arch_supported(void) { return ready; }

@@ -77,6 +77,8 @@ void platform_init(const BootInfo *info)
             platform.uart = rd64(t + 44);           /* ARM PL011 */
         }
     }
-    /* QEMU's high ECAM (above 4 GiB, no devices behind it) is not used. */
-    if (platform.qemu) platform.ecam = 0;
+    /* Owned tables currently cover 0-8 GiB. QEMU highmem=off places
+     * ECAM/BARs below 4 GiB and lets our PCI path be tested with a UART;
+     * the default high ECAM window is not mapped yet. */
+    if (platform.ecam >= (8ULL << 30)) platform.ecam = 0;
 }

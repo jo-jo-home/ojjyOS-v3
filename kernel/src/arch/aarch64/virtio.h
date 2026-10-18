@@ -154,6 +154,8 @@ typedef struct VirtioDev {
     uintptr_t isr;             /* ISR status */
     uintptr_t devcfg;          /* device-specific configuration */
     uint16_t pci_vendor, pci_device;
+    bool attached;            /* early console must survive the later bus scan */
+    uint32_t features;        /* negotiated device-specific feature word */
 } VirtioDev;
 
 typedef struct {
@@ -170,6 +172,7 @@ typedef struct {
 /* --- bus scans (attach drivers to every device they know) --- */
 void virtio_mmio_init(void);   /* QEMU virt */
 void virtio_pci_init(void);    /* Apple VZ: PCI bus 0 */
+void virtio_pci_console_init(void); /* boot-log sink before GPU/GIC bring-up */
 
 /* Stable VirtioDev handles. virtio_dev_mmio_slot() returns the same handle
  * for the same slot on every call (so the early GPU probe and the later bus
@@ -178,13 +181,14 @@ VirtioDev *virtio_dev_mmio_slot(uint32_t base);
 int virtio_dev_pci_setup(const struct PciDev *pci, VirtioDev **out);
 
 /* --- transport API (works on both) --- */
-/* Reset + feature negotiation up to (not including) DRIVER_OK. 0 on success. */
+/* Reset + feature negotiation up to (not including) DRIVER_OK. 0 on success.
+ * features is a supported mask; dev->features records its offered subset. */
 int virtio_dev_negotiate(VirtioDev *dev, uint32_t features);
 int virtio_dev_begin(VirtioDev *dev, uint32_t features);   /* alias */
 void virtio_dev_ready(VirtioDev *dev);                      /* set DRIVER_OK */
 /* Queue setup: negotiate size, publish desc/avail/used, enable. 0 on success. */
 int virtio_dev_queue_init(VirtioDev *dev, VirtQueue *vq, VirtQueueMem *mem, uint16_t index);
-/* Device-offered features, word 0 (before negotiation). */
+/* Device-offered feature word. Prefer negotiation's post-reset snapshot. */
 uint32_t virtio_dev_offered(const VirtioDev *dev, uint32_t word);
 /* Number of virtqueues the device exposes (0 on virtio-mmio). */
 uint32_t virtio_dev_num_queues(const VirtioDev *dev);

@@ -60,6 +60,46 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- N5/N6 checkpoint receipts (2026-10-18): both development builds have
+  zero warnings/errors (`build/vz-resume/checkpoint-{arm,x86}.log`), host
+  and ASan/UBSan suites pass (`checkpoint-{host,sanitized}.log`). Live
+  QEMU smokes pass: ARM TCG, HVF, modern PCI, ramfb, x86, plus pointer QA
+  (`checkpoint-{tcg,hvf,pci,ramfb,x86-smoke,pointer}.log`). VZ boot check
+  passes (`checkpoint-vz/report.json`), all five virtio devices, real DHCP,
+  firmware clock offset 0.104s, source SHA-256 unchanged. No temporary
+  power-off checkpoints remain. No installed disk touched; nothing pushed.
+
+- N5/N6 follow-up verification: `build/vz-resume/console-offer-vz/serial.log`
+  proves VZ num_queues=4 and offered low console features=0x30000000.
+  MULTIPORT is **not offered** by this VZ serialPorts device; the four-queue
+  handshake still works and is required for output. Do not describe this
+  as MULTIPORT negotiated. QEMU does offer bit 1. Negotiation now intersects
+  supported masks with offers after reset/ACK/DRIVER and records the result.
+  Host PCI fixture covers reset completion/deadline, separate ACK, feature
+  filtering/rejection, BARs above 4GiB, queues, notification and RNG's absent
+  device config. QEMU PCI + HVF full protected/persistence smokes pass on
+  this negotiation change (`feature-order-{pci,hvf}`); normal/sanitized host
+  suites pass. VZ boot check passes with source image unchanged and clock
+  within one second of the host. USB input, visible clock/animation QA and
+  the app are not yet validated by these boot checks.
+
+- 2026-10-18 (resumed after 1411d0e): N5/N6 now reaches the main loop on
+  VZ, with all five virtio devices attached and DHCP 192.168.64.2.
+  Evidence: `build/vz-resume/devices/serial.log`; PCI GPU 1440x900,
+  GICv3 1024 lines, 24MHz virtual timer, disk checkpoint restore, RNG,
+  console replay, network MTU 1500. Private disks/EFI stores only.
+  Verified root causes: PARange=1 needs IPS=36 (the old >=2 test selected
+  32 and faulted on 4GiB BARs); PCI reset/ACK/DRIVER must be sequenced
+  (status readout changed 0 -> 11); DEVICE_READY value 0 means failed
+  initialization, value 1 opens the console. VZ requires NET_F_MTU when
+  offered (controlled probe: MAC-only 0x20 rejected, MAC+MTU 0x28 accepted);
+  RNG has no device-config capability and must not be rejected for that.
+  Guarded the early GPU's QEMU-only MMIO scan; console now precedes GPU/GIC.
+  Historical "num_queues unimplemented" and downstream marker claims are
+  unverified: old probes sometimes stopped at stale earlier markers.
+  Added actual-transport host PCI tests and opt-in QEMU PCI smoke coverage,
+  plus `tests/vz_boot.py` for repeatable private-disk VZ boot/clock/DHCP.
+
 - 2026-10-18: probes above. Bootloader now saves `\ojjyboot.log` and dumps
   memory map, configuration tables, ACPI (MADT/MCFG/GTDT/FADT) and PCI.
 - N1 done: ARM kernel linked at 0x71000000. QEMU TCG + HVF smoke --protected PASS (build/n1); under VZ the bootloader loads it and jumps (entry 0x71053800).

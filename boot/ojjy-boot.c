@@ -708,6 +708,24 @@ static void DumpPlatform(void)
                             if ((v & 6) == 4) { addr |= (UINT64)c[5 + b] << 32; Print(L"[PCI]    bar%d 0x%lx (64)\n", (UINT64)b, addr); b++; }
                             else Print(L"[PCI]    bar%d 0x%lx\n", (UINT64)b, addr);
                         }
+                        /* Config-space-only flight recorder: never infer a
+                         * vendor capability layout from a device name. */
+                        if ((c[0] & 0xFFFF) == 0x1AF4 && (c[1] & (1u << 20))) {
+                            UINT32 cap = c[0x34 / 4] & 0xFC;
+                            for (UINT32 n = 0; cap >= 0x40 && n < 48; n++) {
+                                UINT32 header = c[cap / 4];
+                                UINT32 next = (header >> 8) & 0xFC;
+                                if ((header & 0xFF) == 9 && (header >> 16 & 0xFF) >= 16) {
+                                    Print(L"[VCAP] dev %d type %d bar %d off %x len %x mult %x\n",
+                                          (UINT64)dev, (UINT64)(header >> 24),
+                                          (UINT64)(c[cap / 4 + 1] & 0xFF),
+                                          (UINT64)c[cap / 4 + 2], (UINT64)c[cap / 4 + 3],
+                                          (UINT64)((header >> 24) == 2 ? c[cap / 4 + 4] : 0));
+                                }
+                                if (!next || next == cap) break;
+                                cap = next;
+                            }
+                        }
                         if (fn == 0 && !(((c[3] >> 16) & 0x80))) break;
                     }
                 }

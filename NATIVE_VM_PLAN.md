@@ -60,6 +60,15 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- N4/N7 backend verified: native boot emits a once-only 5-second health
+  sample outside the ISR; separate IRQ delivery count prevents a healthy
+  counter from hiding broken interrupt routing. `timer-final-vz/report.json`
+  records uptime 5000ms, 3889 delivered timer IRQs, firmware delta -0.088s,
+  and correctly advanced RTC calendar. One boot also recorded the Finder
+  animation's `[PERF]` frames. Visual menu-clock/animation acceptance remains
+  part of N9 app QA, not something this headless check establishes. Both
+  builds warning-free and host suite pass (`timer-{host,final-arm,final-x86}.log`).
+
 - N5/N6 checkpoint receipts (2026-10-18): both development builds have
   zero warnings/errors (`build/vz-resume/checkpoint-{arm,x86}.log`), host
   and ASan/UBSan suites pass (`checkpoint-{host,sanitized}.log`). Live

@@ -6,6 +6,7 @@ Compiles and signs only the probe owned by this test; never opens the
 installed writable disk or changes its EFI variable store.
 """
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -53,10 +54,20 @@ def run(args):
     epoch = int(re.search(r"clock starts from the firmware time (\d+)", text)[1])
     if abs(epoch - started) > 120:
         raise RuntimeError(f"Firmware clock differs from host by {epoch - started:.0f} seconds")
+    health = re.search(r"\[TIMER\] Health ms=(\d+) irqs=(\d+) clock=([\d:T-]+)", text)
+    if not health:
+        raise RuntimeError("No virtual-timer/clock health sample; see serial.log")
+    ms, irqs = int(health[1]), int(health[2])
+    clock_epoch = int(datetime(*map(int, re.split(r"\D+", health[3])), tzinfo=timezone.utc).timestamp())
+    if not (5000 <= ms <= args.seconds * 1000 + 1000) or irqs == 0:
+        raise RuntimeError(f"Virtual timer failed: uptime={ms}ms, delivered IRQs={irqs}")
+    if clock_epoch != epoch + ms // 1000:
+        raise RuntimeError("RTC calendar did not advance by guest uptime")
     if digest(source) != before:
         raise RuntimeError("Source image changed while running the private-disk test")
     report = {"boot": "passed", "pci_devices": 5, "dhcp": "passed",
               "clock_offset_seconds": round(epoch - started, 3),
+              "timer_sample_ms": ms, "timer_irqs": irqs, "clock_progression": "passed",
               "source_sha256": before, "source_unchanged": True,
               "limitations": "No USB input or saved-login assertions in this boot check"}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

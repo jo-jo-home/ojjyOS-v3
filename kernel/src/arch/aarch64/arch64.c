@@ -18,9 +18,10 @@
 #include "pci.h"
 #include "arch_power.h"
 
-/* Implemented in timer_a64.c: re-arms the EL1 physical timer and
- * advances the millisecond tick counter. */
+/* Implemented in timer_a64.c: re-arms the EL1 virtual timer and
+ * counts delivered IRQs independently of the counter-based uptime. */
 void a64_timer_isr(void);
+void a64_timer_report_health(void);
 
 void a64_init(BootInfo *boot_info)
 {
@@ -51,7 +52,7 @@ void a64_irq_handler(void)
     uint32_t intid = gicv2_ack();
 
     if (intid == platform.vtimer_ppi) {
-        /* EL1 physical timer PPI: advance the tick and re-arm */
+        /* EL1 virtual timer PPI: record delivery and re-arm */
         a64_timer_isr();
     } else if (intid != 1023 /* spurious */) {
         serial_printf("[A64] Unhandled interrupt %d\n", (int)intid);
@@ -117,4 +118,5 @@ void a64_poll_input(void)
     virtio_rng_poll();
     virtio_gpu_poll();
     virtio_console_poll();
+    a64_timer_report_health();
 }

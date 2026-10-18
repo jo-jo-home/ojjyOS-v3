@@ -25,6 +25,9 @@ an MMIO boundary; `OJJY_PCI=1 tests/qemu_smoke.py` tests all PCI virtio devices
 under QEMU (`highmem=off`, keeping a PL011 log); `tests/vz_boot.py` checks VZ
 boot, five attached devices, DHCP and clock on a private disk. Never confuse
 this boot check with the still-pending USB/account-persistence VZ smoke.
+N4/N7 backend check now measures virtual-timer IRQ delivery and RTC calendar
+progression after 5 seconds (`build/vz-resume/timer-final-vz/report.json`:
+3889 IRQs, clock delta -0.088s). Visual menu-clock/animation QA awaits N9.
 
 ## >>> START HERE (2026-10-18, later): native-vm job PAUSED mid-N5/N6 <<<
 

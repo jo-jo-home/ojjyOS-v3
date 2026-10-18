@@ -19,3 +19,10 @@ sysroot/System/Programs/*.elf
 *~
 __pycache__/
 *.pyc
+
+# Numbered duplicates created by macOS/iCloud sync of build outputs
+* [0-9].bin
+* [0-9].o
+* [0-9].d
+* [0-9].efi
+* [0-9].obj

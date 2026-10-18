@@ -177,3 +177,20 @@ Results are appended to the log below.
   `gfx_draw_rgba_scaled` (area-average shrink, bilinear grow) so 1x and 2x
   are both smooth; apps map by bundle id, bundle .raw icons remain a fallback.
   `build/perf/p4-icons` (2x HVF): drag 24 ms/frame.
+- Phase 4.2a done — desktop chrome redesigned with Inter (`build/design/t2`,
+  tour script `tests/qemu_design_tour.py`, works at 1x/2x):
+  menu bar (blurred glass, bold app name, measured title layout shared with
+  hit-testing, real AA Wi-Fi fan via new `gfx_arc_up`, Control Center glyph,
+  "Sun Oct 18  11:58 AM" clock); dropdown/context menus (glass, hover pills,
+  right-aligned shortcut column with the command symbol); windows (title-bar
+  sheen, centred titles with ellipsis, traffic lights with rims and hover
+  symbols, hairline edge, focused/unfocused shadows, no pixel resize grip);
+  dock (magnification that spreads neighbours, shared click layout, running
+  dots, name tooltip, eased launch bounce); desktop icons (white shadowed
+  labels, selection pills); login/setup (frosted wallpaper, date + 72 px
+  clock, glass card, focus-ring fields, gradient buttons, round avatar; all
+  click rects unchanged); Control Center, Spotlight (icons in results),
+  Mission Control, Launchpad labels, Cmd+Tab switcher.
+  Bugs found: UiFontFace metrics were int8 (2x clock ascent 140 wrapped);
+  first traffic-light hover check forced one full repaint (pointer test).
+  Live: TCG + HVF(--protected) smoke, pointer, apps, browser, network UI PASS.

@@ -31,6 +31,9 @@
 #define WALLPAPER_MAX_W         1024
 #define WALLPAPER_MAX_H         1024
 
+#ifndef ABS
+#define ABS(v) ((v) < 0 ? -(v) : (v))
+#endif
 #define MENU_BAR_HEIGHT         26
 #define DOCK_HEIGHT             72
 #define DOCK_ICON_BASE          36
@@ -568,6 +571,37 @@ static void draw_rounded_rect_blend(int x, int y, int w, int h, int r, Color col
     gfx_round_rect(surface(), x, y, w, h, r, color, alpha);
 }
 
+/* Inter UI text (uifont.h); y is the top of the line box. */
+static int ui_text(int x, int y, const char *s, TextStyle st, Color c)
+{
+    return text_draw(surface(), x, y, s, st, c);
+}
+
+/* Text vertically centred in the box [top, top + h). */
+static int ui_text_mid(int x, int top, int h, const char *s, TextStyle st, Color c)
+{
+    return text_draw(surface(), x, text_y_center(top, h, st), s, st, c);
+}
+
+/* Frosted glass panel: blurred wallpaper + theme tint + hairline rim. */
+static void ui_glass_fade(int x, int y, int w, int h, int r, uint8_t tint, uint8_t fade)
+{
+    if (!fade) return;
+    if (wp_cache_valid && !settings_get()->reduced_transparency) {
+        gfx_round_rect_image(surface(), x, y, w, h, r, wp_blur, fade);
+        draw_rounded_rect_blend(x, y, w, h, r, theme->dock_tint, (uint8_t)(tint * fade / 255));
+    } else {
+        draw_rounded_rect_blend(x, y, w, h, r, theme->dock_tint, (uint8_t)(245 * fade / 255));
+    }
+    gfx_round_rect_stroke(surface(), x, y, w, h, r, COLOR_WHITE,
+                          (uint8_t)((settings_get()->dark_mode ? 40 : 110) * fade / 255));
+}
+
+static void ui_glass(int x, int y, int w, int h, int r, uint8_t tint)
+{
+    ui_glass_fade(x, y, w, h, r, tint, 255);
+}
+
 static void draw_shadow(int x, int y, int w, int h, int radius)
 {
     gfx_shadow(surface(), x, y, w, h, radius, 22, 8, theme->shadow, 90);
@@ -577,12 +611,12 @@ static void draw_shadow(int x, int y, int w, int h, int radius)
  * are 12px discs; the title follows them; Finder puts its back/forward and
  * view buttons in the unified titlebar after the title. */
 #define TL_SIZE   12
-#define TL_TOP    10
-#define TL_X(i)   (12 + (i) * 18)
-#define TITLE_X   70
+#define TL_TOP    12
+#define TL_X(i)   (14 + (i) * 20)
+#define TITLE_X   80
 static int finder_toolbar_x(const CompositorWindow *win, int base_x)
 {
-    return base_x + TITLE_X + (int)strlen(win->title) * FONT_WIDTH + 18;
+    return base_x + TITLE_X + text_width(win->title, TEXT_BODY_BOLD) + 18;
 }
 static bool hit_traffic_light(const CompositorWindow *win, int i, int x, int y)
 {
@@ -841,10 +875,15 @@ static void set_wifi(bool on)
 /* A small Wi-Fi fan: dot + two widening arcs (bars), slashed when off. */
 static void draw_wifi_glyph(int x, int y, Color c, bool off)
 {
-    draw_rounded_rect_blend(x + 6, y + 10, 4, 4, 2, c, 255);
-    draw_rounded_rect_blend(x + 3, y + 6, 10, 2, 1, c, off ? 110 : 255);
-    draw_rounded_rect_blend(x, y + 2, 16, 2, 1, c, off ? 80 : 255);
-    if (off) for (int i = 0; i < 14; i++) fb_fill_rect(x + 1 + i, y + 1 + i, 2, 1, c);
+    /* Fan of three arcs over a dot, 16x14; dimmed and slashed when off. */
+    GfxSurface *s = surface();
+    int cx = x + 8, cy = y + 13;
+    uint8_t a = off ? 90 : 255;
+    gfx_arc_up(s, cx, cy, 0, 3, 45, c, a);
+    gfx_arc_up(s, cx, cy, 6, 8, 45, c, a);
+    gfx_arc_up(s, cx, cy, 11, 13, 45, c, a);
+    if (off)
+        for (int i = 0; i < 15; i++) draw_rounded_rect_blend(x + i, y + i - 1, 2, 2, 1, c, 255);
 }
 
 static void draw_settings_window(SettingsStateUi *state, int content_x, int content_y, int content_w, int content_h)
@@ -1780,7 +1819,9 @@ static void draw_window(int idx)
     int draw_x = win->x + (win->w - draw_w) / 2;
     int draw_y = win->y + (win->h - draw_h) / 2;
 
-    draw_shadow(draw_x, draw_y, draw_w, draw_h, r);
+    bool focused = idx == window_count - 1;
+    if (focused) gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 34, 14, theme->shadow, 105);
+    else gfx_shadow(surface(), draw_x, draw_y, draw_w, draw_h, r, 20, 6, theme->shadow, 60);
 
     if (settings_get()->reduced_transparency) {
         Color solid = blend(theme->dock_tint, theme->glass_aqua, 215);
@@ -1797,21 +1838,52 @@ static void draw_window(int idx)
         (void)blur_px;
     }
 
-    draw_rounded_rect_blend(draw_x, draw_y, draw_w, 32, r, theme->accent_soft, highlight);
+    /* Title bar: a soft sheen instead of a solid band, then the title. */
+    gfx_round_rect_vgradient(surface(), draw_x, draw_y, draw_w, 38, r,
+                             COLOR_WHITE, theme->glass_aqua, settings_get()->dark_mode ? 18 : 70);
+    (void)highlight;
     {
         const char *title = state->type == APP_WEB ? browser_title() : win->title;
-        int max = (draw_w - TITLE_X - 16) / FONT_WIDTH;
-        if (state->type == APP_FINDER) max = (int)strlen(title);
-        int n = (int)strlen(title);
-        if (n > max) n = max > 0 ? max : 0;
-        fb_draw_text_scaled(draw_x + TITLE_X, draw_y + 8, title, n, theme->text, 1, false);
+        Color tc = focused ? theme->text : theme->text_muted;
+        int ty = text_y_center(draw_y, 36, TEXT_BODY_BOLD);
+        if (state->type == APP_FINDER) {
+            text_draw(surface(), draw_x + TITLE_X, ty, title, TEXT_BODY_BOLD, tc);
+        } else {
+            int avail = draw_w - 2 * (TITLE_X + 8);
+            int tw = MIN(text_width(title, TEXT_BODY_BOLD), avail);
+            text_draw_fit(surface(), draw_x + (draw_w - tw) / 2, ty, title, TEXT_BODY_BOLD, tc, avail);
+        }
     }
 
-    static const Color lights[3] = { RGB(235, 92, 86), RGB(245, 197, 72), RGB(86, 200, 105) };
-    for (int i = 0; i < 3; i++) {
-        bool focused = idx == window_count - 1;
-        draw_rounded_rect_blend(draw_x + TL_X(i), draw_y + TL_TOP, TL_SIZE, TL_SIZE, TL_SIZE / 2,
-                                focused ? lights[i] : theme->text_muted, focused ? 255 : 110);
+    /* Traffic lights: colour + fine rim when focused, grey otherwise;
+     * hovering the group shows the close/minimise/zoom symbols. */
+    {
+        static const Color lights[3] = { RGB(255, 95, 87), RGB(254, 188, 46), RGB(40, 200, 64) };
+        static const Color rims[3] = { RGB(224, 68, 62), RGB(222, 161, 35), RGB(29, 173, 44) };
+        int gx = draw_x + TL_X(0), gy = draw_y + TL_TOP;
+        bool hover = cursor_x >= gx - 4 && cursor_x < draw_x + TL_X(2) + TL_SIZE + 4 &&
+                     cursor_y >= gy - 4 && cursor_y < gy + TL_SIZE + 4;
+        for (int i = 0; i < 3; i++) {
+            int lx = draw_x + TL_X(i);
+            Color fill = focused || hover ? lights[i] : (settings_get()->dark_mode ? RGB(78, 84, 96) : RGB(200, 206, 214));
+            Color rim = focused || hover ? rims[i] : (settings_get()->dark_mode ? RGB(64, 70, 82) : RGB(178, 186, 196));
+            draw_rounded_rect_blend(lx, gy, TL_SIZE, TL_SIZE, TL_SIZE / 2, rim, 255);
+            draw_rounded_rect_blend(lx + 1, gy + 1, TL_SIZE - 2, TL_SIZE - 2, TL_SIZE / 2 - 1, fill, 255);
+            if (!hover) continue;
+            Color g = RGB(90, 30, 20);
+            int cx = lx + TL_SIZE / 2, cy = gy + TL_SIZE / 2;
+            if (i == 0) {       /* x */
+                for (int k = -3; k <= 3; k++) {
+                    draw_rounded_rect_blend(cx + k - 1, cy + k - 1, 2, 2, 1, g, 200);
+                    draw_rounded_rect_blend(cx + k - 1, cy - k - 1, 2, 2, 1, g, 200);
+                }
+            } else if (i == 1) { /* - */
+                draw_rounded_rect_blend(cx - 4, cy - 1, 8, 2, 1, g, 210);
+            } else {             /* + (zoom) */
+                draw_rounded_rect_blend(cx - 4, cy - 1, 8, 2, 1, g, 210);
+                draw_rounded_rect_blend(cx - 1, cy - 4, 2, 8, 1, g, 210);
+            }
+        }
     }
 
     int content_x = draw_x + 12;
@@ -1877,17 +1949,9 @@ static void draw_window(int idx)
         }
     }
 
-    /* Bottom-right resize grip indicator when not maximized */
-    if (!win->maximized) {
-        int gx = draw_x + draw_w - 14;
-        int gy = draw_y + draw_h - 14;
-        for (int k = 0; k < 8; k++) {
-            fb_put_pixel(gx + 7 - k, gy + k, theme->text_muted);
-            if (k < 5) {
-                fb_put_pixel(gx + 7 - k, gy + 3 + k, theme->text_muted);
-            }
-        }
-    }
+    /* Hairline edge (light catches the glass) */
+    gfx_round_rect_stroke(surface(), draw_x, draw_y, draw_w, draw_h, r, COLOR_WHITE,
+                          settings_get()->dark_mode ? 36 : 120);
 }
 
 static void draw_wallpaper(void)
@@ -1903,175 +1967,238 @@ static void draw_wallpaper(void)
     }
 }
 
-/* Menu titles flow after the bold app name (macOS-style), so long names such
- * as "About ojjyOS" or "Activity Monitor" never overlap "File". Index 0..3 =
- * File, Edit, View, Window. Shared by drawing, dropdowns and hit-testing. */
-static const int menu_offsets[5] = { 0, 44, 88, 132, 195 };
+/* Menu bar layout, shared by drawing and hit-testing (Inter text widths).
+ * Left: ojjy logo, bold app name, File/Edit/View/Window. Right (from the
+ * edge): clock, Control Center glyph, user name, Wi-Fi glyph. */
+typedef struct {
+    int logo_x, logo_w, app_x;
+    int title_x[4], title_w[4];
+    int wifi_x, user_x, user_w, cc_x, clock_x, clock_w;
+} MenuBarLayout;
+
+static const char *const menu_titles[4] = { "File", "Edit", "View", "Window" };
+
+static void menu_clock_text(char *out, size_t size)
+{
+    static const char *const days[7] = { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" };
+    static const char *const months[12] = { "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+    RtcTime t;
+    rtc_read_time(&t);
+    bool is_24 = settings_get()->time_24h;
+    int hour = t.hour;
+    char num[8];
+    out[0] = '\0';
+    int wd = weekday_of_date(t.year, t.month, t.day);
+    str_append(out, size, days[(wd % 7 + 7) % 7]);
+    str_append(out, size, " ");
+    str_append(out, size, months[(t.month >= 1 && t.month <= 12) ? t.month - 1 : 0]);
+    str_append(out, size, " ");
+    utoa(t.day, num, 10); str_append(out, size, num);
+    str_append(out, size, "   ");
+    if (!is_24) { hour %= 12; if (hour == 0) hour = 12; }
+    else if (hour < 10) str_append(out, size, "0");
+    utoa(hour, num, 10); str_append(out, size, num);
+    str_append(out, size, ":");
+    if (t.minute < 10) str_append(out, size, "0");
+    utoa(t.minute, num, 10); str_append(out, size, num);
+    if (!is_24) str_append(out, size, t.hour >= 12 ? " PM" : " AM");
+}
+
+static void menu_bar_layout(MenuBarLayout *L)
+{
+    L->logo_x = 14;
+    L->logo_w = text_width("ojjy", TEXT_BODY_BOLD);
+    L->app_x = L->logo_x + L->logo_w + 20;
+    int x = L->app_x + text_width(active_app_name, TEXT_BODY_BOLD) + 20;
+    for (int i = 0; i < 4; i++) {
+        L->title_x[i] = x;
+        L->title_w[i] = text_width(menu_titles[i], TEXT_BODY);
+        x += L->title_w[i] + 20;
+    }
+    char clock[40];
+    menu_clock_text(clock, sizeof(clock));
+    L->clock_w = text_width(clock, TEXT_BODY_MEDIUM);
+    L->clock_x = (int)comp_width - 14 - L->clock_w;
+    L->cc_x = L->clock_x - 18 - 18;
+    L->user_w = text_width(users_current_username(), TEXT_BODY_MEDIUM);
+    L->user_x = L->cc_x - 16 - L->user_w;
+    L->wifi_x = L->user_x - 16 - 16;
+}
+
+/* Kept for dropdown placement: x of menu title i (0..3). */
 static int menu_title_x(int i)
 {
-    int base = 60 + (int)strlen(active_app_name) * FONT_WIDTH + 24;
-    return MAX(140, base) + menu_offsets[i];
+    MenuBarLayout L;
+    menu_bar_layout(&L);
+    return L.title_x[i < 0 ? 0 : i > 3 ? 3 : i];
+}
+
+/* Control Center glyph: two switch pills. */
+static void draw_cc_glyph(int x, int y, Color c)
+{
+    draw_rounded_rect_blend(x, y + 2, 16, 6, 3, c, 255);
+    draw_rounded_rect_blend(x + 10, y + 3, 4, 4, 2, theme->dock_tint, 255);
+    draw_rounded_rect_blend(x, y + 10, 16, 6, 3, c, 150);
+    draw_rounded_rect_blend(x + 2, y + 11, 4, 4, 2, theme->dock_tint, 255);
 }
 
 static void draw_menu_bar(void)
 {
-    draw_rounded_rect_blend(0, 0, (int)comp_width, MENU_BAR_HEIGHT, 0,
-                            theme->dock_tint, 155);
-
-    /* System 'ojjy' glyph pill */
-    if (active_menu == 1) {
-        draw_rounded_rect_blend(6, 3, 44, MENU_BAR_HEIGHT - 6, 6, theme->accent, 180);
+    MenuBarLayout L;
+    menu_bar_layout(&L);
+    int H = MENU_BAR_HEIGHT;
+    if (wp_cache_valid && !settings_get()->reduced_transparency) {
+        gfx_round_rect_image(surface(), 0, 0, (int)comp_width, H, 0, wp_blur, 255);
+        draw_rounded_rect_blend(0, 0, (int)comp_width, H, 0, theme->dock_tint, 165);
+    } else {
+        draw_rounded_rect_blend(0, 0, (int)comp_width, H, 0, theme->dock_tint, 245);
     }
-    fb_draw_string(12, 8, "ojjy", active_menu == 1 ? COLOR_WHITE : theme->accent, theme->dock_tint);
+    draw_rounded_rect_blend(0, H - 1, (int)comp_width, 1, 0, COLOR_BLACK, 22);
 
-    fb_draw_string(60, 8, active_app_name, theme->text, theme->dock_tint);
+    /* ojjy logo */
+    if (active_menu == 1)
+        draw_rounded_rect_blend(L.logo_x - 7, 3, L.logo_w + 14, H - 6, 5, theme->accent, 220);
+    ui_text_mid(L.logo_x, 0, H, "ojjy", TEXT_BODY_BOLD, active_menu == 1 ? COLOR_WHITE : theme->accent);
+    ui_text_mid(L.app_x, 0, H, active_app_name, TEXT_BODY_BOLD, theme->text);
 
-    /* Interactive menu items: File, Edit, View, Window (see menu_title_x) */
-    const char *menus[4] = { "File", "Edit", "View", "Window" };
-    int mx[4] = { menu_title_x(0), menu_title_x(1), menu_title_x(2), menu_title_x(3) };
     for (int i = 0; i < 4; i++) {
-        int mw = (int)strlen(menus[i]) * FONT_WIDTH + 10;
-        if (active_menu == i + 2) {
-            draw_rounded_rect_blend(mx[i] - 5, 3, mw, MENU_BAR_HEIGHT - 6, 6, theme->accent, 170);
-        }
-        fb_draw_string(mx[i], 8, menus[i],
-                       active_menu == i + 2 ? COLOR_WHITE : theme->text_muted, theme->dock_tint);
+        bool on = active_menu == i + 2;
+        if (on) draw_rounded_rect_blend(L.title_x[i] - 8, 3, L.title_w[i] + 16, H - 6, 5, theme->accent, 220);
+        ui_text_mid(L.title_x[i], 0, H, menu_titles[i], TEXT_BODY, on ? COLOR_WHITE : theme->text);
     }
 
-    RtcTime time;
-    rtc_read_time(&time);
-    char time_buf[16];
-    bool is_24 = settings_get()->time_24h;
-    int hour = time.hour;
-    const char *suffix = "";
-
-    if (!is_24) {
-        suffix = (hour >= 12) ? " PM" : " AM";
-        hour = hour % 12;
-        if (hour == 0) hour = 12;
-    }
-
-    char num[8];
-    time_buf[0] = '\0';
-    if (hour < 10) str_append(time_buf, sizeof(time_buf), "0");
-    utoa(hour, num, 10);
-    str_append(time_buf, sizeof(time_buf), num);
-    str_append(time_buf, sizeof(time_buf), ":");
-    if (time.minute < 10) str_append(time_buf, sizeof(time_buf), "0");
-    utoa(time.minute, num, 10);
-    str_append(time_buf, sizeof(time_buf), num);
-    str_append(time_buf, sizeof(time_buf), suffix);
-
-    /* Active user pill + Control + Clock on right */
-    const char *uname = users_current_username();
-    int user_w = ((int)strlen(uname) + 1) * FONT_WIDTH;
-    int status_x = (int)comp_width - 136;
-    fb_draw_string(status_x - user_w - 14, 8, uname, theme->accent, theme->dock_tint);
     if (net_info()->present) {
         const NetInfo *ni = net_info();
         bool connected = ni->enabled && ni->configured;
-        draw_wifi_glyph(status_x - user_w - 40, 7, connected ? theme->text : theme->text_muted, !ni->enabled);
+        draw_wifi_glyph(L.wifi_x, 6, connected ? theme->text : theme->text_muted, !ni->enabled);
     }
-    fb_draw_string(status_x, 8, "Control", theme->text_muted, theme->dock_tint);
-    fb_draw_string((int)comp_width - 70, 8, time_buf, theme->text, theme->dock_tint);
+    ui_text_mid(L.user_x, 0, H, users_current_username(), TEXT_BODY_MEDIUM, theme->text);
+    draw_cc_glyph(L.cc_x, 4, theme->text);
+    char clock[40];
+    menu_clock_text(clock, sizeof(clock));
+    ui_text_mid(L.clock_x, 0, H, clock, TEXT_BODY_MEDIUM, theme->text);
 }
 
-static void draw_menu_dropdown(void)
+/* Dropdown menus. Items are "Label" or "Label\tShortcut". */
+#define MENU_ROW_H 22
+static int menu_items(int menu, const char **items, int *x)
 {
-    if (active_menu <= 0) return;
-
-    const char *items[7];
     int count = 0;
-    int x = 8;
-    int w = 210;
-
-    if (active_menu == 1) {
-        x = 6;
+    *x = 6;
+    if (menu == 1) {
         items[count++] = "About ojjyOS";
-        items[count++] = "System Settings...";
+        items[count++] = "System Settings\xE2\x80\xA6";
         items[count++] = "Activity Monitor";
-        items[count++] = "Lock Screen";
-        items[count++] = "Switch User / Log Out...";
-        items[count++] = "Restart...";
-        items[count++] = "Shut Down...";
-    } else if (active_menu == 2) {
-        x = menu_title_x(0) - 4;
+        items[count++] = "Lock Screen\t\xE2\x8C\x83\xE2\x8C\x98Q";
+        items[count++] = "Switch User / Log Out\xE2\x80\xA6";
+        items[count++] = "Restart\xE2\x80\xA6";
+        items[count++] = "Shut Down\xE2\x80\xA6";
+    } else if (menu == 2) {
+        *x = menu_title_x(0) - 8;
         items[count++] = "New Finder Window";
         items[count++] = "New Text Document";
         items[count++] = "Open Home Folder";
-        items[count++] = "Save Document (Cmd+S)";
-        items[count++] = "Close Window (Cmd+Q)";
-    } else if (active_menu == 3) {
-        x = menu_title_x(1) - 4;
-        items[count++] = "Copy (Cmd+C)";
-        items[count++] = "Cut (Cmd+X)";
-        items[count++] = "Paste (Cmd+V)";
+        items[count++] = "Save Document\t\xE2\x8C\x98S";
+        items[count++] = "Close Window\t\xE2\x8C\x98Q";
+    } else if (menu == 3) {
+        *x = menu_title_x(1) - 8;
+        items[count++] = "Copy\t\xE2\x8C\x98" "C";
+        items[count++] = "Cut\t\xE2\x8C\x98X";
+        items[count++] = "Paste\t\xE2\x8C\x98V";
         items[count++] = "Clear Selection";
-    } else if (active_menu == 4) {
-        x = menu_title_x(2) - 4;
+    } else if (menu == 4) {
+        *x = menu_title_x(2) - 8;
         items[count++] = "Toggle Dark / Light";
         items[count++] = "Toggle Transparency";
-        items[count++] = "Mission Control (Cmd+M)";
-        items[count++] = "Launchpad (Cmd+L)";
-    } else if (active_menu == 5) {
-        x = menu_title_x(3) - 4;
+        items[count++] = "Mission Control\t\xE2\x8C\x98M";
+        items[count++] = "Launchpad\t\xE2\x8C\x98L";
+    } else if (menu == 5) {
+        *x = menu_title_x(3) - 8;
         items[count++] = "Minimize Window";
         items[count++] = "Zoom / Maximize";
         items[count++] = "Calculator";
         items[count++] = "Activity Monitor";
     }
+    return count;
+}
 
-    int h = count * 22 + 12;
-    int y = MENU_BAR_HEIGHT + 4;
-    draw_shadow(x, y, w, h, 10);
-    draw_rounded_rect_blend(x, y, w, h, 10, theme->dock_tint, 225);
+/* Split "Label\tShortcut"; returns label length in bytes. */
+static int menu_label_len(const char *item, const char **shortcut)
+{
+    int n = 0;
+    while (item[n] && item[n] != '\t') n++;
+    *shortcut = item[n] == '\t' ? item + n + 1 : NULL;
+    return n;
+}
 
+static int menu_panel_width(const char **items, int count)
+{
+    int w = 0;
     for (int i = 0; i < count; i++) {
-        int iy = y + 6 + i * 22;
-        if (cursor_x >= x + 4 && cursor_x <= x + w - 4 &&
-            cursor_y >= iy && cursor_y < iy + 20) {
-            draw_rounded_rect_blend(x + 4, iy, w - 8, 20, 6, theme->accent, 180);
-            fb_draw_string(x + 12, iy + 3, items[i], COLOR_WHITE, theme->accent);
-        } else {
-            fb_draw_string(x + 12, iy + 3, items[i], theme->text, theme->dock_tint);
+        const char *sc;
+        int n = menu_label_len(items[i], &sc);
+        int iw = text_width_n(items[i], n, TEXT_BODY) + (sc ? text_width(sc, TEXT_BODY) + 36 : 0);
+        if (iw > w) w = iw;
+    }
+    return MAX(200, w + 40);
+}
+
+static void draw_menu_panel(int x, int y, const char **items, int count, int w)
+{
+    int h = count * MENU_ROW_H + 12;
+    draw_shadow(x, y, w, h, 10);
+    ui_glass(x, y, w, h, 10, 205);
+    for (int i = 0; i < count; i++) {
+        int iy = y + 6 + i * MENU_ROW_H;
+        bool hot = cursor_x >= x + 4 && cursor_x <= x + w - 4 && cursor_y >= iy && cursor_y < iy + MENU_ROW_H;
+        if (hot) draw_rounded_rect_blend(x + 5, iy, w - 10, MENU_ROW_H, 6, theme->accent, 235);
+        const char *sc;
+        int n = menu_label_len(items[i], &sc);
+        Color fg = hot ? COLOR_WHITE : theme->text;
+        text_draw_n(surface(), x + 14, text_y_center(iy, MENU_ROW_H, TEXT_BODY), items[i], n, TEXT_BODY, fg, 255);
+        if (sc) {
+            int sw = text_width(sc, TEXT_BODY);
+            ui_text_mid(x + w - 14 - sw, iy, MENU_ROW_H, sc, TEXT_BODY, hot ? COLOR_WHITE : theme->text_muted);
         }
     }
+}
+
+static void draw_menu_dropdown(void)
+{
+    if (active_menu <= 0) return;
+    const char *items[8];
+    int x;
+    int count = menu_items(active_menu, items, &x);
+    draw_menu_panel(x, MENU_BAR_HEIGHT + 4, items, count, menu_panel_width(items, count));
+}
+
+static const char *const ctx_items[7] = {
+    "New Folder on Desktop",
+    "New Text Note",
+    "Open Home in Finder",
+    "Open Terminal Here",
+    "Open Calculator",
+    "Toggle Dark / Light Mode",
+    "Lock Screen"
+};
+
+static void ctx_menu_rect(int *x, int *y, int *w, int *h)
+{
+    *w = menu_panel_width((const char **)ctx_items, 7);
+    *h = 7 * MENU_ROW_H + 12;
+    *x = ctx_menu_x;
+    *y = ctx_menu_y;
+    if (*x + *w > (int)comp_width - 8) *x = (int)comp_width - *w - 8;
+    if (*y + *h > (int)comp_height - 8) *y = (int)comp_height - *h - 8;
 }
 
 static void draw_context_menu(void)
 {
     if (!ctx_menu_open) return;
-
-    static const char *items[7] = {
-        "New Folder on Desktop",
-        "New Text Note",
-        "Open Home in Finder",
-        "Open Terminal Here",
-        "Open Calculator",
-        "Toggle Dark / Light Mode",
-        "Lock Screen"
-    };
-    int count = 7;
-    int w = 216;
-    int h = count * 22 + 12;
-    int x = ctx_menu_x;
-    int y = ctx_menu_y;
-    if (x + w > (int)comp_width - 8) x = (int)comp_width - w - 8;
-    if (y + h > (int)comp_height - 8) y = (int)comp_height - h - 8;
-
-    draw_shadow(x, y, w, h, 10);
-    draw_rounded_rect_blend(x, y, w, h, 10, theme->dock_tint, 230);
-
-    for (int i = 0; i < count; i++) {
-        int iy = y + 6 + i * 22;
-        if (cursor_x >= x + 4 && cursor_x <= x + w - 4 &&
-            cursor_y >= iy && cursor_y < iy + 20) {
-            draw_rounded_rect_blend(x + 4, iy, w - 8, 20, 6, theme->accent, 180);
-            fb_draw_string(x + 12, iy + 3, items[i], COLOR_WHITE, theme->accent);
-        } else {
-            fb_draw_string(x + 12, iy + 3, items[i], theme->text, theme->dock_tint);
-        }
-    }
+    int x, y, w, h;
+    ctx_menu_rect(&x, &y, &w, &h);
+    draw_menu_panel(x, y, (const char **)ctx_items, 7, w);
 }
 
 static bool login_screen_visible(void)
@@ -2079,87 +2206,112 @@ static bool login_screen_visible(void)
     return (!users_is_authenticated()) || login_create_mode || (users_count() == 0);
 }
 
+/* Text field: frosted fill, focus ring, value or placeholder, caret. */
+static void draw_text_field(int x, int y, int w, int h, const char *value, const char *placeholder,
+                            bool focused, TextStyle st)
+{
+    draw_rounded_rect_blend(x, y, w, h, 7, settings_get()->dark_mode ? RGB(20, 26, 38) : COLOR_WHITE,
+                            focused ? 235 : 190);
+    if (focused) {
+        gfx_round_rect_stroke(surface(), x - 1, y - 1, w + 2, h + 2, 8, theme->accent, 255);
+        gfx_round_rect_stroke(surface(), x - 2, y - 2, w + 4, h + 4, 9, theme->accent, 90);
+    } else {
+        gfx_round_rect_stroke(surface(), x, y, w, h, 7, COLOR_BLACK, 26);
+    }
+    int ty = text_y_center(y, h, st);
+    int tw = 0;
+    if (value && value[0]) tw = text_draw_fit(surface(), x + 10, ty, value, st, theme->text, w - 24);
+    else if (placeholder && !focused) text_draw_fit(surface(), x + 10, ty, placeholder, st, theme->text_muted, w - 20);
+    if (focused) draw_rounded_rect_blend(x + 10 + tw + 1, y + (h - 16) / 2, 2, 16, 1, theme->accent, 255);
+}
+
+/* Filled push button with centred label. */
+static void draw_push_button(int x, int y, int w, int h, const char *label, bool primary)
+{
+    if (primary) {
+        gfx_round_rect_vgradient(surface(), x, y, w, h, 8, blend(theme->accent, COLOR_WHITE, 40), theme->accent, 255);
+    } else {
+        draw_rounded_rect_blend(x, y, w, h, 8, settings_get()->dark_mode ? COLOR_WHITE : theme->midnight,
+                                settings_get()->dark_mode ? 40 : 22);
+    }
+    TextStyle st = primary ? TEXT_BODY_BOLD : TEXT_BODY_MEDIUM;
+    int tw = text_width(label, st);
+    ui_text_mid(x + (w - tw) / 2, y, h, label, st, primary ? COLOR_WHITE : theme->text);
+}
+
 static void draw_login_screen(void)
 {
-    /* Dim/tint the Tahoe wallpaper beneath the lock/setup card */
-    draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0,
-                            theme->midnight, 115);
+    /* Frosted, slightly darkened wallpaper behind the lock / setup card */
+    if (wp_cache_valid && !settings_get()->reduced_transparency)
+        gfx_round_rect_image(surface(), 0, 0, (int)comp_width, (int)comp_height, 0, wp_blur, 255);
+    draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0, theme->midnight, 70);
 
-    /* Top clock display (macOS Tahoe Lock Screen style) */
-    RtcTime now;
-    rtc_read_time(&now);
-    char clock_str[16];
-    char num[8];
-    clock_str[0] = '\0';
-    if (now.hour < 10) str_append(clock_str, sizeof(clock_str), "0");
-    utoa(now.hour, num, 10);
-    str_append(clock_str, sizeof(clock_str), num);
-    str_append(clock_str, sizeof(clock_str), ":");
-    if (now.minute < 10) str_append(clock_str, sizeof(clock_str), "0");
-    utoa(now.minute, num, 10);
-    str_append(clock_str, sizeof(clock_str), num);
-    fb_draw_string(((int)comp_width - (int)strlen(clock_str) * FONT_WIDTH) / 2, 42,
-                   clock_str, COLOR_WHITE, theme->midnight);
-
-    /* ojjyOS wave banner under the clock */
+    /* Date + large clock (Tahoe lock screen) */
     {
-        static const char *login_waves[] = {
-            "    ~  ~  ojjyOS  ~  ~    ",
-            "  ~~~  ~  ~  ~  ~  ~  ~~~  ",
-        };
-        int max_w = 0;
-        for (int i = 0; i < 2; i++) {
-            int lw = (int)strlen(login_waves[i]) * FONT_WIDTH;
-            if (lw > max_w) max_w = lw;
-        }
-        int wx = ((int)comp_width - max_w) / 2;
-        fb_draw_string(wx, 66, login_waves[0], COLOR_SKY_BLUE, theme->midnight);
-        fb_draw_string(wx, 82, login_waves[1], COLOR_OCEAN, theme->midnight);
+        static const char *const days[7] = { "Sunday", "Monday", "Tuesday", "Wednesday",
+                                             "Thursday", "Friday", "Saturday" };
+        static const char *const months[12] = { "January", "February", "March", "April", "May", "June",
+                                                "July", "August", "September", "October", "November", "December" };
+        RtcTime now;
+        rtc_read_time(&now);
+        char date[48], num[8];
+        date[0] = '\0';
+        str_append(date, sizeof(date), days[(weekday_of_date(now.year, now.month, now.day) % 7 + 7) % 7]);
+        str_append(date, sizeof(date), ", ");
+        str_append(date, sizeof(date), months[(now.month >= 1 && now.month <= 12) ? now.month - 1 : 0]);
+        str_append(date, sizeof(date), " ");
+        utoa(now.day, num, 10); str_append(date, sizeof(date), num);
+        int dw = text_width(date, TEXT_TITLE);
+        ui_text(((int)comp_width - dw) / 2, 46, date, TEXT_TITLE, COLOR_WHITE);
+
+        char clock_str[16];
+        int hour = now.hour;
+        if (!settings_get()->time_24h) { hour %= 12; if (hour == 0) hour = 12; }
+        clock_str[0] = '\0';
+        if (settings_get()->time_24h && hour < 10) str_append(clock_str, sizeof(clock_str), "0");
+        utoa(hour, num, 10); str_append(clock_str, sizeof(clock_str), num);
+        str_append(clock_str, sizeof(clock_str), ":");
+        if (now.minute < 10) str_append(clock_str, sizeof(clock_str), "0");
+        utoa(now.minute, num, 10); str_append(clock_str, sizeof(clock_str), num);
+        int cw = text_width(clock_str, TEXT_DISPLAY);
+        text_draw_n(surface(), ((int)comp_width - cw) / 2, 66 + 2, clock_str, -1, TEXT_DISPLAY, COLOR_BLACK, 50);
+        ui_text(((int)comp_width - cw) / 2, 66, clock_str, TEXT_DISPLAY, COLOR_WHITE);
     }
 
-    const char *brand = "ojjyOS Tahoe  •  Created by Jonas Lee";
-    fb_draw_string(((int)comp_width - (int)strlen(brand) * FONT_WIDTH) / 2,
-                   (int)comp_height - 28, brand, COLOR_TEXT_LIGHT, theme->midnight);
+    {
+        const char *brand = "ojjyOS Tahoe  \xE2\x80\xA2  Created by Jonas Lee";
+        int bw = text_width(brand, TEXT_SMALL_BOLD);
+        ui_text(((int)comp_width - bw) / 2, (int)comp_height - 30, brand, TEXT_SMALL_BOLD, COLOR_WHITE);
+    }
 
     bool create_mode = login_create_mode || (users_count() == 0);
 
     if (create_mode) {
+        /* Geometry (fields, buttons) matches the click handler. */
         int cw = 440;
         int ch = 340;
         int cx = ((int)comp_width - cw) / 2;
         int cy = ((int)comp_height - ch) / 2;
 
-        draw_shadow(cx, cy, cw, ch, 18);
-        draw_rounded_rect_blend(cx, cy, cw, ch, 18, theme->dock_tint, 230);
+        draw_shadow(cx, cy, cw, ch, 22);
+        ui_glass(cx, cy, cw, ch, 22, 215);
 
         const char *title = (users_count() == 0)
-            ? "Welcome to ojjyOS — Create Your Account"
-            : "Create a New ojjyOS Account";
-        fb_draw_string(cx + (cw - (int)strlen(title) * FONT_WIDTH) / 2, cy + 20,
-                       title, theme->text, theme->dock_tint);
+            ? "Welcome to ojjyOS"
+            : "Create a New Account";
+        int tw = text_width(title, TEXT_HEADLINE);
+        ui_text(cx + (cw - tw) / 2, cy + 16, title, TEXT_HEADLINE, theme->text);
+        const char *sub = (users_count() == 0) ? "Create your account to get started."
+                                               : "Passwords are salted and SHA-256 hashed on disk.";
+        int sw = text_width(sub, TEXT_SMALL);
+        ui_text(cx + (cw - sw) / 2, cy + 44, sub, TEXT_SMALL, theme->text_muted);
 
-        const char *sub = "Credentials are salted & SHA-256 hashed on disk";
-        fb_draw_string(cx + (cw - (int)strlen(sub) * FONT_WIDTH) / 2, cy + 40,
-                       sub, theme->text_muted, theme->dock_tint);
-
-        const char *labels[4] = {
-            "Full Name:",
-            "Username:",
-            "Password:",
-            "Confirm:"
-        };
+        const char *labels[4] = { "Full Name", "Username", "Password", "Confirm" };
+        const char *hints[4] = { "Jonas Lee", "jonas", "Required", "Repeat password" };
         for (int f = 0; f < 4; f++) {
             int fy = cy + 74 + f * 40;
-            fb_draw_string(cx + 28, fy + 6, labels[f], theme->text, theme->dock_tint);
-
-            int bx = cx + 132;
-            int bw = cw - 160;
-            bool focused = (login_active_field == f);
-            draw_rounded_rect_blend(bx, fy, bw, 26, 8,
-                                    focused ? theme->accent_soft : theme->glass_aqua, 190);
-            if (focused) {
-                fb_draw_rect(bx, fy, bw, 26, theme->accent);
-            }
+            int lw = text_width(labels[f], TEXT_BODY_MEDIUM);
+            ui_text_mid(cx + 120 - lw, fy, 26, labels[f], TEXT_BODY_MEDIUM, theme->text);
 
             char val[40];
             if (f == 0) {
@@ -2173,34 +2325,21 @@ static void draw_login_screen(void)
             } else {
                 mask_password_str(login_confirm, val, sizeof(val));
             }
-
-            if (focused && strlen(val) + 1 < sizeof(val)) {
-                str_append(val, sizeof(val), "|");
-            }
-            fb_draw_string(bx + 8, fy + 6, val, theme->text, theme->glass_aqua);
+            draw_text_field(cx + 132, fy, cw - 160, 26, val, hints[f], login_active_field == f, TEXT_BODY);
         }
 
-        if (login_status[0]) {
-            fb_draw_string(cx + 28, cy + 240, login_status,
-                           login_status_ok ? theme->accent : RGB(225, 76, 70), theme->dock_tint);
-        } else {
-            fb_draw_string(cx + 28, cy + 240, "Press Tab to switch fields, Enter to create",
-                           theme->text_muted, theme->dock_tint);
-        }
+        const char *status = login_status[0] ? login_status : "Tab moves between fields \xE2\x80\xA2 Return creates the account";
+        Color sc = login_status[0] ? (login_status_ok ? theme->accent : RGB(225, 76, 70)) : theme->text_muted;
+        int stw = text_width(status, TEXT_SMALL);
+        ui_text(cx + (cw - stw) / 2, cy + 244, status, TEXT_SMALL, sc);
 
         int btn_y = cy + ch - 46;
         int btn_w = (users_count() > 0) ? 230 : (cw - 56);
-        draw_rounded_rect_blend(cx + 28, btn_y, btn_w, 30, 10, theme->accent, 230);
-        const char *btxt = "Create Account & Sign In";
-        fb_draw_string(cx + 28 + (btn_w - (int)strlen(btxt) * FONT_WIDTH) / 2,
-                       btn_y + 8, btxt, COLOR_WHITE, theme->accent);
-
+        draw_push_button(cx + 28, btn_y, btn_w, 30, "Create Account", true);
         if (users_count() > 0) {
             int cancel_x = cx + 28 + btn_w + 12;
             int cancel_w = cw - 56 - btn_w - 12;
-            draw_rounded_rect_blend(cancel_x, btn_y, cancel_w, 30, 10, theme->accent_soft, 180);
-            fb_draw_string(cancel_x + (cancel_w - 6 * FONT_WIDTH) / 2,
-                           btn_y + 8, "Cancel", theme->text, theme->accent_soft);
+            draw_push_button(cancel_x, btn_y, cancel_w, 30, "Cancel", false);
         }
     } else {
         int cw = 360;
@@ -2208,8 +2347,8 @@ static void draw_login_screen(void)
         int cx = ((int)comp_width - cw) / 2;
         int cy = ((int)comp_height - ch) / 2;
 
-        draw_shadow(cx, cy, cw, ch, 18);
-        draw_rounded_rect_blend(cx, cy, cw, ch, 18, theme->dock_tint, 230);
+        draw_shadow(cx, cy, cw, ch, 22);
+        ui_glass(cx, cy, cw, ch, 22, 215);
 
         if (login_selected_user < 0 || login_selected_user >= users_count()) {
             login_selected_user = 0;
@@ -2218,62 +2357,49 @@ static void draw_login_screen(void)
         const char *fname = acc ? acc->full_name : "User";
         const char *uname = acc ? acc->username : "user";
 
-        /* Avatar circle/rounded square */
-        int av_x = cx + (cw - 56) / 2;
-        int av_y = cy + 20;
-        draw_rounded_rect_blend(av_x, av_y, 56, 56, 18, theme->accent, 235);
+        /* Round avatar with the first initial */
+        int av = 60;
+        int av_x = cx + (cw - av) / 2;
+        int av_y = cy + 16;
+        gfx_shadow(surface(), av_x, av_y, av, av, av / 2, 10, 3, theme->shadow, 70);
+        gfx_round_rect_vgradient(surface(), av_x, av_y, av, av, av / 2,
+                                 blend(theme->accent, COLOR_WHITE, 80), theme->accent, 255);
         char init[2] = { 'U', '\0' };
         if (fname[0]) init[0] = (fname[0] >= 'a' && fname[0] <= 'z') ? (char)(fname[0] - 32) : fname[0];
-        fb_draw_string(av_x + 24, av_y + 20, init, COLOR_WHITE, theme->accent);
+        int iw = text_width(init, TEXT_LARGE);
+        ui_text_mid(av_x + (av - iw) / 2, av_y, av, init, TEXT_LARGE, COLOR_WHITE);
 
-        fb_draw_string(cx + (cw - (int)strlen(fname) * FONT_WIDTH) / 2, cy + 86,
-                       fname, theme->text, theme->dock_tint);
-
+        int nw = text_width(fname, TEXT_TITLE);
+        ui_text(cx + (cw - nw) / 2, cy + 84, fname, TEXT_TITLE, theme->text);
         char handle[48];
         handle[0] = '@';
         handle[1] = '\0';
         str_append(handle, sizeof(handle), uname);
-        if (acc && acc->is_admin) str_append(handle, sizeof(handle), " • Admin");
-        fb_draw_string(cx + (cw - (int)strlen(handle) * FONT_WIDTH) / 2, cy + 104,
-                       handle, theme->text_muted, theme->dock_tint);
+        if (acc && acc->is_admin) str_append(handle, sizeof(handle), "  \xE2\x80\xA2  Admin");
+        int hw = text_width(handle, TEXT_SMALL);
+        ui_text(cx + (cw - hw) / 2, cy + 106, handle, TEXT_SMALL, theme->text_muted);
 
-        /* Password box */
+        /* Password box (same rect as the click handler) */
         int pw_x = cx + 36;
         int pw_y = cy + 132;
         int pw_w = cw - 72;
-        draw_rounded_rect_blend(pw_x, pw_y, pw_w, 28, 8, theme->glass_aqua, 200);
-        fb_draw_rect(pw_x, pw_y, pw_w, 28, theme->accent);
-
         char masked[40];
         mask_password_str(login_password, masked, sizeof(masked));
-        if (masked[0]) {
-            str_append(masked, sizeof(masked), "|");
-            fb_draw_string(pw_x + 10, pw_y + 7, masked, theme->text, theme->glass_aqua);
-        } else {
-            fb_draw_string(pw_x + 10, pw_y + 7, "Enter Password...", theme->text_muted, theme->glass_aqua);
-        }
+        draw_text_field(pw_x, pw_y, pw_w, 28, masked, "Enter Password", true, TEXT_BODY);
+        if (!masked[0]) ui_text_mid(pw_x + 14, pw_y, 28, "Enter Password", TEXT_BODY, theme->text_muted);
 
         if (login_status[0]) {
-            fb_draw_string(cx + (cw - (int)strlen(login_status) * FONT_WIDTH) / 2, cy + 168,
-                           login_status, login_status_ok ? theme->accent : RGB(225, 76, 70), theme->dock_tint);
+            int lw = text_width(login_status, TEXT_SMALL);
+            ui_text(cx + (cw - lw) / 2, cy + 168, login_status, TEXT_SMALL,
+                    login_status_ok ? theme->accent : RGB(225, 76, 70));
         }
 
-        /* Sign In button */
-        int sign_y = cy + 190;
-        draw_rounded_rect_blend(pw_x, sign_y, pw_w, 28, 8, theme->accent, 230);
-        fb_draw_string(pw_x + (pw_w - 7 * FONT_WIDTH) / 2, sign_y + 7,
-                       "Sign In", COLOR_WHITE, theme->accent);
+        draw_push_button(pw_x, cy + 190, pw_w, 28, "Sign In", true);
 
-        /* Bottom row: Switch User | + New Account */
         int bot_y = cy + ch - 42;
         int half_w = (pw_w - 10) / 2;
-        draw_rounded_rect_blend(pw_x, bot_y, half_w, 24, 8, theme->accent_soft, 175);
-        fb_draw_string(pw_x + (half_w - 11 * FONT_WIDTH) / 2, bot_y + 5,
-                       "Switch User", theme->text, theme->accent_soft);
-
-        draw_rounded_rect_blend(pw_x + half_w + 10, bot_y, half_w, 24, 8, theme->accent_soft, 175);
-        fb_draw_string(pw_x + half_w + 10 + (half_w - 13 * FONT_WIDTH) / 2, bot_y + 5,
-                       "+ New Account", theme->text, theme->accent_soft);
+        draw_push_button(pw_x, bot_y, half_w, 24, "Switch User", false);
+        draw_push_button(pw_x + half_w + 10, bot_y, half_w, 24, "New Account", false);
     }
 }
 
@@ -2325,63 +2451,107 @@ static void draw_image_scaled(const uint8_t *pixels, int src_w, int src_h, int x
     }
 }
 
+/* Dock layout (macOS-style magnification): icons near the pointer grow
+ * and push their neighbours apart, so nothing overlaps; the glass plate
+ * widens with them. Shared by drawing and clicks. */
+typedef struct {
+    int count, hover;
+    int x[APP_REGISTRY_MAX], size[APP_REGISTRY_MAX];
+    int base, bottom;           /* icon baseline (bottom edge) */
+    int bg_x, bg_y, bg_w, bg_h;
+} DockLayout;
+
+#define DOCK_GAP     10
+#define DOCK_PAD     12
+
+static void dock_layout(DockLayout *L)
+{
+    SettingsState *settings = settings_get();
+    int count = MIN(app_registry_count(), APP_REGISTRY_MAX);
+    int base = MAX(40, MIN(64, (int)settings->dock_size));
+    int max = MAX(base, MIN(96, (int)settings->dock_magnify));
+    L->count = count;
+    L->base = base;
+    L->hover = -1;
+    L->bg_h = base + 2 * DOCK_PAD;
+    L->bg_y = (int)comp_height - L->bg_h - 10;
+    L->bottom = L->bg_y + L->bg_h - DOCK_PAD;
+
+    /* Resting positions decide which icons the pointer is near. */
+    int rest_w = count * base + (count - 1) * DOCK_GAP;
+    int rest_x = ((int)comp_width - rest_w) / 2;
+    bool near = cursor_y >= L->bg_y - (max - base) - 12 && cursor_y <= (int)comp_height &&
+                cursor_x >= rest_x - base && cursor_x <= rest_x + rest_w + base;
+    int total = 0;
+    for (int i = 0; i < count; i++) {
+        int size = base;
+        if (near && max > base) {
+            int c = rest_x + i * (base + DOCK_GAP) + base / 2;
+            int d = ABS(cursor_x - c);
+            int reach = base * 5 / 2;
+            if (d < reach) {
+                int t = 1000 - d * 1000 / reach;              /* 1 at the pointer -> 0 */
+                t = t * t / 1000;
+                size = base + (max - base) * t / 1000;
+            }
+        }
+        L->size[i] = size;
+        total += size;
+    }
+    total += (count - 1) * DOCK_GAP;
+    /* Keep the hovered region under the pointer: centre on the resting
+     * middle, so growth spreads to both sides. */
+    int x = ((int)comp_width - total) / 2;
+    for (int i = 0; i < count; i++) {
+        L->x[i] = x;
+        if (cursor_x >= x && cursor_x < x + L->size[i] + DOCK_GAP &&
+            cursor_y >= L->bottom - L->size[i] && cursor_y <= L->bg_y + L->bg_h) L->hover = i;
+        x += L->size[i] + DOCK_GAP;
+    }
+    L->bg_w = MAX(240, total + 2 * DOCK_PAD);
+    L->bg_x = ((int)comp_width - L->bg_w) / 2;
+}
+
 static void draw_dock(uint64_t now_ms)
 {
-    int count = app_registry_count();
-    if (count == 0) return;
+    DockLayout L;
+    dock_layout(&L);
+    if (!L.count) return;
 
-    SettingsState *settings = settings_get();
-    int icon_base = settings->dock_size;
-    int icon_max = settings->dock_magnify;
+    draw_shadow(L.bg_x, L.bg_y, L.bg_w, L.bg_h, 22);
+    ui_glass(L.bg_x, L.bg_y, L.bg_w, L.bg_h, 22, 120);
 
-    int spacing = 12;
-    int total_width = count * icon_base + (count - 1) * spacing + 40;
-    if (total_width < 240) total_width = 240;
-
-    int dock_w = total_width;
-    int dock_h = DOCK_HEIGHT;
-    int dock_x = ((int)comp_width - dock_w) / 2;
-    int dock_y = (int)comp_height - dock_h - 20;
-    int r = 20;
-
-    draw_rounded_rect_blend(dock_x, dock_y, dock_w, dock_h, r, theme->dock_tint, 120);
-
-    int base_x = dock_x + 20;
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < L.count; i++) {
         AppInfo *app = app_registry_get(i);
-        int icon_center_x = base_x + i * (icon_base + spacing) + icon_base / 2;
-        int icon_center_y = dock_y + 36;
-        int dx = cursor_x - icon_center_x;
-        int dy = cursor_y - icon_center_y;
-        int dist_sq = dx * dx + dy * dy;
-        int radius_sq = DOCK_HOVER_RADIUS * DOCK_HOVER_RADIUS;
-
-        int size = icon_base;
-        if (dist_sq < radius_sq) {
-            int t = radius_sq - dist_sq;
-            int scale = (t * 256) / radius_sq;
-            size = icon_base + (((icon_max - icon_base) * scale) / 256);
-        }
-
+        if (!app) continue;
+        int size = L.size[i];
         int bounce = 0;
         if (app->bounce_until > now_ms) {
-            int phase = (int)(((app->bounce_until - now_ms) / 80) % 5);
-            int bounce_steps[] = { 0, -6, -10, -6, 0 };
-            bounce = bounce_steps[phase];
+            /* Launch bounce: two decaying hops (ease in/out per hop). */
+            int left = (int)(app->bounce_until - now_ms);       /* ms remaining of 800 */
+            int t = 800 - MIN(800, left);
+            int hop = t % 400, amp = t < 400 ? 18 : 9;
+            int u = hop * 1000 / 400;                            /* 0..1000 */
+            bounce = -(amp * 4 * u * (1000 - u) / 1000) / 1000;
         }
+        int icon_y = L.bottom - size + bounce;
+        draw_app_icon(app, L.x[i], icon_y, size);
+        if (app->running)
+            draw_rounded_rect_blend(L.x[i] + size / 2 - 2, L.bg_y + L.bg_h - 6, 4, 4, 2,
+                                    settings_get()->dark_mode ? COLOR_WHITE : theme->midnight, 200);
+    }
 
-        int icon_x = icon_center_x - size / 2;
-        int lift = (size - icon_base) / 3;
-        int icon_y = icon_center_y - size / 2 + bounce - lift;
-
-        if (app->icon.valid) {
-            draw_app_icon(app, icon_x, icon_y, size);
-        } else {
-            fb_fill_rect(icon_x, icon_y, size, size, theme->accent);
-        }
-
-    if (app->running) {
-            fb_fill_rect(icon_center_x - 4, dock_y + dock_h - 8, 8, 3, theme->accent);
+    /* Name tooltip above the hovered icon */
+    if (L.hover >= 0 && overlay == OVERLAY_NONE && !dragging) {
+        AppInfo *app = app_registry_get(L.hover);
+        if (app) {
+            int tw = text_width(app->name, TEXT_BODY_MEDIUM) + 22;
+            int tx = L.x[L.hover] + L.size[L.hover] / 2 - tw / 2;
+            int ty = L.bottom - L.size[L.hover] - 34;
+            tx = MAX(6, MIN((int)comp_width - tw - 6, tx));
+            draw_shadow(tx, ty, tw, 24, 8);
+            ui_glass(tx, ty, tw, 24, 8, 215);
+            ui_text_mid(tx + 11, ty, 24, app->name, TEXT_BODY_MEDIUM, theme->text);
         }
     }
 }
@@ -2557,8 +2727,8 @@ static void draw_desktop_icons(void)
         desktop_icon_rect(i, &x, &y);
 
         if (i == desktop_selected) {
-            draw_rounded_rect_blend(x - 6, y - 6, DESKTOP_ICON_SIZE + 32,
-                                    DESKTOP_ICON_SIZE + 34, 8, theme->accent, 60);
+            draw_rounded_rect_blend(x - 6, y - 6, DESKTOP_ICON_SIZE + 12, DESKTOP_ICON_SIZE + 12, 10,
+                                    COLOR_BLACK, 50);
         }
 
         if (icon->is_disk) {
@@ -2590,42 +2760,77 @@ static void draw_desktop_icons(void)
             }
         }
 
-        fb_draw_string(x, y + DESKTOP_ICON_SIZE + 6, icon->name,
-                       theme->text, blend(theme->midnight, theme->accent, 30));
+        /* Label: centred under the icon, white with a soft shadow (it sits
+         * on the wallpaper); selected = accent pill. */
+        {
+            int max_w = DESKTOP_CELL_W + 8;
+            int tw = MIN(text_width(icon->name, TEXT_SMALL_BOLD), max_w);
+            int lx = x + DESKTOP_ICON_SIZE / 2 - tw / 2, ly = y + DESKTOP_ICON_SIZE + 6;
+            if (i == desktop_selected)
+                draw_rounded_rect_blend(lx - 6, ly - 1, tw + 12, 17, 5, theme->accent, 235);
+            else
+                text_draw_n(surface(), lx, ly + 1, icon->name, -1, TEXT_SMALL_BOLD, COLOR_BLACK, 110);
+            text_draw_fit(surface(), lx, ly, icon->name, TEXT_SMALL_BOLD, COLOR_WHITE, max_w);
+        }
     }
+}
+
+/* Magnifying glass: AA ring + handle. */
+static void draw_search_glyph(int x, int y, int size, Color c, uint8_t a)
+{
+    int r = size * 5 / 14;
+    gfx_arc_up(surface(), x + r + 1, y + r + 1, r - 2, r, 180, c, a);
+    for (int k = 0; k < size / 3; k++)
+        draw_rounded_rect_blend(x + r * 2 - 2 + k, y + r * 2 - 2 + k, 3, 3, 1, c, a);
 }
 
 static void draw_spotlight(int anim)
 {
     int x = ((int)comp_width - SPOTLIGHT_WIDTH) / 2;
     int y = 120 - overlay_offset(anim, 24);
-    int r = 16;
+    int r = 18;
+    uint8_t fade = overlay_alpha(255, anim);
+    GfxSurface *gs = surface();
 
-    uint8_t panel_alpha = overlay_alpha(80, anim);
-    draw_shadow(x, y, SPOTLIGHT_WIDTH, SPOTLIGHT_HEIGHT, r);
-    draw_rounded_rect_blend(x, y, SPOTLIGHT_WIDTH, SPOTLIGHT_HEIGHT, r, theme->glass_aqua, panel_alpha);
-    fb_draw_string(x + 18, y + 20, spotlight_query[0] ? spotlight_query : "Search", theme->text,
-                   blend(theme->glass_aqua, theme->dock_tint, 60));
+    gfx_shadow(gs, x, y, SPOTLIGHT_WIDTH, SPOTLIGHT_HEIGHT, r, 28, 12, theme->shadow, (uint8_t)(95 * fade / 255));
+    ui_glass_fade(x, y, SPOTLIGHT_WIDTH, SPOTLIGHT_HEIGHT, r, 205, fade);
+    draw_search_glyph(x + 20, y + (SPOTLIGHT_HEIGHT - 20) / 2, 20, theme->text_muted, fade);
+    int qy = text_y_center(y, SPOTLIGHT_HEIGHT, TEXT_HEADLINE);
+    if (spotlight_query[0]) {
+        int qw = text_draw_n(gs, x + 52, qy, spotlight_query, -1, TEXT_HEADLINE, theme->text, fade);
+        draw_rounded_rect_blend(x + 53 + qw, y + (SPOTLIGHT_HEIGHT - 24) / 2, 2, 24, 1, theme->accent, fade);
+    } else {
+        draw_rounded_rect_blend(x + 52, y + (SPOTLIGHT_HEIGHT - 24) / 2, 2, 24, 1, theme->accent, fade);
+        text_draw_n(gs, x + 58, qy, "Spotlight Search", -1, TEXT_HEADLINE, theme->text_muted, (uint8_t)(170 * fade / 255));
+    }
 
     int list_y = y + SPOTLIGHT_HEIGHT + 8;
-    /* No stray empty panel when there are no results */
+    /* Rows are 28 px (the click handler uses the same geometry) */
     int list_h = spotlight_count > 0 ? spotlight_count * 28 + 12 : 0;
     if (list_h > 0) {
-        draw_rounded_rect_blend(x, list_y, SPOTLIGHT_WIDTH, list_h, 14, theme->dock_tint, panel_alpha + 20);
+        gfx_shadow(gs, x, list_y, SPOTLIGHT_WIDTH, list_h, 14, 24, 10, theme->shadow, (uint8_t)(80 * fade / 255));
+        ui_glass_fade(x, list_y, SPOTLIGHT_WIDTH, list_h, 14, 215, fade);
         for (int i = 0; i < spotlight_count; i++) {
-            int row_y = list_y + 8 + i * 28;
-            if (i == spotlight_selected) {
-                draw_rounded_rect_blend(x + 6, row_y - 2, SPOTLIGHT_WIDTH - 12, 24, 10,
-                                        theme->accent, panel_alpha);
+            int row_y = list_y + 6 + i * 28;
+            bool sel = i == spotlight_selected;
+            if (sel) draw_rounded_rect_blend(x + 6, row_y, SPOTLIGHT_WIDTH - 12, 28, 8, theme->accent, fade);
+            const SearchResult *res = &spotlight_results[i];
+            if (res->type == SEARCH_RESULT_APP && res->app_index >= 0) {
+                AppInfo *app = app_registry_get(res->app_index);
+                if (app) draw_app_icon(app, x + 14, row_y + 3, 22);
+            } else {
+                draw_icon_id(ICON_FILE, x + 14, row_y + 3, 22, fade);
             }
-            fb_draw_string(x + 18, row_y + 6, spotlight_results[i].title,
-                           theme->text, theme->dock_tint);
-            fb_draw_string(x + 240, row_y + 6, spotlight_results[i].subtitle,
-                           theme->text_muted, theme->dock_tint);
+            Color fg = sel ? COLOR_WHITE : theme->text;
+            text_draw_n(gs, x + 46, text_y_center(row_y, 28, TEXT_BODY_MEDIUM), res->title, -1, TEXT_BODY_MEDIUM, fg, fade);
+            int sw = MIN(text_width(res->subtitle, TEXT_SMALL), 230);
+            int sx = x + SPOTLIGHT_WIDTH - 18 - sw;
+            text_draw_fit(gs, sx, text_y_center(row_y, 28, TEXT_SMALL), res->subtitle, TEXT_SMALL,
+                          sel ? RGB(225, 238, 255) : theme->text_muted, 230);
         }
     } else if (spotlight_query[0]) {
-        draw_rounded_rect_blend(x, list_y, SPOTLIGHT_WIDTH, 36, 14, theme->dock_tint, panel_alpha + 20);
-        fb_draw_string(x + 18, list_y + 10, "No results", theme->text_muted, theme->dock_tint);
+        ui_glass_fade(x, list_y, SPOTLIGHT_WIDTH, 40, 14, 215, fade);
+        text_draw_n(gs, x + 20, text_y_center(list_y, 40, TEXT_BODY), "No results", -1, TEXT_BODY, theme->text_muted, fade);
     }
 }
 
@@ -2660,8 +2865,12 @@ static void draw_launchpad(int anim)
             } else {
                 fb_fill_rect(ix, iy, LAUNCHPAD_ICON_SIZE, LAUNCHPAD_ICON_SIZE, theme->accent);
             }
-            fb_draw_string(ix - 4, iy + LAUNCHPAD_ICON_SIZE + 10, app->name,
-                           theme->text, theme->dock_tint);
+            {
+                int lw = MIN(text_width(app->name, TEXT_BODY_MEDIUM), LAUNCHPAD_ICON_SIZE + 36);
+                int lx = ix + LAUNCHPAD_ICON_SIZE / 2 - lw / 2, ly = iy + LAUNCHPAD_ICON_SIZE + 10;
+                text_draw_n(surface(), lx, ly + 1, app->name, -1, TEXT_BODY_MEDIUM, COLOR_BLACK, 90);
+                text_draw_fit(surface(), lx, ly, app->name, TEXT_BODY_MEDIUM, COLOR_WHITE, LAUNCHPAD_ICON_SIZE + 36);
+            }
             idx++;
         }
     }
@@ -2681,15 +2890,16 @@ static void draw_control_center(int anim)
 {
     int x = (int)comp_width - CONTROL_CENTER_WIDTH - 20;
     int y = MENU_BAR_HEIGHT + 10 - overlay_offset(anim, 24);
-    int r = 16;
+    int r = 20;
+    uint8_t fade = overlay_alpha(255, anim);
+    GfxSurface *gs = surface();
 
-    draw_shadow(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r);
-    draw_rounded_rect_blend(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r,
-                            theme->dock_tint, overlay_alpha(225, anim));
+    gfx_shadow(gs, x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r, 26, 10, theme->shadow, (uint8_t)(90 * fade / 255));
+    ui_glass_fade(x, y, CONTROL_CENTER_WIDTH, CONTROL_CENTER_HEIGHT, r, 200, fade);
 
     SettingsState *settings = settings_get();
     const NetInfo *ni = net_info();
-    fb_draw_string(x + 16, y + 12, "Control Center", theme->text, theme->dock_tint);
+    text_draw_n(gs, x + 16, text_y_center(y + 8, 26, TEXT_TITLE), "Control Center", -1, TEXT_TITLE, theme->text, fade);
 
     const char *titles[4] = { "Wi-Fi", "Bluetooth", "Appearance", "Transparency" };
     const char *status[4] = {
@@ -2702,16 +2912,39 @@ static void draw_control_center(int anim)
     for (int i = 0; i < 4; i++) {
         int tx, ty;
         cc_tile_rect(x, y, i, &tx, &ty);
-        draw_rounded_rect_blend(tx, ty, CC_TILE_W, CC_TILE_H, 12, COLOR_WHITE, overlay_alpha(usable[i] ? 120 : 60, anim));
-        Color disc = on[i] ? theme->accent : theme->text_muted;
-        draw_rounded_rect_blend(tx + 10, ty + 14, 28, 28, 14, disc, overlay_alpha(on[i] ? 240 : 90, anim));
-        if (i == 0) draw_wifi_glyph(tx + 16, ty + 21, COLOR_WHITE, !on[i]);
-        else if (i == 1) { fb_fill_rect(tx + 23, ty + 20, 2, 16, COLOR_WHITE); fb_fill_rect(tx + 19, ty + 24, 10, 2, COLOR_WHITE); }
-        else if (i == 2) { draw_rounded_rect_blend(tx + 17, ty + 21, 14, 14, 7, COLOR_WHITE, 255);
-                           draw_rounded_rect_blend(tx + 22, ty + 19, 12, 12, 6, disc, 255); }
-        else { draw_rounded_rect_blend(tx + 17, ty + 21, 14, 14, 4, COLOR_WHITE, on[i] ? 150 : 255); }
-        fb_draw_string(tx + 46, ty + 12, titles[i], usable[i] ? theme->text : theme->text_muted, theme->dock_tint);
-        fb_draw_string(tx + 46, ty + 30, status[i], theme->text_muted, theme->dock_tint);
+        draw_rounded_rect_blend(tx, ty, CC_TILE_W, CC_TILE_H, 14,
+                                settings->dark_mode ? COLOR_WHITE : COLOR_WHITE,
+                                (uint8_t)((settings->dark_mode ? 26 : (usable[i] ? 150 : 80)) * fade / 255));
+        /* Round toggle: accent when on, frosted grey when off */
+        int dx = tx + 10, dy = ty + (CC_TILE_H - 32) / 2;
+        Color disc = on[i] ? theme->accent : (settings->dark_mode ? RGB(70, 78, 92) : RGB(196, 204, 214));
+        draw_rounded_rect_blend(dx, dy, 32, 32, 16, disc, fade);
+        Color g = on[i] ? COLOR_WHITE : theme->text;
+        if (i == 0) {
+            draw_wifi_glyph(dx + 8, dy + 7, g, !on[i]);
+        } else if (i == 1) {   /* Bluetooth rune */
+            for (int k = 0; k < 6; k++) {
+                draw_rounded_rect_blend(dx + 15, dy + 8 + k * 3, 2, 3, 1, g, fade);
+            }
+            for (int k = 0; k < 4; k++) {
+                draw_rounded_rect_blend(dx + 16 + k, dy + 9 + k, 2, 2, 1, g, fade);
+                draw_rounded_rect_blend(dx + 19 - k, dy + 13 + k, 2, 2, 1, g, fade);
+                draw_rounded_rect_blend(dx + 16 + k, dy + 23 - k, 2, 2, 1, g, fade);
+                draw_rounded_rect_blend(dx + 19 - k, dy + 19 - k, 2, 2, 1, g, fade);
+            }
+        } else if (i == 2) {   /* half-moon: appearance */
+            draw_rounded_rect_blend(dx + 8, dy + 8, 16, 16, 8, g, fade);
+            draw_rounded_rect_blend(dx + 13, dy + 6, 14, 14, 7, disc, fade);
+        } else {               /* layered squares: transparency */
+            draw_rounded_rect_blend(dx + 8, dy + 8, 12, 12, 3, g, (uint8_t)(150 * fade / 255));
+            draw_rounded_rect_blend(dx + 13, dy + 13, 12, 12, 3, g, fade);
+        }
+        int lx = tx + 50;
+        if (text_width(titles[i], TEXT_BODY_BOLD) <= CC_TILE_W - 58)
+            text_draw_n(gs, lx, ty + 11, titles[i], -1, TEXT_BODY_BOLD, usable[i] ? theme->text : theme->text_muted, fade);
+        else
+            text_draw_n(gs, lx, ty + 12, titles[i], -1, TEXT_BODY_MEDIUM, usable[i] ? theme->text : theme->text_muted, fade);
+        text_draw_n(gs, lx, ty + 29, status[i], -1, TEXT_SMALL, theme->text_muted, fade);
     }
 
     /* Info line: current address, or a transient message */
@@ -2722,20 +2955,24 @@ static void draw_control_center(int anim)
     } else if (ni->configured && ni->enabled) {
         char ip[16];
         net_format_ip(ni->ip, ip, sizeof(ip));
-        str_append(info, sizeof(info), "Network address ");
+        str_append(info, sizeof(info), "Network address  ");
         str_append(info, sizeof(info), ip);
     }
-    fb_draw_string(x + 16, y + 40 + 2 * (CC_TILE_H + 10) + 2, info, theme->text_muted, theme->dock_tint);
+    text_draw_n(gs, x + 18, y + 40 + 2 * (CC_TILE_H + 10) + 3, info, -1, TEXT_SMALL, theme->text_muted, fade);
 
-    /* Real power controls: Restart and Shut Down */
+    /* Real power controls: Restart and Shut Down (rects match the click handler) */
     int btn_y = y + CONTROL_CENTER_HEIGHT - 44;
     int btn_w = (CONTROL_CENTER_WIDTH - 40) / 2;
     int btn_h = 28;
-    draw_rounded_rect_blend(x + 16, btn_y, btn_w, btn_h, 8, theme->accent_soft, overlay_alpha(180, anim));
-    fb_draw_string(x + 16 + (btn_w - 7 * 8) / 2, btn_y + 8, "Restart", theme->text, theme->accent_soft);
-
-    draw_rounded_rect_blend(x + 24 + btn_w, btn_y, btn_w, btn_h, 8, RGB(215, 76, 70), overlay_alpha(190, anim));
-    fb_draw_string(x + 24 + btn_w + (btn_w - 9 * 8) / 2, btn_y + 8, "Shut Down", COLOR_WHITE, RGB(215, 76, 70));
+    draw_rounded_rect_blend(x + 16, btn_y, btn_w, btn_h, 9, settings->dark_mode ? COLOR_WHITE : COLOR_WHITE,
+                            (uint8_t)((settings->dark_mode ? 30 : 160) * fade / 255));
+    int rw = text_width("Restart", TEXT_BODY_MEDIUM);
+    text_draw_n(gs, x + 16 + (btn_w - rw) / 2, text_y_center(btn_y, btn_h, TEXT_BODY_MEDIUM), "Restart", -1,
+                TEXT_BODY_MEDIUM, theme->text, fade);
+    gfx_round_rect_vgradient(gs, x + 24 + btn_w, btn_y, btn_w, btn_h, 9, RGB(240, 104, 96), RGB(214, 64, 58), fade);
+    int sw = text_width("Shut Down", TEXT_BODY_BOLD);
+    text_draw_n(gs, x + 24 + btn_w + (btn_w - sw) / 2, text_y_center(btn_y, btn_h, TEXT_BODY_BOLD), "Shut Down", -1,
+                TEXT_BODY_BOLD, COLOR_WHITE, fade);
 }
 
 static void mission_control_card_rect(int idx, int total, int *cx, int *cy, int *cw, int *ch)
@@ -2766,17 +3003,19 @@ static void mission_control_card_rect(int idx, int total, int *cx, int *cy, int 
 
 static void draw_mission_control(int anim)
 {
-    draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0,
-                            theme->dock_tint, overlay_alpha(160, anim));
+    if (wp_cache_valid)
+        gfx_round_rect_image(surface(), 0, 0, (int)comp_width, (int)comp_height, 0, wp_blur, overlay_alpha(255, anim));
+    draw_rounded_rect_blend(0, 0, (int)comp_width, (int)comp_height, 0, theme->midnight, overlay_alpha(70, anim));
 
     const char *header = "Mission Control";
-    fb_draw_string(((int)comp_width - (int)strlen(header) * 8) / 2, 64,
-                   header, theme->text, theme->dock_tint);
+    int hw = text_width(header, TEXT_LARGE);
+    text_draw_n(surface(), ((int)comp_width - hw) / 2, 56, header, -1, TEXT_LARGE, COLOR_WHITE, overlay_alpha(255, anim));
 
     if (window_count == 0) {
-        const char *empty = "No open windows — click anywhere or press Esc to return";
-        fb_draw_string(((int)comp_width - (int)strlen(empty) * 8) / 2, (int)comp_height / 2,
-                       empty, theme->text_muted, theme->dock_tint);
+        const char *empty = "No open windows \xE2\x80\x94 click anywhere or press Esc to return";
+        int ew = text_width(empty, TEXT_BODY);
+        text_draw_n(surface(), ((int)comp_width - ew) / 2, (int)comp_height / 2, empty, -1, TEXT_BODY,
+                    COLOR_WHITE, overlay_alpha(220, anim));
         return;
     }
 
@@ -2788,15 +3027,11 @@ static void draw_mission_control(int anim)
         CompositorWindow *win = &windows[i];
         AppWindowState *state = &app_states[i];
 
-        draw_shadow(cx, cy, cw, ch, 14);
-        Color card_bg = (i == active_window_index)
-            ? blend(theme->glass_aqua, theme->accent, 65)
-            : theme->glass_aqua;
-        draw_rounded_rect_blend(cx, cy, cw, ch, 14, card_bg, overlay_alpha(210, anim));
-
-        /* Header bar inside card */
-        draw_rounded_rect_blend(cx + 8, cy + 8, cw - 16, 24, 8,
-                                theme->accent_soft, overlay_alpha(140, anim));
+        uint8_t fade = overlay_alpha(255, anim);
+        gfx_shadow(surface(), cx, cy, cw, ch, 14, 24, 10, theme->shadow, (uint8_t)(90 * fade / 255));
+        ui_glass_fade(cx, cy, cw, ch, 14, 200, fade);
+        if (i == active_window_index)
+            gfx_round_rect_stroke(surface(), cx - 2, cy - 2, cw + 4, ch + 4, 16, theme->accent, fade);
 
         /* App icon */
         int aidx = app_registry_find_by_name(win->title);
@@ -2807,11 +3042,11 @@ static void draw_mission_control(int anim)
             fb_fill_rect(cx + 16, cy + 42, 40, 40, theme->accent);
         }
 
-        fb_draw_string(cx + 16, cy + 14, win->title, theme->text, theme->accent_soft);
+        text_draw_fit(surface(), cx + 16, cy + 14, win->title, TEXT_TITLE, theme->text, cw - 32);
 
         const char *status_label = win->minimized ? "Minimized" :
                                    (i == active_window_index ? "Active Window" : "Open Window");
-        fb_draw_string(cx + 68, cy + 52, status_label, theme->text, card_bg);
+        ui_text(cx + 68, cy + 50, status_label, TEXT_BODY_MEDIUM, theme->text);
 
         char dim_buf[32];
         char num[12];
@@ -2821,9 +3056,9 @@ static void draw_mission_control(int anim)
         str_append(dim_buf, sizeof(dim_buf), "x");
         utoa((uint32_t)win->h, num, 10);
         str_append(dim_buf, sizeof(dim_buf), num);
-        fb_draw_string(cx + 68, cy + 72, dim_buf, theme->text_muted, card_bg);
+        ui_text(cx + 68, cy + 70, dim_buf, TEXT_SMALL, theme->text_muted);
 
-        fb_draw_string(cx + 16, cy + ch - 22, "Click to focus", theme->text_muted, card_bg);
+        ui_text(cx + 16, cy + ch - 24, "Click to focus", TEXT_SMALL, theme->text_muted);
         (void)state;
     }
 }
@@ -2846,27 +3081,29 @@ static void draw_app_switcher(int anim)
     /* Show up to 8 running apps (the old 5-icon cap hid the selection
      * whenever more than 5 apps were running) */
     int shown = MIN(running_count, 8);
-    int width = 40 + shown * 64;
-    int height = 120;
+    int cell = 84, size = 64;
+    int width = 24 + shown * cell;
+    int height = 128;
     int x = ((int)comp_width - width) / 2;
-    int y = 160 - overlay_offset(anim, 18);
+    int y = ((int)comp_height - height) / 2 - 40 - overlay_offset(anim, 18);
+    uint8_t fade = overlay_alpha(255, anim);
 
-    draw_shadow(x, y, width, height, 16);
-    draw_rounded_rect_blend(x, y, width, height, 16, theme->dock_tint, overlay_alpha(140, anim));
+    gfx_shadow(surface(), x, y, width, height, 22, 30, 12, theme->shadow, (uint8_t)(100 * fade / 255));
+    ui_glass_fade(x, y, width, height, 22, 200, fade);
 
-    int base_x = x + 20;
-    int icon_y = y + 34;
+    int sel = app_switcher_index % shown;
     for (int i = 0; i < shown; i++) {
         AppInfo *app = app_registry_get(running[i]);
-        int icon_x = base_x + i * 64;
-        int size = 40;
-        if (i == app_switcher_index % shown) {
-            draw_rounded_rect_blend(icon_x - 6, icon_y - 6, size + 12, size + 12, 12, theme->accent, 70);
-        }
-        if (app->icon.valid) {
-            draw_app_icon(app, icon_x, icon_y, size);
-        } else {
-            fb_fill_rect(icon_x, icon_y, size, size, theme->accent);
+        int cx = x + 12 + i * cell;
+        int icon_x = cx + (cell - size) / 2, icon_y = y + 16;
+        if (i == sel)
+            draw_rounded_rect_blend(cx + 2, y + 8, cell - 4, height - 16, 16,
+                                    settings_get()->dark_mode ? COLOR_WHITE : theme->midnight,
+                                    (uint8_t)(34 * fade / 255));
+        draw_app_icon(app, icon_x, icon_y, size);
+        if (i == sel) {
+            int lw = MIN(text_width(app->name, TEXT_SMALL_BOLD), cell - 6);
+            text_draw_fit(surface(), cx + (cell - lw) / 2, y + height - 34, app->name, TEXT_SMALL_BOLD, theme->text, cell - 6);
         }
     }
 }
@@ -2900,7 +3137,7 @@ static void launch_app_index(int index, uint64_t now_ms)
     app->running = true;
     strncpy(active_app_name, app->name, sizeof(active_app_name) - 1);
     active_app_name[sizeof(active_app_name) - 1] = '\0';
-    app->bounce_until = now_ms + 600;
+    app->bounce_until = now_ms + 800;
 
     AppType type = app_type_from_bundle(app->bundle.manifest.bundle_id);
     if (type != APP_DEMO) {
@@ -6272,15 +6509,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
 
         if (ctx_menu_open) {
             int count = 7;
-            int w = 216;
-            int h = count * 22 + 12;
-            int mx = ctx_menu_x;
-            int my = ctx_menu_y;
-            if (mx + w > (int)comp_width - 8) mx = (int)comp_width - w - 8;
-            if (my + h > (int)comp_height - 8) my = (int)comp_height - h - 8;
+            int mx, my, w, h;
+            ctx_menu_rect(&mx, &my, &w, &h);
             ctx_menu_open = false;
-            if (x >= mx && x <= mx + w && y >= my + 6 && y < my + 6 + count * 22) {
-                int item = (y - (my + 6)) / 22;
+            if (x >= mx && x <= mx + w && y >= my + 6 && y < my + 6 + count * MENU_ROW_H) {
+                int item = (y - (my + 6)) / MENU_ROW_H;
                 if (item == 0) {
                     char fpath[160];
                     users_make_home_path(fpath, sizeof(fpath), "Desktop/New Folder");
@@ -6330,12 +6563,13 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
         }
 
         if (active_menu > 0) {
-            int mx = (active_menu == 1) ? 6 : menu_title_x(active_menu - 2) - 4;
-            int mw = 210;
-            int mcount = (active_menu == 1) ? 7 : (active_menu == 2) ? 5 : 4;
+            const char *mitems[8];
+            int mx;
+            int mcount = menu_items(active_menu, mitems, &mx);
+            int mw = menu_panel_width(mitems, mcount);
             int my = MENU_BAR_HEIGHT + 4;
-            if (x >= mx && x <= mx + mw && y >= my + 6 && y < my + 6 + mcount * 22) {
-                int item = (y - (my + 6)) / 22;
+            if (x >= mx && x <= mx + mw && y >= my + 6 && y < my + 6 + mcount * MENU_ROW_H) {
+                int item = (y - (my + 6)) / MENU_ROW_H;
                 int menu = active_menu;
                 active_menu = 0;
                 if (menu == 1) {
@@ -6432,53 +6666,33 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
         }
 
         if (y <= MENU_BAR_HEIGHT) {
-            if (x >= 4 && x < 52) {
+            MenuBarLayout L;
+            menu_bar_layout(&L);
+            if (x >= L.logo_x - 8 && x < L.logo_x + L.logo_w + 8) {
                 active_menu = (active_menu == 1) ? 0 : 1;
                 overlay_set(OVERLAY_NONE);
                 return;
             }
-            if (x >= menu_title_x(0) - 5 && x < menu_title_x(1) - 5) {
-                active_menu = (active_menu == 2) ? 0 : 2;
-                overlay_set(OVERLAY_NONE);
-                return;
-            }
-            if (x >= menu_title_x(1) - 5 && x < menu_title_x(2) - 5) {
-                active_menu = (active_menu == 3) ? 0 : 3;
-                overlay_set(OVERLAY_NONE);
-                return;
-            }
-            if (x >= menu_title_x(2) - 5 && x < menu_title_x(3) - 5) {
-                active_menu = (active_menu == 4) ? 0 : 4;
-                overlay_set(OVERLAY_NONE);
-                return;
-            }
-            if (x >= menu_title_x(3) - 5 && x < menu_title_x(4) - 5) {
-                active_menu = (active_menu == 5) ? 0 : 5;
-                overlay_set(OVERLAY_NONE);
-                return;
-            }
-            {
-                /* Wi-Fi glyph (left of the user name) opens Control Center */
-                int user_w = ((int)strlen(users_current_username()) + 1) * FONT_WIDTH;
-                int gx = (int)comp_width - 136 - user_w - 40;
-                if (net_info()->present && x >= gx - 4 && x < gx + 20) {
-                    active_menu = 0;
-                    overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
+            for (int i = 0; i < 4; i++) {
+                if (x >= L.title_x[i] - 10 && x < L.title_x[i] + L.title_w[i] + 10) {
+                    active_menu = (active_menu == i + 2) ? 0 : i + 2;
+                    overlay_set(OVERLAY_NONE);
                     return;
                 }
             }
-            if (x >= (int)comp_width - 230 && x < (int)comp_width - 140) {
+            /* Wi-Fi glyph and the Control Center glyph/clock open Control Center */
+            if ((net_info()->present && x >= L.wifi_x - 6 && x < L.wifi_x + 22) || x >= L.cc_x - 8) {
+                active_menu = 0;
+                overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
+                return;
+            }
+            if (x >= L.user_x - 8 && x < L.user_x + L.user_w + 8) {
                 active_menu = 0;
                 overlay_set(OVERLAY_NONE);
                 app_open_window(APP_SETTINGS, "Settings");
                 if (app_window_index[APP_SETTINGS] >= 0) {
                     app_states[app_window_index[APP_SETTINGS]].settings.page = SETTINGS_PAGE_USERS;
                 }
-                return;
-            }
-            if (x >= (int)comp_width - 140) {
-                active_menu = 0;
-                overlay_set(overlay == OVERLAY_CONTROL_CENTER ? OVERLAY_NONE : OVERLAY_CONTROL_CENTER);
                 return;
             }
         }
@@ -6621,28 +6835,13 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
             return;
         }
 
-        int count = app_registry_count();
-        if (count > 0) {
-            SettingsState *settings = settings_get();
-            int icon_base = settings->dock_size;
-            int spacing = 12;
-            int total_width = count * icon_base + (count - 1) * spacing + 40;
-            if (total_width < 240) total_width = 240;
-            int dock_w = total_width;
-            int dock_h = DOCK_HEIGHT;
-            int dock_x = ((int)comp_width - dock_w) / 2;
-            int dock_y = (int)comp_height - dock_h - 20;
-
-            if (x >= dock_x && x <= dock_x + dock_w && y >= dock_y && y <= dock_y + dock_h) {
-                int base_x = dock_x + 20;
-                for (int i = 0; i < count; i++) {
-                    int icon_center_x = base_x + i * (icon_base + spacing) + icon_base / 2;
-                    int icon_center_y = dock_y + 36;
-                    int half = icon_base / 2;
-                    /* Hit box matches the drawn icon (the old +/-size box
-                     * was 2x the icon and overlapped neighbors) */
-                    if (x >= icon_center_x - half && x <= icon_center_x + half &&
-                        y >= icon_center_y - half && y <= icon_center_y + half) {
+        {
+            DockLayout L;
+            dock_layout(&L);
+            if (L.count && x >= L.bg_x && x <= L.bg_x + L.bg_w && y >= L.bg_y - 40 && y <= L.bg_y + L.bg_h) {
+                for (int i = 0; i < L.count; i++) {
+                    if (x >= L.x[i] && x < L.x[i] + L.size[i] &&
+                        y >= L.bottom - L.size[i] && y <= L.bg_y + L.bg_h) {
                         launch_app_index(i, timer_get_ticks());
                         return;
                     }
@@ -7220,6 +7419,19 @@ void compositor_handle_mouse_absolute(int32_t x, int32_t y)
         cursor_y >= (int)comp_height - DOCK_HEIGHT - 20 - DOCK_HOVER_RADIUS)) mark_dirty();
     for (int i = 0; i < window_count; i++) {
         if (app_states[i].type == APP_FINDER && app_states[i].finder.drag_active) mark_dirty();
+    }
+    {
+        /* Traffic-light hover shows the window-button symbols. */
+        static int last_tl = -1;
+        int tl = -1;
+        for (int i = window_count - 1; i >= 0 && tl < 0 && !login_screen_visible(); i--) {
+            CompositorWindow *w = &windows[i];
+            if (w->minimized) continue;
+            if (cursor_x >= w->x + TL_X(0) - 4 && cursor_x < w->x + TL_X(2) + TL_SIZE + 4 &&
+                cursor_y >= w->y + TL_TOP - 4 && cursor_y < w->y + TL_TOP + TL_SIZE + 4) tl = i;
+            if (cursor_x >= w->x && cursor_x < w->x + w->w && cursor_y >= w->y && cursor_y < w->y + w->h) break;
+        }
+        if (tl != last_tl) { last_tl = tl; mark_dirty(); }
     }
     /* Browser: show the hovered link's address in its status bar. */
     if (active_window_index >= 0 && active_window_index < window_count &&

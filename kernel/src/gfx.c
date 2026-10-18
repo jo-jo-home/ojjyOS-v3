@@ -237,6 +237,32 @@ void gfx_round_rect_stroke(GfxSurface *s, int x, int y, int w, int h, int r, uin
     }
 }
 
+void gfx_arc_up(GfxSurface *s, int cx, int cy, int r_in, int r_out, int half_angle_deg,
+                uint32_t color, uint8_t alpha)
+{
+    SCALE_IN(s); cx *= k_; cy *= k_; r_in *= k_; r_out *= k_;
+    /* cos(half angle) in 1/1024 for the direction test (dy/len >= cos). */
+    static const int16_t cos_tab[19] = { 1024, 1020, 1008, 989, 962, 928, 887, 839, 785, 724,
+                                         658, 587, 512, 433, 350, 265, 178, 89, 0 };
+    int a = half_angle_deg < 0 ? 0 : half_angle_deg > 180 ? 180 : half_angle_deg;
+    int cosv = a >= 90 ? -cos_tab[(180 - a) / 5] : cos_tab[a / 5];
+    for (int py = cy - r_out - 1; py <= cy + r_out + 1; py++) {
+        if (py < s->clip_y1 || py >= s->clip_y2) continue;
+        uint32_t *row = s->pixels + py * s->pitch;
+        for (int px = cx - r_out - 1; px <= cx + r_out + 1; px++) {
+            if (px < s->clip_x1 || px >= s->clip_x2) continue;
+            int dx = px * 16 + 8 - cx * 16, dy = cy * 16 - (py * 16 + 8);      /* 1/16 px, y up */
+            int d = (int)gfx_isqrt((uint32_t)(dx * dx + dy * dy));
+            if (d == 0 || dy * 1024 < cosv * d) continue;
+            int c_out = r_out * 16 + 8 - d, c_in = d - (r_in * 16 - 8);
+            int c = c_out < c_in ? c_out : c_in;
+            if (c <= 0) continue;
+            uint32_t cov = c >= 16 ? 256 : (uint32_t)c * 16;
+            row[px] = gfx_blend(row[px], color, (alpha * cov) >> 8);
+        }
+    }
+}
+
 void gfx_draw_rgba_scaled(GfxSurface *s, const uint8_t *rgba, int src_w, int src_h,
                           int x, int y, int w, int h, uint8_t alpha)
 {

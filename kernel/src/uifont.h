@@ -39,7 +39,7 @@ typedef struct {
     const UiGlyph *glyphs;
     uint16_t count;
     const uint8_t *bits;
-    int8_t ascent, descent, line;
+    int16_t ascent, descent, line;     /* 2x display faces exceed 127 px */
 } UiFontFace;
 
 extern const UiFontFace uifont_faces[TEXT_STYLE_COUNT][2];
@@ -54,6 +54,10 @@ int text_width(const char *str, TextStyle st);
 int text_width_n(const char *str, int max_bytes, TextStyle st);
 int text_line_height(TextStyle st);
 int text_ascent(TextStyle st);
+/* Height of capital letters; text_draw at y = top + (h - cap)/2 - (ascent - cap)
+ * centres a line optically in a box (see text_y_center). */
+int text_cap_height(TextStyle st);
+int text_y_center(int top, int h, TextStyle st);
 /* Density used for drawing (1 or 2); set by the framebuffer's HiDPI mode. */
 void text_set_density(int density);
 

@@ -49,6 +49,11 @@ void gfx_round_rect_vgradient(GfxSurface *s, int x, int y, int w, int h, int r,
  * dy, darkest alpha at the edge. The shape's interior is left untouched. */
 void gfx_shadow(GfxSurface *s, int x, int y, int w, int h, int r, int spread, int dy,
                 uint32_t color, uint8_t alpha);
+/* Anti-aliased ring segment centred at (cx, cy): radii [r_in, r_out],
+ * limited to directions within `half_angle_deg` of straight up (90 = a
+ * semicircle, 180 = full ring). Used for Wi-Fi fans, spinners, gauges. */
+void gfx_arc_up(GfxSurface *s, int cx, int cy, int r_in, int r_out, int half_angle_deg,
+                uint32_t color, uint8_t alpha);
 /* Bilinear-filtered RGBA image (straight alpha, bytes R,G,B,A), scaled into
  * the destination rectangle and blended with an overall `alpha`. */
 void gfx_draw_rgba_scaled(GfxSurface *s, const uint8_t *rgba, int src_w, int src_h,

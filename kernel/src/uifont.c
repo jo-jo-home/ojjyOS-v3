@@ -130,3 +130,17 @@ int text_ascent(TextStyle st)
 {
     return face(st)->ascent / density;
 }
+
+static const uint8_t style_px[TEXT_STYLE_COUNT] = { 11, 11, 13, 13, 13, 15, 20, 28, 72 };
+
+int text_cap_height(TextStyle st)
+{
+    if ((unsigned)st >= TEXT_STYLE_COUNT) st = TEXT_BODY;
+    return (style_px[st] * 727 + 500) / 1000;      /* Inter cap height = 0.727 em */
+}
+
+int text_y_center(int top, int h, TextStyle st)
+{
+    int cap = text_cap_height(st);
+    return top + (h - cap + 1) / 2 - (text_ascent(st) - cap);
+}

@@ -45,6 +45,14 @@ void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h)) { flush_hook = 
 void fb_flush_all(void) { if (flush_hook) flush_hook(0, 0, (int)fb_width, (int)fb_height); }
 bool fb_backbuffer_active(void) { return fb_back_active; }
 
+void fb_get_surface(GfxSurface *s)
+{
+    s->pixels = fb_base;
+    s->width = (int)fb_width; s->height = (int)fb_height; s->pitch = (int)fb_pitch;
+    s->clip_x1 = MAX(0, clip_x1); s->clip_y1 = MAX(0, clip_y1);
+    s->clip_x2 = MIN((int)fb_width, clip_x2); s->clip_y2 = MIN((int)fb_height, clip_y2);
+}
+
 static int cursor_x, cursor_y;
 static uint64_t full_presents, cursor_updates;
 
@@ -377,19 +385,7 @@ void fb_draw_text_scaled(int x, int y, const char *s, int n, Color fg, int scale
  */
 Color fb_blend(Color bg, Color fg, uint8_t alpha)
 {
-    uint8_t bg_b = (bg >> 0) & 0xFF;
-    uint8_t bg_g = (bg >> 8) & 0xFF;
-    uint8_t bg_r = (bg >> 16) & 0xFF;
-
-    uint8_t fg_b = (fg >> 0) & 0xFF;
-    uint8_t fg_g = (fg >> 8) & 0xFF;
-    uint8_t fg_r = (fg >> 16) & 0xFF;
-
-    uint8_t out_r = ((fg_r * alpha) + (bg_r * (255 - alpha))) / 255;
-    uint8_t out_g = ((fg_g * alpha) + (bg_g * (255 - alpha))) / 255;
-    uint8_t out_b = ((fg_b * alpha) + (bg_b * (255 - alpha))) / 255;
-
-    return RGB(out_r, out_g, out_b);
+    return gfx_blend(bg, fg, alpha);    /* exact at 0 and 255, no divides */
 }
 
 /*

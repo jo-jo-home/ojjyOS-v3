@@ -36,6 +36,7 @@ COMMON_C_SOURCES = src/main.c \
                    src/user.c \
                    src/user_image.c \
                    src/string.c \
+                   src/gfx.c \
                    src/memory.c \
                    src/framebuffer.c \
                    src/font.c \

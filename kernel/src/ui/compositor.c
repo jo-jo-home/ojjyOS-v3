@@ -69,6 +69,7 @@ static uint8_t wallpaper_data[WALLPAPER_MAX_W * WALLPAPER_MAX_H * 4];
  * kernel image must fit the RAM the firmware leaves free at its load address). */
 static Color *wp_cache;
 static Color *wp_blur;
+static Color *wp_glass;        /* wp_blur pre-tinted with the window glass colour */
 static Color wp_line_tmp[WP_CACHE_MAX_DIM];
 static bool wp_cache_valid = false;
 static void wallpaper_rebuild_cache(void);
@@ -533,7 +534,8 @@ static void wallpaper_rebuild_cache(void)
     }
     if (!wp_cache) wp_cache = (Color *)pmm_alloc_bytes((size_t)w * h * sizeof(Color));
     if (!wp_blur) wp_blur = (Color *)pmm_alloc_bytes((size_t)w * h * sizeof(Color));
-    if (!wp_cache || !wp_blur) return;
+    if (!wp_glass) wp_glass = (Color *)pmm_alloc_bytes((size_t)w * h * sizeof(Color));
+    if (!wp_cache || !wp_blur || !wp_glass) return;
 
     for (uint32_t y = 0; y < h; y++) {
         for (uint32_t x = 0; x < w; x++) {
@@ -552,61 +554,28 @@ static void wallpaper_rebuild_cache(void)
             box_blur_line(&wp_blur[x], (int)h, (int)w, WP_BLUR_RADIUS);
         }
     }
+    for (uint32_t i = 0; i < w * h; i++)
+        wp_glass[i] = blend(wp_blur[i], theme->glass_aqua, theme->glass.opacity[1]);
 
     wp_cache_valid = true;
 }
 
-static bool point_in_rounded_rect(int px, int py, int x, int y, int w, int h, int r)
+/* All shapes go through the anti-aliased span renderer (gfx.c). */
+static GfxSurface *surface(void)
 {
-    if (px < x || py < y || px >= x + w || py >= y + h) return false;
-    if (r <= 0) return true;
-
-    int rx = x + r;
-    int ry = y + r;
-    int rx2 = x + w - r - 1;
-    int ry2 = y + h - r - 1;
-
-    if ((px >= rx && px <= rx2) || (py >= ry && py <= ry2)) {
-        return true;
-    }
-
-    int cx = (px < rx) ? rx : rx2;
-    int cy = (py < ry) ? ry : ry2;
-    int dx = px - cx;
-    int dy = py - cy;
-
-    return (dx * dx + dy * dy) <= (r * r);
+    static GfxSurface s;
+    fb_get_surface(&s);
+    return &s;
 }
 
 static void draw_rounded_rect_blend(int x, int y, int w, int h, int r, Color color, uint8_t alpha)
 {
-    int x1 = MAX(0, x);
-    int y1 = MAX(0, y);
-    int x2 = MIN((int)comp_width, x + w);
-    int y2 = MIN((int)comp_height, y + h);
-
-    for (int py = y1; py < y2; py++) {
-        for (int px = x1; px < x2; px++) {
-            if (!point_in_rounded_rect(px, py, x, y, w, h, r)) {
-                continue;
-            }
-            Color bg = fb_get_pixel(px, py);
-            fb_put_pixel(px, py, blend(bg, color, alpha));
-        }
-    }
+    gfx_round_rect(surface(), x, y, w, h, r, color, alpha);
 }
 
 static void draw_shadow(int x, int y, int w, int h, int radius)
 {
-    static const uint8_t shadow_levels[] = { 28, 18, 10 };
-    static const int shadow_spread[] = { 6, 10, 14 };
-
-    for (int i = 0; i < 3; i++) {
-        int spread = shadow_spread[i];
-        uint8_t alpha = shadow_levels[i];
-        draw_rounded_rect_blend(x - spread, y - spread, w + spread * 2, h + spread * 2,
-                                radius + spread, theme->shadow, alpha);
-    }
+    gfx_shadow(surface(), x, y, w, h, radius, 22, 8, theme->shadow, 90);
 }
 
 /* Window chrome layout shared by drawing and hit-testing. Traffic lights
@@ -1822,16 +1791,15 @@ static void draw_window(int idx)
         Color solid = blend(theme->dock_tint, theme->glass_aqua, 215);
         draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, solid, 255);
     } else {
-        for (int py = draw_y; py < draw_y + draw_h; py++) {
-            for (int px = draw_x; px < draw_x + draw_w; px++) {
-                if (!point_in_rounded_rect(px, py, draw_x, draw_y, draw_w, draw_h, r)) {
-                    continue;
-                }
-                Color blurred = blur_sample(px, py, blur_px);
-                Color glass = blend(blurred, theme->glass_aqua, opacity);
-                fb_put_pixel(px, py, glass);
-            }
+        if (wp_cache_valid && win->glass_level == 1) {
+            gfx_round_rect_image(surface(), draw_x, draw_y, draw_w, draw_h, r, wp_glass);
+        } else if (wp_cache_valid) {
+            gfx_round_rect_image(surface(), draw_x, draw_y, draw_w, draw_h, r, wp_blur);
+            draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, theme->glass_aqua, opacity);
+        } else {
+            draw_rounded_rect_blend(draw_x, draw_y, draw_w, draw_h, r, theme->glass_aqua, 230);
         }
+        (void)blur_px;
     }
 
     draw_rounded_rect_blend(draw_x, draw_y, draw_w, 32, r, theme->accent_soft, highlight);
@@ -7394,7 +7362,27 @@ static bool any_dock_bounce(uint64_t now_ms)
     return false;
 }
 
-static bool update_animations(void)
+/* Frame-time receipts: "[PERF]" serial lines (tests/qemu_perf.py). */
+static uint32_t perf_frames, perf_max_ms;
+static uint64_t perf_total_ms, perf_window_start;
+
+static void perf_record_frame(uint64_t start_ms, uint64_t end_ms)
+{
+    uint32_t ms = (uint32_t)(end_ms - start_ms);
+    perf_frames++;
+    perf_total_ms += ms;
+    if (ms > perf_max_ms) perf_max_ms = ms;
+    if (!perf_window_start) perf_window_start = start_ms;
+    if (end_ms - perf_window_start >= 5000) {
+        serial_printf("[PERF] frames=%d avg_ms=%d max_ms=%d\n", (int)perf_frames,
+                      (int)(perf_total_ms / perf_frames), (int)perf_max_ms);
+        perf_frames = perf_max_ms = 0;
+        perf_total_ms = 0;
+        perf_window_start = 0;
+    }
+}
+
+static bool update_animations(uint64_t now_ms)
 {
     bool changed = false;
     bool no_motion = settings_get()->reduced_motion;
@@ -7403,6 +7391,8 @@ static bool update_animations(void)
         CompositorWindow *win = &windows[i];
         if (win->animating) {
             changed = true;
+            if (!win->anim_start_ms) win->anim_start_ms = now_ms;
+            win->anim_frames++;
             if (no_motion) {
                 win->anim_open = 1000;
                 win->animating = false;
@@ -7411,6 +7401,8 @@ static bool update_animations(void)
                 if (win->anim_open >= 1000) {
                     win->anim_open = 1000;
                     win->animating = false;
+                    serial_printf("[PERF] open '%s' frames=%d ms=%d\n", win->title,
+                                  (int)win->anim_frames, (int)(now_ms - win->anim_start_ms));
                 }
             }
         }
@@ -7487,7 +7479,7 @@ void compositor_tick(uint64_t now_ms)
     int focused_type = (active_window_index >= 0 && active_window_index < window_count)
                        ? (int)app_states[active_window_index].type : -1;
     proc_tick(delta > 100 ? 33 : delta, focused_type);
-    bool anim_changed = update_animations();
+    bool anim_changed = update_animations(now_ms);
 
     /* Clock hands: redraw when the displayed minute rolls over */
     RtcTime tick_time;
@@ -7505,6 +7497,7 @@ void compositor_tick(uint64_t now_ms)
         return;
     }
     need_redraw = false;
+    uint64_t frame_start = timer_get_ticks();
 
     draw_wallpaper();
 
@@ -7554,6 +7547,7 @@ void compositor_tick(uint64_t now_ms)
     draw_context_menu();
 
     fb_present();
+    perf_record_frame(frame_start, timer_get_ticks());
     if (login_frame_visible) {
         serial_printf("[UI] Desktop presented\n");
         login_frame_visible = false;

@@ -73,6 +73,9 @@ void fb_set_clip(int x, int y, int w, int h);
 void fb_reset_clip(void);
 void fb_draw_text_scaled(int x, int y, const char *s, int n, Color fg, int scale, bool bold);
 void fb_present(void);
+/* Current draw target + clip as a gfx surface (see gfx.h). */
+#include "gfx.h"
+void fb_get_surface(GfxSurface *s);
 /* Displays that need an explicit "show this rectangle" step (virtio-gpu)
  * register a hook; fb_present/the cursor call it with changed areas. */
 void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h));

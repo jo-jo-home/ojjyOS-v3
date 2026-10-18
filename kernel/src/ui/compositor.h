@@ -35,6 +35,8 @@ typedef struct {
     /* Animation state (0-1000) */
     int anim_open;
     bool animating;
+    uint64_t anim_start_ms;     /* first animated frame (perf receipts) */
+    uint32_t anim_frames;
 } CompositorWindow;
 
 typedef struct {

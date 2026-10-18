@@ -194,3 +194,19 @@ Results are appended to the log below.
   Bugs found: UiFontFace metrics were int8 (2x clock ascent 140 wrapped);
   first traffic-light hover check forced one full repaint (pointer test).
   Live: TCG + HVF(--protected) smoke, pointer, apps, browser, network UI PASS.
+- Phase 4.2b done — app contents: Finder (sidebar icons, list rows with file
+  icons, accent selection, Kind/Size columns with KB/MB, big-icon preview,
+  drawn chevrons, search field with glyph), Settings (coloured page glyphs,
+  headline titles, iOS switches), Calculator (gradient LCD, large readout,
+  orange operators, ÷ × − ± ⌫ glyphs added to the font), Calendar, Activity
+  Monitor, About (real icon + type hierarchy), Preview, TextEdit chrome,
+  browser toolbar (drawn back/forward/reload/home, Safari-style centred host
+  with lock, focus ring, Inter status line). 101 app labels converted to
+  Inter mechanically (geometry unchanged); Terminal/TextEdit text and HTML
+  page text stay monospace for now (page text needs the HTML layout engine to
+  measure Inter: tracked as Phase 4.3).
+  Bug fixed: the 9th app silently failed to open (8-window cap) while the
+  menu bar still switched to it; cap is now 12 (> 11 apps) and the menu bar
+  only switches after the window exists.
+  Live: TCG + HVF(--protected) smoke, pointer, apps, browser, files PASS;
+  tour `build/design/t4`.

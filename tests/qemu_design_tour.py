@@ -63,6 +63,8 @@ def run(args):
         click(width - 40, 13); snap('07-control-center', .6); vm.press('esc'); click(700, 500)
         chord('meta_l', 'spc'); vm.type('settings\n'); snap('08-settings', 1.2)
         chord('meta_l', 'spc'); vm.type('finder\n'); snap('09-finder', 1.2)
+        for i, app in enumerate(['calculator', 'calendar', 'activity monitor', 'about', 'web', 'terminal', 'textedit'], start=11):
+            chord('meta_l', 'spc'); vm.type(app + '\n'); snap(f'{i}-{app.replace(" ", "-")}', 1.5)
         chord('ctrl', 'meta_l', 'q'); snap('10-lock-screen', 1.2)
         print(f'DONE: {out}', flush=True)
     finally:

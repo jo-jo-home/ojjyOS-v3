@@ -12,6 +12,8 @@
 
 #include "ui/browser.h"
 #include "ui/draw.h"
+#include "uifont.h"
+#include "framebuffer.h"
 #include "font.h"
 #include "web/http.h"
 #include "web/html.h"
@@ -476,13 +478,49 @@ const char *browser_title(void)
 /* Drawing                                                             */
 /* ------------------------------------------------------------------ */
 
+static GfxSurface *surf(void)
+{
+    static GfxSurface s;
+    fb_get_surface(&s);
+    return &s;
+}
+
+/* Toolbar button with a drawn glyph: '<' '>' back/forward, 'R' reload,
+ * 'x' stop, 'H' home. */
 static void button(int x, int y, int w, int h, const char *label, bool enabled)
 {
     const ThemeTokens *t = ui_theme();
-    ui_rounded_rect(x, y, w, h, 7, t->dock_tint, enabled ? 190 : 90);
-    int tw = (int)strlen(label) * FONT_WIDTH;
-    fb_draw_text_scaled(x + (w - tw) / 2, y + (h - FONT_HEIGHT) / 2, label, (int)strlen(label),
-                        enabled ? t->text : t->text_muted, 1, false);
+    GfxSurface *s = surf();
+    Color c = enabled ? t->text : t->text_muted;
+    uint8_t a = enabled ? 255 : 110;
+    int cx = x + w / 2, cy = y + h / 2;
+    switch (label[0]) {
+    case '<': case '>': {
+        int dir = label[0] == '<' ? -1 : 1;
+        for (int k = 0; k <= 4; k++) {
+            ui_rounded_rect(cx + dir * (k - 2) - 1, cy - 5 + k, 2, 2, 1, c, a);
+            ui_rounded_rect(cx + dir * (k - 2) - 1, cy + 4 - k, 2, 2, 1, c, a);
+        }
+        break;
+    }
+    case 'R':
+        gfx_arc_up(s, cx, cy, 5, 7, 150, c, a);
+        ui_rounded_rect(cx + 3, cy - 8, 6, 2, 1, c, a);
+        ui_rounded_rect(cx + 7, cy - 8, 2, 6, 1, c, a);
+        break;
+    case 'x':
+        for (int k = -4; k <= 4; k++) {
+            ui_rounded_rect(cx + k - 1, cy + k - 1, 2, 2, 1, c, a);
+            ui_rounded_rect(cx + k - 1, cy - k - 1, 2, 2, 1, c, a);
+        }
+        break;
+    default:            /* house */
+        for (int k = 0; k < 7; k++) ui_rounded_rect(cx - k - 1, cy - 7 + k, 2 + 2 * k, 2, 1, c, a);
+        ui_rounded_rect(cx - 5, cy - 1, 10, 8, 1, c, a);
+        ui_rounded_rect(cx - 1, cy + 3, 3, 4, 1, t->dock_tint, a);
+        break;
+    }
+    (void)h;
 }
 
 static int page_x(void) { return B.rect_x + 6; }
@@ -564,25 +602,36 @@ void browser_draw(int x, int y, int w, int h)
     button(x + 90, by, 26, 24, "H", true);
     int ax = x + 122, aw = w - 128;
     bool editing = B.focus == FOCUS_ADDRESS;
-    ui_rounded_rect(ax, by, aw, 24, 9, COLOR_WHITE, editing ? 245 : 200);
-    if (editing) ui_rounded_rect(ax, by + 22, aw, 2, 1, t->accent, 255);
-    const char *badge = B.url.scheme[0] ? B.url.scheme : "ojjy";
-    if (!editing) {
-        int bw = (int)strlen(badge) * FONT_WIDTH + 8;
-        ui_rounded_rect(ax + 4, by + 4, bw, 16, 6, strcmp(badge, "ojjy") == 0 ? t->accent_soft : t->text_muted, 120);
-        fb_draw_text_scaled(ax + 8, by + 4, badge, (int)strlen(badge), t->text, 1, false);
+    GfxSurface *s = surf();
+    ui_rounded_rect(ax, by, aw, 24, 8, COLOR_WHITE, editing ? 245 : 170);
+    if (editing) {
+        gfx_round_rect_stroke(s, ax - 1, by - 1, aw + 2, 26, 9, t->accent, 255);
+        gfx_round_rect_stroke(s, ax - 2, by - 2, aw + 4, 28, 10, t->accent, 90);
     }
-    {
-        int tx = ax + (editing ? 8 : (int)strlen(B.url.scheme[0] ? B.url.scheme : "ojjy") * FONT_WIDTH + 18);
-        int max = (aw - (tx - ax) - 8) / FONT_WIDTH;
-        size_t n = strlen(B.address);
+    if (editing) {
+        /* Left-aligned, scrolled so the caret end stays visible */
         const char *a = B.address;
-        if ((int)n > max) { if (editing) a += n - (size_t)max; n = (size_t)max; }
+        int room = aw - 20;
+        while (*a && text_width(a, TEXT_BODY) > room) a++;
+        int tx = ax + 10, ty = text_y_center(by, 24, TEXT_BODY);
         fb_set_clip(ax, by, aw - 4, 24);
-        if (editing && B.select_all && n) ui_rounded_rect(tx - 2, by + 4, (int)n * FONT_WIDTH + 4, 16, 3, t->accent_soft, 160);
-        fb_draw_text_scaled(tx, by + 4, a, (int)n, COLOR_TEXT, 1, false);
-        if (editing && !B.select_all) fb_fill_rect(tx + (int)n * FONT_WIDTH + 1, by + 4, 1, 16, t->accent);
+        int tw = text_width(a, TEXT_BODY);
+        if (B.select_all && *a) ui_rounded_rect(tx - 2, by + 4, tw + 4, 16, 3, t->accent_soft, 170);
+        text_draw(s, tx, ty, a, TEXT_BODY, COLOR_TEXT);
+        if (!B.select_all) ui_rounded_rect(tx + tw + 1, by + 4, 2, 16, 1, t->accent, 255);
         fb_reset_clip();
+    } else {
+        /* Safari-style: the host, centred, with a lock for https */
+        bool secure = strcmp(B.url.scheme, "https") == 0;
+        const char *shown = B.url.host[0] ? B.url.host : (B.address[0] ? B.address : "Search or enter website name");
+        int tw = MIN(text_width(shown, TEXT_BODY_MEDIUM), aw - 60);
+        int tx = ax + (aw - tw) / 2 + (secure ? 8 : 0);
+        if (secure) {
+            ui_rounded_rect(tx - 16, by + 11, 9, 7, 2, t->text_muted, 255);
+            gfx_arc_up(s, tx - 12, by + 11, 2, 3, 90, t->text_muted, 255);
+        }
+        text_draw_fit(s, tx, text_y_center(by, 24, TEXT_BODY_MEDIUM), shown, TEXT_BODY_MEDIUM,
+                      B.url.host[0] ? t->text : t->text_muted, aw - 60);
     }
     if (B.loading) {
         /* indeterminate progress: a sliding segment under the toolbar */
@@ -631,10 +680,7 @@ void browser_draw(int x, int y, int w, int h)
 
     /* Status bar */
     const char *st = B.hover[0] ? B.hover : B.status;
-    int max = (w - 16) / FONT_WIDTH;
-    int n = (int)strlen(st);
-    if (n > max) n = max;
-    fb_draw_text_scaled(x + 8, y + h - STATUS_H + 2, st, n, t->text_muted, 1, false);
+    text_draw_fit(surf(), x + 8, text_y_center(y + h - STATUS_H, STATUS_H, TEXT_SMALL), st, TEXT_SMALL, t->text_muted, w - 16);
 }
 
 /* ------------------------------------------------------------------ */

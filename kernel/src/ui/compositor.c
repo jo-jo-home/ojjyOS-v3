@@ -27,7 +27,8 @@
 #include "icons.h"
 #include "../net/net.h"
 
-#define COMPOSITOR_MAX_WINDOWS  8
+/* One window per app type at most (11 apps), so this never blocks a launch. */
+#define COMPOSITOR_MAX_WINDOWS  12
 #define WALLPAPER_MAX_W         1024
 #define WALLPAPER_MAX_H         1024
 
@@ -353,6 +354,7 @@ static int ctx_menu_y = 0;
 static uint64_t last_frame_ms = 0;
 
 static int ease_out(int t);
+static void draw_search_glyph(int x, int y, int size, Color c, uint8_t a);
 static void draw_icon_id(IconId id, int x, int y, int size, uint8_t alpha);
 static void draw_app_icon(const AppInfo *app, int x, int y, int size);
 static uint8_t overlay_alpha(uint8_t base, int anim);
@@ -628,8 +630,58 @@ static bool hit_traffic_light(const CompositorWindow *win, int i, int x, int y)
 #define APPEARANCE_ROW_Y(i) (40 + (i) * 30)
 static void draw_switch(int x, int y, bool on)
 {
-    draw_rounded_rect_blend(x, y, 38, 20, 10, on ? theme->accent : theme->text_muted, on ? 240 : 110);
-    draw_rounded_rect_blend(on ? x + 20 : x + 2, y + 2, 16, 16, 8, COLOR_WHITE, 250);
+    draw_rounded_rect_blend(x, y, 38, 20, 10, on ? theme->accent : (settings_get()->dark_mode ? RGB(70, 78, 92) : RGB(208, 214, 222)), 255);
+    int kx = on ? x + 20 : x + 2;
+    gfx_shadow(surface(), kx, y + 2, 16, 16, 8, 3, 1, COLOR_BLACK, 60);
+    draw_rounded_rect_blend(kx, y + 2, 16, 16, 8, COLOR_WHITE, 255);
+}
+
+/* "512 bytes", "4 KB", "1.2 MB" */
+static void format_size(uint64_t bytes, char *out, size_t size)
+{
+    char num[24];
+    out[0] = '\0';
+    if (bytes < 1024) {
+        utoa(bytes, num, 10); str_append(out, size, num);
+        str_append(out, size, bytes == 1 ? " byte" : " bytes");
+    } else if (bytes < 1024 * 1024) {
+        utoa((bytes + 512) / 1024, num, 10); str_append(out, size, num); str_append(out, size, " KB");
+    } else {
+        uint64_t tenths = (bytes * 10 + 512 * 1024) / (1024 * 1024);
+        utoa(tenths / 10, num, 10); str_append(out, size, num); str_append(out, size, ".");
+        utoa(tenths % 10, num, 10); str_append(out, size, num); str_append(out, size, " MB");
+    }
+}
+
+/* Chevron "<" (dir -1) or ">" (dir +1), 6x10, anti-aliased. */
+static void draw_chevron(int cx, int cy, int dir, Color c, uint8_t a)
+{
+    for (int k = 0; k <= 4; k++) {
+        draw_rounded_rect_blend(cx + dir * (k - 2) - 1, cy - 5 + k, 2, 2, 1, c, a);
+        draw_rounded_rect_blend(cx + dir * (k - 2) - 1, cy + 4 - k, 2, 2, 1, c, a);
+    }
+}
+
+static IconId finder_entry_icon(VfsFileType type)
+{
+    return type == VFS_TYPE_DIR ? ICON_FOLDER : ICON_FILE;
+}
+
+/* Draw a directory entry's icon (apps use their app icon). */
+static void finder_draw_entry_icon(const FinderState *state, const FinderEntry *entry, int x, int y, int size)
+{
+    if (entry->type == VFS_TYPE_BUNDLE) {
+        char path[256];
+        if (vfs_join_path(path, sizeof(path), state->path, entry->name) == 0) {
+            for (int a = 0; a < app_registry_count(); a++) {
+                AppInfo *app = app_registry_get(a);
+                if (app && strcmp(app->path, path) == 0) { draw_app_icon(app, x, y, size); return; }
+            }
+        }
+        draw_icon_id(ICON_FILE, x, y, size, 255);
+        return;
+    }
+    draw_icon_id(finder_entry_icon(entry->type), x, y, size, 255);
 }
 
 static void draw_finder_window(const CompositorWindow *win, FinderState *state, int content_x, int content_y, int content_w, int content_h)
@@ -637,11 +689,15 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     if (state->needs_refresh) {
         finder_refresh(state);
     }
+    bool dark = settings_get()->dark_mode;
+    Color panel = dark ? RGB(18, 24, 36) : COLOR_WHITE;
 
+    /* Click geometry (unchanged): sidebar rows at content_y + 30 + i*20,
+     * list rows of 18 px from content_y + 44, icon grid 40 px + 18 gap. */
     int sidebar_w = 150;
     int preview_w = 180;
-    draw_rounded_rect_blend(content_x, content_y, sidebar_w, content_h, 12, theme->dock_tint, 130);
-    fb_draw_string(content_x + 12, content_y + 12, "Favorites", theme->text_muted, theme->dock_tint);
+    draw_rounded_rect_blend(content_x, content_y, sidebar_w, content_h, 12, panel, dark ? 70 : 70);
+    ui_text(content_x + 12, content_y + 10, "Favorites", TEXT_SMALL_BOLD, theme->text_muted);
     {
         /* Highlight the sidebar place the window is showing. */
         char desktop[160], trash[160];
@@ -649,61 +705,76 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
         trash_dir(trash, sizeof(trash));
         const char *places[6] = { "/Applications", "/System", "/Users", users_current_home(), desktop, trash };
         const char *labels[6] = { "Applications", "System", "Users", "Home", "Desktop", "Trash" };
+        const IconId icons[6] = { ICON_FOLDER, ICON_DISK, ICON_FOLDER, ICON_FOLDER, ICON_FOLDER, ICON_TRASH };
         for (int i = 0; i < 6; i++) {
             bool here = strcmp(state->path, places[i]) == 0;
-            if (here) draw_rounded_rect_blend(content_x + 6, content_y + 30 + i * 20, sidebar_w - 12, 18, 8, theme->accent, 45);
-            fb_draw_string(content_x + 12, content_y + 32 + i * 20, labels[i], here ? theme->accent : theme->text,
-                           theme->dock_tint);
+            int ry = content_y + 29 + i * 20;
+            if (here) draw_rounded_rect_blend(content_x + 6, ry, sidebar_w - 12, 20, 6,
+                                              dark ? COLOR_WHITE : theme->midnight, dark ? 30 : 20);
+            draw_icon_id(icons[i], content_x + 12, ry + 2, 16, 255);
+            ui_text_mid(content_x + 34, ry, 20, labels[i], here ? TEXT_BODY_BOLD : TEXT_BODY, theme->text);
         }
     }
 
     int main_x = content_x + sidebar_w + 10;
     int main_w = content_w - sidebar_w - preview_w - 20;
 
-    draw_rounded_rect_blend(main_x, content_y, main_w, content_h, 12, theme->dock_tint, 90);
-    fb_draw_string(main_x + 12, content_y + 12, state->path[0] ? state->path : "/",
-                   theme->text_muted, theme->dock_tint);
+    draw_rounded_rect_blend(main_x, content_y, main_w, content_h, 12, panel, dark ? 50 : 120);
+    text_draw_fit(surface(), main_x + 12, content_y + 9, state->path[0] ? state->path : "/",
+                  TEXT_SMALL, theme->text_muted, main_w - 24);
 
     int preview_x = main_x + main_w + 10;
-    draw_rounded_rect_blend(preview_x, content_y, preview_w, content_h, 12, theme->dock_tint, 110);
-    fb_draw_string(preview_x + 12, content_y + 12, "Preview", theme->text_muted, theme->dock_tint);
+    draw_rounded_rect_blend(preview_x, content_y, preview_w, content_h, 12, panel, dark ? 60 : 90);
     if (state->preview_ready) {
-        fb_draw_string(preview_x + 12, content_y + 32, state->preview_name, theme->text, theme->dock_tint);
-        fb_draw_string(preview_x + 12, content_y + 50, state->preview_type, theme->text_muted, theme->dock_tint);
-        char sizebuf[24];
+        /* Big icon for the selection, then name, kind, size and a peek */
+        bool is_dir = strcmp(state->preview_type, "Folder") == 0;
+        draw_icon_id(is_dir ? ICON_FOLDER : ICON_FILE, preview_x + (preview_w - 64) / 2, content_y + 14, 64, 255);
+        int nw = MIN(text_width(state->preview_name, TEXT_BODY_BOLD), preview_w - 20);
+        text_draw_fit(surface(), preview_x + (preview_w - nw) / 2, content_y + 84, state->preview_name,
+                      TEXT_BODY_BOLD, theme->text, preview_w - 20);
+        char info[48];
+        info[0] = '\0';
+        str_append(info, sizeof(info), state->preview_type);
         if (state->preview_size > 0) {
-            utoa(state->preview_size, sizebuf, 10);
-            fb_draw_string(preview_x + 12, content_y + 68, sizebuf, theme->text_muted, theme->dock_tint);
+            char sz[24];
+            format_size(state->preview_size, sz, sizeof(sz));
+            str_append(info, sizeof(info), "  \xE2\x80\xA2  ");
+            str_append(info, sizeof(info), sz);
         }
+        int iw = MIN(text_width(info, TEXT_SMALL), preview_w - 20);
+        text_draw_fit(surface(), preview_x + (preview_w - iw) / 2, content_y + 104, info, TEXT_SMALL, theme->text_muted, preview_w - 20);
         for (int i = 0; i < 3; i++) {
             if (state->preview_lines[i][0]) {
-                fb_draw_string(preview_x + 12, content_y + 90 + i * 16,
-                               state->preview_lines[i], theme->text_muted, theme->dock_tint);
+                text_draw_fit(surface(), preview_x + 12, content_y + 132 + i * 17, state->preview_lines[i],
+                              TEXT_SMALL, theme->text, preview_w - 24);
             }
         }
     } else {
-        fb_draw_string(preview_x + 12, content_y + 32, "No selection", theme->text_muted, theme->dock_tint);
+        int nw = text_width("No Selection", TEXT_BODY);
+        ui_text(preview_x + (preview_w - nw) / 2, content_y + content_h / 2 - 8, "No Selection", TEXT_BODY, theme->text_muted);
     }
     {
         char trash[160];
         trash_dir(trash, sizeof(trash));
         if (strcmp(state->path, trash) == 0) {
             bool has_items = state->entry_count > 0;
-            draw_rounded_rect_blend(preview_x + 12, content_y + content_h - 36, preview_w - 24, 24, 8,
-                                    RGB(215, 76, 70), has_items ? 220 : 90);
-            fb_draw_string(preview_x + 12 + (preview_w - 24 - 11 * FONT_WIDTH) / 2, content_y + content_h - 32,
-                           "Empty Trash", COLOR_WHITE, RGB(215, 76, 70));
+            int by = content_y + content_h - 36, bw = preview_w - 24;
+            gfx_round_rect_vgradient(surface(), preview_x + 12, by, bw, 24, 8, RGB(240, 104, 96), RGB(214, 64, 58),
+                                     has_items ? 255 : 110);
+            int tw = text_width("Empty Trash", TEXT_BODY_BOLD);
+            ui_text_mid(preview_x + 12 + (bw - tw) / 2, by, 24, "Empty Trash", TEXT_BODY_BOLD, COLOR_WHITE);
         }
     }
 
     if (state->view_mode == FINDER_VIEW_LIST) {
         /* Columns follow the panel width so they never spill into Preview. */
-        int size_x = main_x + main_w - 52;
+        int size_x = main_x + main_w - 64;
         int type_x = size_x - 64;
-        int name_chars = MAX(4, (type_x - main_x - 24) / FONT_WIDTH);
-        fb_draw_string(main_x + 16, content_y + 28, "Name", theme->text_muted, theme->dock_tint);
-        fb_draw_string(type_x, content_y + 28, "Type", theme->text_muted, theme->dock_tint);
-        fb_draw_string(size_x, content_y + 28, "Size", theme->text_muted, theme->dock_tint);
+        int name_x = main_x + 34;
+        ui_text(name_x, content_y + 27, "Name", TEXT_SMALL_BOLD, theme->text_muted);
+        ui_text(type_x, content_y + 27, "Kind", TEXT_SMALL_BOLD, theme->text_muted);
+        ui_text(size_x, content_y + 27, "Size", TEXT_SMALL_BOLD, theme->text_muted);
+        draw_rounded_rect_blend(main_x + 8, content_y + 41, main_w - 16, 1, 0, COLOR_BLACK, 26);
 
         int visible = (content_h - 48) / 18;
         if (visible < 1) visible = 1;
@@ -715,32 +786,28 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
         int row_y = content_y + 44;
         for (int i = state->scroll; i < state->entry_count && i < state->scroll + visible; i++) {
             FinderEntry *entry = &state->entries[i];
-            if (i == state->selected) {
-                draw_rounded_rect_blend(main_x + 6, row_y - 2, main_w - 12, 18, 8, theme->accent, 50);
+            bool sel = i == state->selected;
+            if (sel) {
+                draw_rounded_rect_blend(main_x + 6, row_y - 1, main_w - 12, 18, 5, theme->accent, 235);
             } else if (state->drag_active && i == state->drag_hover_index && entry->type == VFS_TYPE_DIR) {
-                draw_rounded_rect_blend(main_x + 6, row_y - 2, main_w - 12, 18, 8, theme->accent_soft, 40);
+                draw_rounded_rect_blend(main_x + 6, row_y - 1, main_w - 12, 18, 5, theme->accent, 70);
+            } else if (((i - state->scroll) & 1)) {
+                draw_rounded_rect_blend(main_x + 6, row_y - 1, main_w - 12, 18, 5, dark ? COLOR_WHITE : theme->midnight, dark ? 8 : 9);
             }
-            char namebuf[64];
-            strncpy(namebuf, entry->name, sizeof(namebuf) - 1);
-            namebuf[sizeof(namebuf) - 1] = '\0';
-            if ((int)strlen(namebuf) > name_chars && name_chars < (int)sizeof(namebuf)) {
-                namebuf[name_chars - 2] = '.'; namebuf[name_chars - 1] = '.'; namebuf[name_chars] = '\0';
-            }
-            fb_draw_string(main_x + 16, row_y + 2, namebuf, theme->text, theme->dock_tint);
+            finder_draw_entry_icon(state, entry, main_x + 12, row_y, 16);
+            Color fg = sel ? COLOR_WHITE : theme->text, mg = sel ? RGB(220, 235, 255) : theme->text_muted;
+            text_draw_fit(surface(), name_x, text_y_center(row_y - 1, 18, TEXT_BODY), entry->name, TEXT_BODY, fg,
+                          type_x - name_x - 8);
 
-            const char *type = "File";
+            const char *type = "Document";
             if (entry->type == VFS_TYPE_DIR) type = "Folder";
-            if (entry->type == VFS_TYPE_BUNDLE) type = "App";
-            fb_draw_string(type_x, row_y + 2, type, theme->text_muted, theme->dock_tint);
+            if (entry->type == VFS_TYPE_BUNDLE) type = "Application";
+            text_draw_fit(surface(), type_x, text_y_center(row_y - 1, 18, TEXT_SMALL), type, TEXT_SMALL, mg, size_x - type_x - 6);
 
-            char sizebuf[16];
-            if (entry->type == VFS_TYPE_FILE) {
-                utoa(entry->size, sizebuf, 10);
-            } else {
-                strcpy(sizebuf, "--");
-            }
-            if (strlen(sizebuf) > 5) { utoa((entry->size + 1023) / 1024, sizebuf, 10); size_t n = strlen(sizebuf); sizebuf[n] = 'K'; sizebuf[n + 1] = '\0'; }
-            fb_draw_string(size_x, row_y + 2, sizebuf, theme->text_muted, theme->dock_tint);
+            char sizebuf[24];
+            if (entry->type == VFS_TYPE_FILE) format_size(entry->size, sizebuf, sizeof(sizebuf));
+            else strcpy(sizebuf, "--");
+            ui_text_mid(size_x, row_y - 1, 18, sizebuf, TEXT_SMALL, mg);
 
             row_y += 18;
         }
@@ -764,45 +831,14 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
             int ix = start_x + col * (icon + gap);
             int iy = start_y + row * (icon + 28);
             FinderEntry *entry = &state->entries[i];
-            bool drew_icon = false;
-            if (state->drag_active && i == state->drag_hover_index && entry->type == VFS_TYPE_DIR) {
-                draw_rounded_rect_blend(ix - 2, iy - 2, icon + 4, icon + 4, 8, theme->accent_soft, 40);
-            }
-            if (entry->type == VFS_TYPE_BUNDLE) {
-                /* Use the registry's already-loaded icon: never re-parse
-                 * the manifest on every frame (old code did a full
-                 * bundle_load per icon per frame) */
-                char path[256];
-                if (vfs_join_path(path, sizeof(path), state->path, entry->name) == 0) {
-                    for (int a = 0; a < app_registry_count(); a++) {
-                        AppInfo *app = app_registry_get(a);
-                        if (app && strcmp(app->path, path) == 0 && app->icon.valid) {
-                            draw_app_icon(app, ix, iy, icon);
-                            drew_icon = true;
-                            break;
-                        }
-                    }
-                }
-            } else if (entry->type == VFS_TYPE_DIR) {
-                if (true) {  /* built-in icon set */
-                    draw_icon_id(ICON_FOLDER, ix, iy, icon, 255);
-                    drew_icon = true;
-                }
-            } else if (entry->type == VFS_TYPE_FILE) {
-                if (true) {  /* built-in icon set */
-                    draw_icon_id(ICON_FILE, ix, iy, icon, 255);
-                    drew_icon = true;
-                }
-            }
-            if (!drew_icon) {
-                fb_fill_rect(ix, iy, icon, icon, theme->accent_soft);
-            }
-            char label[12];
-            strncpy(label, state->entries[i].name, sizeof(label) - 1);
-            label[sizeof(label) - 1] = '\0';
-            if (strlen(label) > 7) { label[5] = '.'; label[6] = '.'; label[7] = '\0'; }
-            int label_x = ix + (icon - (int)strlen(label) * FONT_WIDTH) / 2;
-            fb_draw_string(label_x, iy + icon + 6, label, theme->text, theme->dock_tint);
+            bool sel = i == state->selected;
+            if (sel || (state->drag_active && i == state->drag_hover_index && entry->type == VFS_TYPE_DIR))
+                draw_rounded_rect_blend(ix - 4, iy - 4, icon + 8, icon + 8, 8, dark ? COLOR_WHITE : theme->midnight, 30);
+            finder_draw_entry_icon(state, entry, ix, iy, icon);
+            int lw = MIN(text_width(entry->name, TEXT_SMALL), icon + gap - 2);
+            int lx = ix + icon / 2 - lw / 2;
+            if (sel) draw_rounded_rect_blend(lx - 4, iy + icon + 4, lw + 8, 16, 5, theme->accent, 235);
+            text_draw_fit(surface(), lx, iy + icon + 5, entry->name, TEXT_SMALL, sel ? COLOR_WHITE : theme->text, icon + gap - 2);
         }
     }
 
@@ -810,32 +846,36 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     int tb_x = finder_toolbar_x(win, content_x - 12);
     bool can_back = state->history_pos > 0;
     bool can_fwd = state->history_pos + 1 < state->history_count;
-    draw_rounded_rect_blend(tb_x, toolbar_y - 28, 22, 20, 6, theme->dock_tint, can_back ? 170 : 90);
-    draw_rounded_rect_blend(tb_x + 24, toolbar_y - 28, 22, 20, 6, theme->dock_tint, can_fwd ? 170 : 90);
-    fb_draw_char(tb_x + 7, toolbar_y - 26, '<', can_back ? theme->text : theme->text_muted, theme->dock_tint);
-    fb_draw_char(tb_x + 31, toolbar_y - 26, '>', can_fwd ? theme->text : theme->text_muted, theme->dock_tint);
-    draw_rounded_rect_blend(tb_x + 52, toolbar_y - 28, 52, 20, 6, theme->dock_tint, 150);
-    fb_draw_string(tb_x + 58, toolbar_y - 26,
-                   state->view_mode == FINDER_VIEW_LIST ? "List" : "Icons",
-                   theme->text_muted, theme->dock_tint);
+    Color btn = dark ? COLOR_WHITE : theme->midnight;
+    draw_rounded_rect_blend(tb_x, toolbar_y - 28, 22, 20, 6, btn, can_back ? 24 : 10);
+    draw_rounded_rect_blend(tb_x + 24, toolbar_y - 28, 22, 20, 6, btn, can_fwd ? 24 : 10);
+    draw_chevron(tb_x + 11, toolbar_y - 18, -1, can_back ? theme->text : theme->text_muted, can_back ? 255 : 120);
+    draw_chevron(tb_x + 35, toolbar_y - 18, 1, can_fwd ? theme->text : theme->text_muted, can_fwd ? 255 : 120);
+    draw_rounded_rect_blend(tb_x + 52, toolbar_y - 28, 52, 20, 6, btn, 24);
+    {
+        const char *mode = state->view_mode == FINDER_VIEW_LIST ? "List" : "Icons";
+        int mw = text_width(mode, TEXT_SMALL_BOLD);
+        ui_text_mid(tb_x + 52 + (52 - mw) / 2, toolbar_y - 28, 20, mode, TEXT_SMALL_BOLD, theme->text);
+    }
 
     int search_x = main_x + main_w - 150;
     if (search_x < tb_x + 112) search_x = tb_x + 112;
-    draw_rounded_rect_blend(search_x, toolbar_y - 28, 140, 20, 8, theme->dock_tint, 200);
+    draw_rounded_rect_blend(search_x, toolbar_y - 28, 140, 20, 6, btn, 18);
     if (state->rename_mode) {
-        fb_draw_string(search_x + 8, toolbar_y - 26, state->rename_buffer,
-                       theme->text, theme->dock_tint);
-        fb_draw_string(search_x - 64, toolbar_y - 26, "Rename:",
-                       theme->text_muted, theme->dock_tint);
+        ui_text_mid(search_x + 8, toolbar_y - 28, 20, state->rename_buffer, TEXT_BODY, theme->text);
+        int rw = text_width("Rename:", TEXT_SMALL_BOLD);
+        ui_text_mid(search_x - 8 - rw, toolbar_y - 28, 20, "Rename:", TEXT_SMALL_BOLD, theme->text_muted);
     } else {
-        fb_draw_string(search_x + 8, toolbar_y - 26,
-                       state->search[0] ? state->search : "Search",
-                       theme->text_muted, theme->dock_tint);
+        draw_search_glyph(search_x + 7, toolbar_y - 24, 12, theme->text_muted, 255);
+        ui_text_mid(search_x + 26, toolbar_y - 28, 20, state->search[0] ? state->search : "Search",
+                    TEXT_BODY, state->search[0] ? theme->text : theme->text_muted);
     }
 
     if (state->drag_active) {
-        fb_draw_string(cursor_x + 10, cursor_y + 10, vfs_basename(state->drag_path),
-                       theme->text, theme->dock_tint);
+        const char *name = vfs_basename(state->drag_path);
+        int dw = text_width(name, TEXT_BODY_MEDIUM) + 16;
+        draw_rounded_rect_blend(cursor_x + 10, cursor_y + 10, dw, 22, 6, theme->accent, 220);
+        ui_text_mid(cursor_x + 18, cursor_y + 10, 22, name, TEXT_BODY_MEDIUM, COLOR_WHITE);
     }
 }
 
@@ -889,7 +929,8 @@ static void draw_wifi_glyph(int x, int y, Color c, bool off)
 static void draw_settings_window(SettingsStateUi *state, int content_x, int content_y, int content_w, int content_h)
 {
     int sidebar_w = 160;
-    draw_rounded_rect_blend(content_x, content_y, sidebar_w, content_h, 12, theme->dock_tint, 130);
+    bool dark = settings_get()->dark_mode;
+    draw_rounded_rect_blend(content_x, content_y, sidebar_w, content_h, 12, dark ? RGB(18, 24, 36) : COLOR_WHITE, 70);
 
     const char *items[] = {
         "Appearance",
@@ -902,33 +943,37 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         "About"
     };
 
+    /* Coloured rounded-square glyph per page (macOS Settings style) */
+    static const Color page_colors[8] = { RGB(52, 120, 246), RGB(88, 86, 214), RGB(48, 176, 199), RGB(110, 120, 135),
+                                          RGB(142, 142, 147), RGB(255, 149, 0), RGB(0, 122, 255), RGB(100, 110, 125) };
     for (int i = 0; i < SETTINGS_PAGE_COUNT; i++) {
         int item_y = content_y + 16 + i * 20;
-        if (state->page == (SettingsPage)i) {
-            draw_rounded_rect_blend(content_x + 6, item_y - 2, sidebar_w - 12, 18, 8, theme->accent, 40);
-        }
-        fb_draw_string(content_x + 12, item_y, items[i], theme->text, theme->dock_tint);
+        bool sel = state->page == (SettingsPage)i;
+        if (sel) draw_rounded_rect_blend(content_x + 6, item_y - 2, sidebar_w - 12, 20, 6, theme->accent, 235);
+        draw_rounded_rect_blend(content_x + 12, item_y + 1, 14, 14, 4, page_colors[i % 8], 255);
+        draw_rounded_rect_blend(content_x + 16, item_y + 5, 6, 6, 3, COLOR_WHITE, 220);
+        ui_text_mid(content_x + 32, item_y - 2, 20, items[i], TEXT_BODY, sel ? COLOR_WHITE : theme->text);
     }
 
     int main_x = content_x + sidebar_w + 10;
     int main_w = content_w - sidebar_w - 10;
-    draw_rounded_rect_blend(main_x, content_y, main_w, content_h, 12, theme->dock_tint, 90);
+    draw_rounded_rect_blend(main_x, content_y, main_w, content_h, 12, dark ? RGB(18, 24, 36) : COLOR_WHITE, dark ? 50 : 120);
 
     SettingsState *settings = settings_get();
 
     if (state->page == SETTINGS_PAGE_APPEARANCE) {
-        fb_draw_string(main_x + 16, content_y + 16, "Appearance", theme->text, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "Appearance", TEXT_HEADLINE, theme->text);
         const char *labels[4] = { "Dark Mode", "24-Hour Clock", "Reduce Transparency", "Reduce Motion" };
         bool values[4] = { settings->dark_mode, settings->time_24h,
                            settings->reduced_transparency, settings->reduced_motion };
         for (int i = 0; i < 4; i++) {
             int ry = content_y + APPEARANCE_ROW_Y(i);
             if (i) fb_fill_rect(main_x + 16, ry - 4, main_w - 32, 1, blend(theme->dock_tint, theme->text_muted, 40));
-            fb_draw_string(main_x + 16, ry + 5, labels[i], theme->text, theme->dock_tint);
+            ui_text(main_x + 16, ry + 5, labels[i], TEXT_BODY, theme->text);
             draw_switch(main_x + main_w - 58, ry + 3, values[i]);
         }
     } else if (state->page == SETTINGS_PAGE_USERS) {
-        fb_draw_string(main_x + 16, content_y + 14, "Users & Credentials", theme->text, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 10, "Users & Credentials", TEXT_HEADLINE, theme->text);
 
         /* Active user card */
         draw_rounded_rect_blend(main_x + 14, content_y + 34, main_w - 28, 52, 10, theme->glass_aqua, 120);
@@ -936,7 +981,7 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         char initials[3] = { 'U', '\0', '\0' };
         const char *fn = users_current_full_name();
         if (fn && fn[0]) initials[0] = (fn[0] >= 'a' && fn[0] <= 'z') ? (char)(fn[0] - 32) : fn[0];
-        fb_draw_string(main_x + 36, content_y + 54, initials, COLOR_WHITE, theme->accent);
+        ui_text(main_x + 36, content_y + 54, initials, TEXT_BODY, COLOR_WHITE);
 
         char uline[96];
         uline[0] = '\0';
@@ -944,39 +989,34 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         str_append(uline, sizeof(uline), " (@");
         str_append(uline, sizeof(uline), users_current_username());
         str_append(uline, sizeof(uline), ")");
-        fb_draw_string(main_x + 68, content_y + 44, uline, theme->text, theme->glass_aqua);
-        fb_draw_string(main_x + 68, content_y + 62, users_current_home(), theme->text_muted, theme->glass_aqua);
+        ui_text(main_x + 68, content_y + 44, uline, TEXT_BODY, theme->text);
+        ui_text(main_x + 68, content_y + 62, users_current_home(), TEXT_BODY, theme->text_muted);
 
         /* Password change form */
-        fb_draw_string(main_x + 16, content_y + 98, "Change Password (SHA-256):", theme->text, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 98, "Change Password (SHA-256):", TEXT_BODY, theme->text);
 
-        fb_draw_string(main_x + 16, content_y + 122, "Current:", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 122, "Current:", TEXT_BODY, theme->text_muted);
         draw_rounded_rect_blend(main_x + 92, content_y + 118, 150, 20, 6,
                                 state->user_field == 1 ? theme->accent_soft : theme->glass_aqua, 170);
         char masked[32];
         mask_password_str(state->old_pw, masked, sizeof(masked));
-        fb_draw_string(main_x + 98, content_y + 122,
-                       masked[0] ? masked : (state->user_field == 1 ? "|" : "click to type"),
-                       masked[0] ? theme->text : theme->text_muted, theme->glass_aqua);
+        ui_text(main_x + 98, content_y + 122, masked[0] ? masked : (state->user_field == 1 ? "|" : "click to type"), TEXT_BODY, masked[0] ? theme->text : theme->text_muted);
 
-        fb_draw_string(main_x + 16, content_y + 148, "New PW:", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 148, "New PW:", TEXT_BODY, theme->text_muted);
         draw_rounded_rect_blend(main_x + 92, content_y + 144, 150, 20, 6,
                                 state->user_field == 2 ? theme->accent_soft : theme->glass_aqua, 170);
         mask_password_str(state->new_pw, masked, sizeof(masked));
-        fb_draw_string(main_x + 98, content_y + 148,
-                       masked[0] ? masked : (state->user_field == 2 ? "|" : "click to type"),
-                       masked[0] ? theme->text : theme->text_muted, theme->glass_aqua);
+        ui_text(main_x + 98, content_y + 148, masked[0] ? masked : (state->user_field == 2 ? "|" : "click to type"), TEXT_BODY, masked[0] ? theme->text : theme->text_muted);
 
         draw_rounded_rect_blend(main_x + 250, content_y + 130, 86, 24, 8, theme->accent, 210);
-        fb_draw_string(main_x + 260, content_y + 136, "Save PW", COLOR_WHITE, theme->accent);
+        ui_text(main_x + 260, content_y + 136, "Save PW", TEXT_BODY, COLOR_WHITE);
 
         if (state->msg[0]) {
-            fb_draw_string(main_x + 16, content_y + 172, state->msg,
-                           state->msg_ok ? theme->accent : RGB(220, 72, 68), theme->dock_tint);
+            ui_text(main_x + 16, content_y + 172, state->msg, TEXT_BODY, state->msg_ok ? theme->accent : RGB(220, 72, 68));
         }
 
         /* Accounts list */
-        fb_draw_string(main_x + 16, content_y + 194, "Registered Accounts:", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 194, "Registered Accounts:", TEXT_BODY, theme->text_muted);
         int ucount = users_count();
         for (int ui = 0; ui < ucount && ui < 4; ui++) {
             const UserAccount *acc = users_get_by_index(ui);
@@ -987,86 +1027,84 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
             str_append(aline, sizeof(aline), " - ");
             str_append(aline, sizeof(aline), acc->full_name);
             if (acc->is_admin) str_append(aline, sizeof(aline), " [Admin]");
-            fb_draw_string(main_x + 24, content_y + 212 + ui * 16, aline, theme->text, theme->dock_tint);
+            ui_text(main_x + 24, content_y + 212 + ui * 16, aline, TEXT_BODY, theme->text);
         }
 
         /* Bottom action buttons: Add Account, Lock Screen, Switch User */
         int by = content_y + content_h - 36;
         draw_rounded_rect_blend(main_x + 16, by, 112, 24, 8, theme->accent, 210);
-        fb_draw_string(main_x + 24, by + 6, "+ Add Account", COLOR_WHITE, theme->accent);
+        ui_text(main_x + 24, by + 6, "+ Add Account", TEXT_BODY, COLOR_WHITE);
 
         draw_rounded_rect_blend(main_x + 136, by, 96, 24, 8, theme->accent_soft, 180);
-        fb_draw_string(main_x + 144, by + 6, "Lock Screen", theme->text, theme->accent_soft);
+        ui_text(main_x + 144, by + 6, "Lock Screen", TEXT_BODY, theme->text);
 
         draw_rounded_rect_blend(main_x + 240, by, 98, 24, 8, theme->accent_soft, 180);
-        fb_draw_string(main_x + 248, by + 6, "Switch User", theme->text, theme->accent_soft);
+        ui_text(main_x + 248, by + 6, "Switch User", TEXT_BODY, theme->text);
     } else if (state->page == SETTINGS_PAGE_WALLPAPER) {
-        fb_draw_string(main_x + 16, content_y + 16, "Wallpaper", theme->text, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "Wallpaper", TEXT_HEADLINE, theme->text);
         fb_fill_rect(main_x + 16, content_y + 48, 80, 50, theme->accent_soft);
-        fb_draw_string(main_x + 20, content_y + 104, "Tahoe Light", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 20, content_y + 104, "Tahoe Light", TEXT_BODY, theme->text_muted);
         fb_fill_rect(main_x + 120, content_y + 48, 80, 50, theme->accent);
-        fb_draw_string(main_x + 124, content_y + 104, "Tahoe Dark", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 124, content_y + 104, "Tahoe Dark", TEXT_BODY, theme->text_muted);
     } else if (state->page == SETTINGS_PAGE_DOCK) {
-        fb_draw_string(main_x + 16, content_y + 16, "Dock & Menu Bar", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 16, content_y + 42, "Dock Size", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "Dock & Menu Bar", TEXT_HEADLINE, theme->text);
+        ui_text(main_x + 16, content_y + 42, "Dock Size", TEXT_BODY, theme->text_muted);
         fb_fill_rect(main_x + 120, content_y + 38, settings->dock_size, 10, theme->accent_soft);
-        fb_draw_string(main_x + 16, content_y + 64, "Magnification", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 64, "Magnification", TEXT_BODY, theme->text_muted);
         fb_fill_rect(main_x + 120, content_y + 60, settings->dock_magnify, 10, theme->accent);
     } else if (state->page == SETTINGS_PAGE_KEYBOARD) {
-        fb_draw_string(main_x + 16, content_y + 16, "Keyboard", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 16, content_y + 42,
-                       settings->shortcuts_enabled ? "Shortcuts: On" : "Shortcuts: Off",
-                       theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "Keyboard", TEXT_HEADLINE, theme->text);
+        ui_text(main_x + 16, content_y + 42, settings->shortcuts_enabled ? "Shortcuts: On" : "Shortcuts: Off", TEXT_BODY, theme->text_muted);
     } else if (state->page == SETTINGS_PAGE_MOUSE) {
-        fb_draw_string(main_x + 16, content_y + 16, "Mouse/Trackpad", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 16, content_y + 42, "Tracking Speed", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "Mouse/Trackpad", TEXT_HEADLINE, theme->text);
+        ui_text(main_x + 16, content_y + 42, "Tracking Speed", TEXT_BODY, theme->text_muted);
         fb_fill_rect(main_x + 140, content_y + 38, settings->mouse_speed * 20, 10, theme->accent_soft);
     } else if (state->page == SETTINGS_PAGE_NETWORK) {
         const NetInfo *ni = net_info();
         char line[80], a[20], b[20];
-        fb_draw_string(main_x + 16, content_y + 16, "Network", theme->text, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "Network", TEXT_HEADLINE, theme->text);
         int ry = content_y + APPEARANCE_ROW_Y(0);
-        fb_draw_string(main_x + 16, ry + 5, "Wi-Fi", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 72, ry + 5, network_status_text(), theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, ry + 5, "Wi-Fi", TEXT_BODY, theme->text);
+        ui_text(main_x + 72, ry + 5, network_status_text(), TEXT_BODY, theme->text_muted);
         if (ni->present) draw_switch(main_x + main_w - 58, ry + 3, ni->enabled);
         int ly = ry + 34;
         if (ni->present) {
             net_format_mac(ni->mac, a, sizeof(a));
             line[0] = '\0'; str_append(line, sizeof(line), "Adapter   "); str_append(line, sizeof(line), ni->driver);
             str_append(line, sizeof(line), "  "); str_append(line, sizeof(line), a);
-            fb_draw_string(main_x + 16, ly, line, theme->text_muted, theme->dock_tint); ly += 18;
+            ui_text(main_x + 16, ly, line, TEXT_BODY, theme->text_muted); ly += 18;
             if (ni->configured) {
                 net_format_ip(ni->ip, a, sizeof(a)); net_format_ip(ni->netmask, b, sizeof(b));
                 line[0] = '\0'; str_append(line, sizeof(line), "Address   "); str_append(line, sizeof(line), a);
                 str_append(line, sizeof(line), " / "); str_append(line, sizeof(line), b);
-                fb_draw_string(main_x + 16, ly, line, theme->text, theme->dock_tint); ly += 18;
+                ui_text(main_x + 16, ly, line, TEXT_BODY, theme->text); ly += 18;
                 net_format_ip(ni->gateway, a, sizeof(a)); net_format_ip(ni->dns, b, sizeof(b));
                 line[0] = '\0'; str_append(line, sizeof(line), "Router    "); str_append(line, sizeof(line), a);
                 str_append(line, sizeof(line), "   DNS "); str_append(line, sizeof(line), b);
-                fb_draw_string(main_x + 16, ly, line, theme->text, theme->dock_tint); ly += 18;
+                ui_text(main_x + 16, ly, line, TEXT_BODY, theme->text); ly += 18;
             }
             char n1[24], n2[24];
             utoa(ni->rx_bytes / 1024, n1, 10); utoa(ni->tx_bytes / 1024, n2, 10);
             line[0] = '\0'; str_append(line, sizeof(line), "Traffic   received "); str_append(line, sizeof(line), n1);
             str_append(line, sizeof(line), " KB, sent "); str_append(line, sizeof(line), n2); str_append(line, sizeof(line), " KB");
-            fb_draw_string(main_x + 16, ly, line, theme->text_muted, theme->dock_tint); ly += 26;
+            ui_text(main_x + 16, ly, line, TEXT_BODY, theme->text_muted); ly += 26;
             draw_rounded_rect_blend(main_x + 16, ly, 120, 22, 8, theme->accent_soft, ni->enabled ? 220 : 100);
-            fb_draw_string(main_x + 28, ly + 3, "Renew Lease", theme->text, theme->accent_soft);
+            ui_text(main_x + 28, ly + 3, "Renew Lease", TEXT_BODY, theme->text);
             ly += 36;
         } else {
-            fb_draw_string(main_x + 16, ly, "No network adapter was found.", theme->text_muted, theme->dock_tint); ly += 18;
-            fb_draw_string(main_x + 16, ly, "Start QEMU with virtio-net (run-qemu.sh does).", theme->text_muted, theme->dock_tint);
+            ui_text(main_x + 16, ly, "No network adapter was found.", TEXT_BODY, theme->text_muted); ly += 18;
+            ui_text(main_x + 16, ly, "Start QEMU with virtio-net (run-qemu.sh does).", TEXT_BODY, theme->text_muted);
             ly += 36;
         }
-        fb_draw_string(main_x + 16, ly, "Bluetooth", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 112, ly, "No Bluetooth hardware", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, ly, "Bluetooth", TEXT_BODY, theme->text);
+        ui_text(main_x + 112, ly, "No Bluetooth hardware", TEXT_BODY, theme->text_muted);
         ly += 30;
-        fb_draw_string(main_x + 16, ly, "In a VM the connection is a virtual", theme->text_muted, theme->dock_tint);
-        fb_draw_string(main_x + 16, ly + 16, "Ethernet adapter, shown here as Wi-Fi.", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, ly, "In a VM the connection is a virtual", TEXT_BODY, theme->text_muted);
+        ui_text(main_x + 16, ly + 16, "Ethernet adapter, shown here as Wi-Fi.", TEXT_BODY, theme->text_muted);
     } else if (state->page == SETTINGS_PAGE_ABOUT) {
-        fb_draw_string(main_x + 16, content_y + 16, "About", theme->text, theme->dock_tint);
-        fb_draw_string(main_x + 16, content_y + 42, "ojjyOS v3", theme->text_muted, theme->dock_tint);
-        fb_draw_string(main_x + 16, content_y + 60, "Created by Jonas Lee", theme->text_muted, theme->dock_tint);
+        ui_text(main_x + 16, content_y + 12, "About", TEXT_HEADLINE, theme->text);
+        ui_text(main_x + 16, content_y + 42, "ojjyOS v3", TEXT_BODY, theme->text_muted);
+        ui_text(main_x + 16, content_y + 60, "Created by Jonas Lee", TEXT_BODY, theme->text_muted);
     }
 }
 
@@ -1103,8 +1141,7 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
 
-    fb_draw_string(content_x + 10, content_y + 8,
-                   edit->file_path[0] ? edit->file_path : "Untitled", theme->text, theme->dock_tint);
+    ui_text(content_x + 10, content_y + 8, edit->file_path[0] ? edit->file_path : "Untitled", TEXT_BODY, theme->text);
 
     int visible = (content_h - 60) / 16;
     if (visible < 1) visible = 1;
@@ -1149,8 +1186,7 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
     utoa(edit->cursor_col + 1, num, 10);
     str_append(status, sizeof(status), num);
 
-    fb_draw_string(content_x + 10, content_y + content_h - 18, status,
-                   theme->text_muted, theme->dock_tint);
+    ui_text(content_x + 10, content_y + content_h - 18, status, TEXT_BODY, theme->text_muted);
 }
 
 static void calendar_format_time(const CalendarEvent *ev, char *out, size_t size)
@@ -1235,17 +1271,17 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
     char num[8];
     utoa(cal->year, num, 10);
     str_append(title, sizeof(title), num);
-    fb_draw_text_scaled(header_x + 10, content_y + 4, title, (int)strlen(title), theme->text, 1, true);
+    ui_text(header_x + 10, content_y + 2, title, TEXT_HEADLINE, theme->text);
 
     /* Navigation on the right; view tabs under the title (they used to
      * collide in the ~300px header). Click geometry mirrors this. */
     int nav_y = content_y + 10;
     draw_rounded_rect_blend(header_x + header_w - 98, nav_y, 20, 20, 6, theme->accent_soft, 200);
-    fb_draw_string(header_x + header_w - 92, nav_y + 2, "<", theme->text, theme->dock_tint);
+    ui_text(header_x + header_w - 92, nav_y + 2, "<", TEXT_BODY, theme->text);
     draw_rounded_rect_blend(header_x + header_w - 74, nav_y, 20, 20, 6, theme->accent_soft, 200);
-    fb_draw_string(header_x + header_w - 68, nav_y + 2, ">", theme->text, theme->dock_tint);
+    ui_text(header_x + header_w - 68, nav_y + 2, ">", TEXT_BODY, theme->text);
     draw_rounded_rect_blend(header_x + header_w - 50, nav_y, 46, 20, 8, theme->accent, 220);
-    fb_draw_string(header_x + header_w - 47, nav_y + 2, "Today", COLOR_WHITE, theme->accent);
+    ui_text(header_x + header_w - 47, nav_y + 2, "Today", TEXT_BODY, COLOR_WHITE);
 
     int view_x = header_x + 6;
     const char *views[] = { "Month", "Week", "Day", "Agenda" };
@@ -1254,16 +1290,16 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         if (cal->view == (CalendarView)i) {
             draw_rounded_rect_blend(vx, content_y + header_h - 18, 48, 16, 8, theme->accent, 60);
         }
-        fb_draw_string(vx + 4, content_y + header_h - 16, views[i], theme->text_muted, theme->dock_tint);
+        ui_text(vx + 4, content_y + header_h - 16, views[i], TEXT_BODY, theme->text_muted);
     }
 
     draw_rounded_rect_blend(content_x, content_y, sidebar_w, content_h, 12, theme->dock_tint, 130);
-    fb_draw_string(content_x + 10, content_y + 10, "Calendars", theme->text_muted, theme->dock_tint);
-    fb_draw_string(content_x + 10, content_y + 30, "Local", theme->text, theme->dock_tint);
-    fb_draw_string(content_x + 10, content_y + 48, "Personal", theme->text, theme->dock_tint);
-    fb_draw_string(content_x + 10, content_y + 66, "Work", theme->text, theme->dock_tint);
+    ui_text(content_x + 10, content_y + 10, "Calendars", TEXT_BODY, theme->text_muted);
+    ui_text(content_x + 10, content_y + 30, "Local", TEXT_BODY, theme->text);
+    ui_text(content_x + 10, content_y + 48, "Personal", TEXT_BODY, theme->text);
+    ui_text(content_x + 10, content_y + 66, "Work", TEXT_BODY, theme->text);
     draw_rounded_rect_blend(content_x + 10, content_y + content_h - 36, sidebar_w - 20, 22, 10, theme->accent, 60);
-    fb_draw_string(content_x + 20, content_y + content_h - 32, "New Event", theme->text, theme->dock_tint);
+    ui_text(content_x + 20, content_y + content_h - 32, "New Event", TEXT_BODY, theme->text);
 
     int grid_x = header_x;
     int grid_y = content_y + header_h + 6;
@@ -1275,7 +1311,7 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         int cell_w = grid_w / 7;
         int cell_h = (grid_h - 20) / 6;
         for (int i = 0; i < 7; i++) {
-            fb_draw_string(grid_x + i * cell_w + 6, grid_y, weekdays[i], theme->text_muted, theme->dock_tint);
+            ui_text(grid_x + i * cell_w + 6, grid_y, weekdays[i], TEXT_BODY, theme->text_muted);
         }
 
         int first_wd = weekday_of_date(cal->year, cal->month, 1);
@@ -1296,7 +1332,7 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
                     }
                     char numstr[4];
                     utoa(day, numstr, 10);
-                    fb_draw_string(cx + 8, cy + 6, numstr, theme->text, theme->dock_tint);
+                    ui_text(cx + 8, cy + 6, numstr, TEXT_BODY, theme->text);
 
                     int indices[4];
                     int count = calendar_events_for_day(cal, cal->year, cal->month, day, indices, 4);
@@ -1305,12 +1341,11 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
                     for (int e = 0; e < shown; e++) {
                         CalendarEvent *ev = &cal->events[indices[e]];
                         draw_rounded_rect_blend(cx + 3, chip_y, cell_w - 6, 14, 6, theme->accent, 90);
-                        int n = MIN((int)strlen(ev->title), (cell_w - 10) / FONT_WIDTH);
-                        fb_draw_text_scaled(cx + 6, chip_y - 1, ev->title, n, theme->text, 1, false);
+                        text_draw_fit(surface(), cx + 6, text_y_center(chip_y, 14, TEXT_SMALL), ev->title, TEXT_SMALL, theme->text, cell_w - 12);
                         chip_y += 15;
                     }
                     if (count > 2) {
-                        fb_draw_string(cx + 10, chip_y + 2, "+", theme->text_muted, theme->dock_tint);
+                        ui_text(cx + 10, chip_y + 2, "+", TEXT_BODY, theme->text_muted);
                     }
                     day++;
                 }
@@ -1326,7 +1361,7 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
             draw_rounded_rect_blend(cx + 2, grid_y, cell_w - 4, grid_h, 8, theme->dock_tint, 100);
             char numstr[4];
             utoa(day, numstr, 10);
-            fb_draw_string(cx + 8, grid_y + 6, numstr, theme->text, theme->dock_tint);
+            ui_text(cx + 8, grid_y + 6, numstr, TEXT_BODY, theme->text);
 
             int indices[6];
             int count = calendar_events_for_day(cal, cal->year, cal->month, day, indices, 6);
@@ -1334,8 +1369,7 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
             for (int e = 0; e < count && e < 4; e++) {
                 CalendarEvent *ev = &cal->events[indices[e]];
                 draw_rounded_rect_blend(cx + 3, ey, cell_w - 6, 14, 6, theme->accent, 90);
-                int n = MIN((int)strlen(ev->title), (cell_w - 10) / FONT_WIDTH);
-                fb_draw_text_scaled(cx + 6, ey - 1, ev->title, n, theme->text, 1, false);
+                text_draw_fit(surface(), cx + 6, text_y_center(ey, 14, TEXT_SMALL), ev->title, TEXT_SMALL, theme->text, cell_w - 12);
                 ey += 15;
             }
         }
@@ -1345,14 +1379,14 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         /* calendar_events_for_day returns the TOTAL match count; only the
          * first 10 indices are filled. Never iterate past the array. */
         int shown = MIN(count, 10);
-        fb_draw_string(grid_x + 10, grid_y + 6, "Day", theme->text_muted, theme->dock_tint);
+        ui_text(grid_x + 10, grid_y + 6, "Day", TEXT_BODY, theme->text_muted);
         int ey = grid_y + 24;
         for (int i = 0; i < shown; i++) {
             CalendarEvent *ev = &cal->events[indices[i]];
             char timebuf[16];
             calendar_format_time(ev, timebuf, sizeof(timebuf));
-            fb_draw_string(grid_x + 10, ey, timebuf, theme->text_muted, theme->dock_tint);
-            fb_draw_string(grid_x + 80, ey, ev->title, theme->text, theme->dock_tint);
+            ui_text(grid_x + 10, ey, timebuf, TEXT_BODY, theme->text_muted);
+            ui_text(grid_x + 80, ey, ev->title, TEXT_BODY, theme->text);
             ey += 18;
         }
     } else {
@@ -1361,8 +1395,8 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
             CalendarEvent *ev = &cal->events[i];
             char timebuf[16];
             calendar_format_time(ev, timebuf, sizeof(timebuf));
-            fb_draw_string(grid_x + 8, ey, timebuf, theme->text_muted, theme->dock_tint);
-            fb_draw_string(grid_x + 72, ey, ev->title, theme->text, theme->dock_tint);
+            ui_text(grid_x + 8, ey, timebuf, TEXT_BODY, theme->text_muted);
+            ui_text(grid_x + 72, ey, ev->title, TEXT_BODY, theme->text);
             ey += 18;
         }
     }
@@ -1380,12 +1414,12 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         char dn[4];
         utoa((uint64_t)cal->selected_day, dn, 10);
         str_append(head, sizeof(head), dn);
-        fb_draw_string(agenda_x + 10, content_y + 10, head, theme->text_muted, theme->dock_tint);
+        ui_text(agenda_x + 10, content_y + 10, head, TEXT_BODY, theme->text_muted);
     }
     int indices[8];
     int count = calendar_events_for_day(cal, cal->year, cal->month, cal->selected_day, indices, 8);
     int ay = content_y + 32;
-    if (count == 0) fb_draw_string(agenda_x + 10, ay, "No events", theme->text_muted, theme->dock_tint);
+    if (count == 0) ui_text(agenda_x + 10, ay, "No events", TEXT_BODY, theme->text_muted);
     for (int i = 0; i < count && i < 6; i++) {
         /* Two lines per event: time, then the (clipped) title. */
         CalendarEvent *ev = &cal->events[indices[i]];
@@ -1394,9 +1428,8 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         if (indices[i] == cal->selected_event) {
             draw_rounded_rect_blend(agenda_x + 6, ay - 2, agenda_w - 12, 34, 8, theme->accent, 40);
         }
-        fb_draw_string(agenda_x + 12, ay, timebuf, theme->text_muted, theme->dock_tint);
-        int n = MIN((int)strlen(ev->title), (agenda_w - 24) / FONT_WIDTH);
-        fb_draw_text_scaled(agenda_x + 12, ay + 15, ev->title, n, theme->text, 1, true);
+        ui_text(agenda_x + 12, ay, timebuf, TEXT_BODY, theme->text_muted);
+        text_draw_fit(surface(), agenda_x + 12, ay + 15, ev->title, TEXT_BODY_BOLD, theme->text, agenda_w - 24);
         ay += 38;
     }
 
@@ -1407,14 +1440,10 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         if (cal->edit_field == 1) label = "Time";
         if (cal->edit_field == 2) label = "Location";
         if (cal->edit_field == 3) label = "Notes";
-        fb_draw_string(agenda_x + 12, content_y + content_h - 36, label,
-                       theme->text_muted, theme->dock_tint);
-        fb_draw_string(agenda_x + 70, content_y + content_h - 36,
-                       cal->edit_buffer[0] ? cal->edit_buffer : "",
-                       theme->text, theme->dock_tint);
+        ui_text(agenda_x + 12, content_y + content_h - 36, label, TEXT_BODY, theme->text_muted);
+        ui_text(agenda_x + 70, content_y + content_h - 36, cal->edit_buffer[0] ? cal->edit_buffer : "", TEXT_BODY, theme->text);
         if (cal->edit_error) {
-            fb_draw_string(agenda_x + 12, content_y + content_h - 20,
-                           "Invalid time", theme->text_muted, theme->dock_tint);
+            ui_text(agenda_x + 12, content_y + content_h - 20, "Invalid time", TEXT_BODY, theme->text_muted);
         }
     }
 }
@@ -1422,7 +1451,7 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
 static void draw_preview_window(PreviewState *preview, int content_x, int content_y, int content_w, int content_h)
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
-    fb_draw_string(content_x + 12, content_y + 12, "Preview", theme->text, theme->dock_tint);
+    ui_text(content_x + 12, content_y + 12, "Preview", TEXT_BODY, theme->text);
 
     int thumb_y = content_y + 40;
     int thumb_x = content_x + 16;
@@ -1436,11 +1465,10 @@ static void draw_preview_window(PreviewState *preview, int content_x, int conten
         fb_fill_rect(thumb_x + 120 + gap, thumb_y, 120, 80, theme->accent);
     }
 
-    fb_draw_string(thumb_x + 10, thumb_y + 90, "Tahoe Light", theme->text_muted, theme->dock_tint);
-    fb_draw_string(thumb_x + 140 + gap, thumb_y + 90, "Tahoe Dark", theme->text_muted, theme->dock_tint);
+    ui_text(thumb_x + 10, thumb_y + 90, "Tahoe Light", TEXT_BODY, theme->text_muted);
+    ui_text(thumb_x + 140 + gap, thumb_y + 90, "Tahoe Dark", TEXT_BODY, theme->text_muted);
 
-    fb_draw_string(content_x + 12, content_y + content_h - 18,
-                   preview->current, theme->text_muted, theme->dock_tint);
+    ui_text(content_x + 12, content_y + content_h - 18, preview->current, TEXT_BODY, theme->text_muted);
 }
 
 /* Shared helpers for app modules in their own files (ui/draw.h). */
@@ -1460,41 +1488,23 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 110);
 
-    /* Wave banner */
-    {
-        /* Right of the title block so it never draws over the text. */
-        static const char *about_waves[] = {
-            "~  ~  ojjyOS  ~  ~",
-            "~~~  ~  ~  ~  ~~~ ",
-            " ~~  ~~~  ~~~  ~~ ",
-        };
-        int max_w = (int)strlen(about_waves[0]) * FONT_WIDTH;
-        int wx = content_x + content_w - max_w - 20;
-        if (wx >= content_x + 24 + 20 * FONT_WIDTH + 16) {
-            fb_draw_string(wx, content_y + 16, about_waves[0], theme->accent, theme->dock_tint);
-            fb_draw_string(wx, content_y + 34, about_waves[1], theme->accent_soft, theme->dock_tint);
-            fb_draw_string(wx, content_y + 52, about_waves[2], theme->accent_soft, theme->dock_tint);
-        }
-    }
+    /* App icon on the right, title block on the left */
+    draw_icon_id(ICON_ABOUT, content_x + content_w - 108, content_y + 10, 88, 255);
 
     int cx = content_x + 24;
-    fb_draw_string(cx, content_y + 16, "ojjyOS", theme->text, theme->dock_tint);
-    fb_draw_string(cx, content_y + 36, "Version 3.1.0", theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx, content_y + 56, "Created by Jonas Lee", theme->accent, theme->dock_tint);
+    ui_text(cx, content_y + 8, "ojjyOS", TEXT_LARGE, theme->text);
+    ui_text(cx, content_y + 42, "Version 3.1.0  \xE2\x80\xA2  Tahoe", TEXT_BODY, theme->text_muted);
+    ui_text(cx, content_y + 58, "Created by Jonas Lee", TEXT_BODY_MEDIUM, theme->accent);
 
-    int rule_y = content_y + 76;
-    fb_fill_rect(cx, rule_y, content_w - 48, 1, theme->accent_soft);
+    int rule_y = content_y + 80;
+    draw_rounded_rect_blend(cx, rule_y, content_w - 48 - 110, 1, 0, theme->text_muted, 60);
 
     char buf[96];
 
-    fb_draw_string(cx, content_y + 92, "A custom operating system with a",
-                   theme->text, theme->dock_tint);
-    fb_draw_string(cx, content_y + 110, "macOS Tahoe-inspired user interface.",
-                   theme->text, theme->dock_tint);
-    fb_draw_string(cx, content_y + 130, "Built from scratch - not based on",
-                   theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx, content_y + 148, "Linux, BSD, Windows or macOS.",
-                   theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + 92, "A custom operating system with a", TEXT_BODY, theme->text);
+    ui_text(cx, content_y + 110, "macOS Tahoe-inspired user interface.", TEXT_BODY, theme->text);
+    ui_text(cx, content_y + 130, "Built from scratch - not based on", TEXT_BODY, theme->text_muted);
+    ui_text(cx, content_y + 148, "Linux, BSD, Windows or macOS.", TEXT_BODY, theme->text_muted);
 
     utoa(fb_get_width(), buf, 10);
     str_append(buf, sizeof(buf), " x ");
@@ -1502,13 +1512,13 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
     utoa(fb_get_height(), num, 10);
     str_append(buf, sizeof(buf), num);
     str_append(buf, sizeof(buf), " display");
-    fb_draw_string(cx, content_y + 176, buf, theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + 176, buf, TEXT_BODY, theme->text_muted);
 
     buf[0] = '\0';
     utoa(pmm_get_total_memory() / (1024 * 1024), num, 10);
     str_append(buf, sizeof(buf), num);
     str_append(buf, sizeof(buf), " MB memory");
-    fb_draw_string(cx, content_y + 194, buf, theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + 194, buf, TEXT_BODY, theme->text_muted);
 }
 
 /* ================================================================== */
@@ -1625,16 +1635,19 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
     int lcd_y = content_y + 10;
     int lcd_w = content_w - 24;
     int lcd_h = 44;
-    draw_rounded_rect_blend(lcd_x, lcd_y, lcd_w, lcd_h, 10, theme->midnight, 210);
+    gfx_round_rect_vgradient(surface(), lcd_x, lcd_y, lcd_w, lcd_h, 10, RGB(36, 42, 56), RGB(20, 24, 34), 245);
 
     if (calc->op) {
+        static const char *const ops[4][2] = { { "/", "\xC3\xB7" }, { "*", "\xC3\x97" }, { "-", "\xE2\x88\x92" }, { "+", "+" } };
         char op_str[4] = { calc->op, '\0', '\0', '\0' };
-        fb_draw_string(lcd_x + 10, lcd_y + 8, op_str, theme->accent_soft, theme->midnight);
+        const char *shown = op_str;
+        for (int i = 0; i < 4; i++) if (op_str[0] == ops[i][0][0]) shown = ops[i][1];
+        ui_text_mid(lcd_x + 12, lcd_y, lcd_h, shown, TEXT_TITLE, theme->accent_soft);
     }
-    int dlen = (int)strlen(calc->display);
-    int tx = lcd_x + lcd_w - 12 - dlen * FONT_WIDTH;
-    if (tx < lcd_x + 10) tx = lcd_x + 10;
-    fb_draw_string(tx, lcd_y + 18, calc->display, COLOR_WHITE, theme->midnight);
+    /* Big right-aligned readout; long numbers step down to a smaller face */
+    TextStyle ds = text_width(calc->display, TEXT_LARGE) <= lcd_w - 44 ? TEXT_LARGE : TEXT_HEADLINE;
+    int dw = MIN(text_width(calc->display, ds), lcd_w - 44);
+    text_draw_fit(surface(), lcd_x + lcd_w - 14 - dw, text_y_center(lcd_y, lcd_h, ds), calc->display, ds, COLOR_WHITE, lcd_w - 44);
 
     static const char *labels[5][4] = {
         { "C",  "+/-", "%",  "/" },
@@ -1654,14 +1667,21 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
         for (int c = 0; c < 4; c++) {
             int bx = lcd_x + c * (cell_w + 6);
             int by = grid_y + r * (cell_h + 6);
-            Color bg = (c == 3) ? theme->accent :
-                       (r == 0 ? theme->accent_soft : theme->glass_aqua);
-            uint8_t alpha = (c == 3) ? 220 : 150;
-            draw_rounded_rect_blend(bx, by, cell_w, cell_h, 8, bg, alpha);
             const char *lbl = labels[r][c];
-            int lx = bx + (cell_w - (int)strlen(lbl) * FONT_WIDTH) / 2;
-            int ly = by + (cell_h - FONT_HEIGHT) / 2;
-            fb_draw_string(lx, ly, lbl, (c == 3) ? COLOR_WHITE : theme->text, bg);
+            static const char *const pretty[5][4] = {
+                { "C", "\xC2\xB1", "%", "\xC3\xB7" }, { "7", "8", "9", "\xC3\x97" },
+                { "4", "5", "6", "\xE2\x88\x92" }, { "1", "2", "3", "+" }, { "0", ".", "\xE2\x8C\xAB", "=" } };
+            if (c == 3)
+                gfx_round_rect_vgradient(surface(), bx, by, cell_w, cell_h, 9, RGB(255, 176, 64), RGB(245, 140, 20), 255);
+            else if (r == 0)
+                draw_rounded_rect_blend(bx, by, cell_w, cell_h, 9, settings_get()->dark_mode ? RGB(96, 104, 118) : RGB(196, 206, 218), 235);
+            else
+                draw_rounded_rect_blend(bx, by, cell_w, cell_h, 9, settings_get()->dark_mode ? RGB(60, 66, 80) : COLOR_WHITE, 220);
+            const char *shown = pretty[r][c];
+            TextStyle ls = TEXT_TITLE;
+            if (text_width(shown, ls) > cell_w - 8) shown = lbl, ls = TEXT_BODY_BOLD;
+            int lx = bx + (cell_w - text_width(shown, ls)) / 2;
+            ui_text_mid(lx, by, cell_h, shown, ls, (c == 3) ? COLOR_WHITE : theme->text);
         }
     }
 }
@@ -1675,14 +1695,14 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
 
     int cx = content_x + 14;
-    fb_draw_string(cx, content_y + 10, "ojjyOS Activity Monitor", theme->text, theme->dock_tint);
+    ui_text(cx, content_y + 10, "ojjyOS Activity Monitor", TEXT_BODY, theme->text);
 
 #if defined(__aarch64__)
     const char *arch_str = "Arch: ARM64 (EL1) on QEMU virt";      /* TCG runner, not HVF */
 #else
     const char *arch_str = "Arch: x86_64 Long Mode";
 #endif
-    fb_draw_string(cx, content_y + 28, arch_str, theme->accent, theme->dock_tint);
+    ui_text(cx, content_y + 28, arch_str, TEXT_BODY, theme->accent);
 
     /* Uptime + Active User + Syscalls */
     uint64_t secs = timer_get_ticks() / 1000;
@@ -1700,7 +1720,7 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     str_append(up_line, sizeof(up_line), "  Syscalls: ");
     utoa(proc_get_total_syscalls(), num, 10);
     str_append(up_line, sizeof(up_line), num);
-    fb_draw_string(cx, content_y + 46, up_line, theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + 46, up_line, TEXT_BODY, theme->text_muted);
 
     /* Physical Memory + Kernel Heap Usage */
     uint64_t total_mb = pmm_get_total_memory() / (1024 * 1024);
@@ -1726,10 +1746,10 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     utoa(kheap_get_alloc_count(), num, 10);
     str_append(mem_line, sizeof(mem_line), num);
     str_append(mem_line, sizeof(mem_line), " blks)");
-    fb_draw_string(cx, content_y + 66, mem_line, theme->text, theme->dock_tint);
+    ui_text(cx, content_y + 66, mem_line, TEXT_BODY, theme->text);
 
     int bar_x = cx + 64, bar_w = content_w - 28 - 64;
-    fb_draw_string(cx, content_y + 84, "Memory", theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + 84, "Memory", TEXT_BODY, theme->text_muted);
     draw_rounded_rect_blend(bar_x, content_y + 86, bar_w, 12, 6, theme->glass_aqua, 140);
     int fill_w = (int)((used_mb * (uint64_t)bar_w) / total_mb);
     if (fill_w < 12) fill_w = 12;
@@ -1753,17 +1773,17 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
         utoa(ni->tx_bytes / 1024, num, 10);
         str_append(net_line, sizeof(net_line), num);
         str_append(net_line, sizeof(net_line), " KB");
-        fb_draw_string(cx, content_y + 104, net_line, theme->text, theme->dock_tint);
+        ui_text(cx, content_y + 104, net_line, TEXT_BODY, theme->text);
     }
 
     /* Kernel & User Process Table */
-    fb_draw_string(cx, content_y + 126, "Processes", theme->text, theme->dock_tint);
-    fb_draw_string(cx + 4,   content_y + 144, "PID",     theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 48,  content_y + 144, "Process", theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 188, content_y + 144, "User",    theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 268, content_y + 144, "State",   theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 348, content_y + 144, "Ticks",   theme->text_muted, theme->dock_tint);
-    fb_draw_string(cx + 416, content_y + 144, "Mem KB",  theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + 126, "Processes", TEXT_BODY, theme->text);
+    ui_text(cx + 4, content_y + 144, "PID", TEXT_BODY, theme->text_muted);
+    ui_text(cx + 48, content_y + 144, "Process", TEXT_BODY, theme->text_muted);
+    ui_text(cx + 188, content_y + 144, "User", TEXT_BODY, theme->text_muted);
+    ui_text(cx + 268, content_y + 144, "State", TEXT_BODY, theme->text_muted);
+    ui_text(cx + 348, content_y + 144, "Ticks", TEXT_BODY, theme->text_muted);
+    ui_text(cx + 416, content_y + 144, "Mem KB", TEXT_BODY, theme->text_muted);
 
     int pcount = proc_count();
     int max_rows = (content_h - 190) / 16;
@@ -1774,16 +1794,14 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
         if (!pe) continue;
         int ry = content_y + 162 + i * 16;
         utoa(pe->pid, num, 10);
-        fb_draw_string(cx + 4,   ry, num, theme->text_muted, theme->dock_tint);
-        fb_draw_string(cx + 48,  ry, pe->name, theme->text, theme->dock_tint);
-        fb_draw_string(cx + 188, ry, pe->owner, theme->text_muted, theme->dock_tint);
-        fb_draw_string(cx + 268, ry, proc_state_name(pe->state),
-                       (pe->state == PROC_RUNNING) ? theme->accent : theme->text_muted,
-                       theme->dock_tint);
+        ui_text(cx + 4, ry, num, TEXT_BODY, theme->text_muted);
+        ui_text(cx + 48, ry, pe->name, TEXT_BODY, theme->text);
+        ui_text(cx + 188, ry, pe->owner, TEXT_BODY, theme->text_muted);
+        ui_text(cx + 268, ry, proc_state_name(pe->state), TEXT_BODY, (pe->state == PROC_RUNNING) ? theme->accent : theme->text_muted);
         utoa(pe->cpu_ticks, num, 10);
-        fb_draw_string(cx + 348, ry, num, theme->text_muted, theme->dock_tint);
+        ui_text(cx + 348, ry, num, TEXT_BODY, theme->text_muted);
         utoa(pe->memory_bytes / 1024, num, 10);
-        fb_draw_string(cx + 416, ry, num, theme->text_muted, theme->dock_tint);
+        ui_text(cx + 416, ry, num, TEXT_BODY, theme->text_muted);
     }
 
     /* Open Windows / Tasks summary at bottom */
@@ -1797,7 +1815,7 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
     str_append(task_line, sizeof(task_line), num);
     str_append(task_line, sizeof(task_line), "   Active: ");
     str_append(task_line, sizeof(task_line), active_app_name);
-    fb_draw_string(cx, content_y + content_h - 20, task_line, theme->text_muted, theme->dock_tint);
+    ui_text(cx, content_y + content_h - 20, task_line, TEXT_BODY, theme->text_muted);
 }
 
 static void draw_window(int idx)
@@ -1937,10 +1955,8 @@ static void draw_window(int idx)
         int pr = r > 10 ? r - 6 : r;
 
         draw_rounded_rect_blend(panel_x, panel_y, panel_w, panel_h, pr, theme->accent, 40);
-        fb_draw_string(panel_x + 20, panel_y + 16, "Glass Panel",
-                       theme->text, blend(theme->accent, theme->glass_aqua, 40));
-        fb_draw_string(panel_x + 20, panel_y + 36, "Tahoe material demo",
-                       theme->text_muted, blend(theme->accent, theme->glass_aqua, 30));
+        ui_text(panel_x + 20, panel_y + 16, "Glass Panel", TEXT_BODY, theme->text);
+        ui_text(panel_x + 20, panel_y + 36, "Tahoe material demo", TEXT_BODY, theme->text_muted);
 
         int dot_y = panel_y + 62;
         for (int i = 0; i < 3; i++) {
@@ -3134,15 +3150,20 @@ static void launch_app_index(int index, uint64_t now_ms)
     /* Built-in apps open their window directly. bundle_launch() is only
      * used for console-mode launches (e.g. the About app from the shell):
      * gating window creation on it made every app silently unlaunchable. */
-    app->running = true;
-    strncpy(active_app_name, app->name, sizeof(active_app_name) - 1);
-    active_app_name[sizeof(active_app_name) - 1] = '\0';
-    app->bounce_until = now_ms + 800;
-
     AppType type = app_type_from_bundle(app->bundle.manifest.bundle_id);
     if (type != APP_DEMO) {
-        app_open_window(type, app->name);
+        /* Only switch the menu bar once the window really exists. */
+        if (app_open_window(type, app->name) < 0) {
+            serial_printf("[UI] could not open a window for '%s'\n", app->name);
+            return;
+        }
+        app->running = true;
+        strncpy(active_app_name, app->name, sizeof(active_app_name) - 1);
+        active_app_name[sizeof(active_app_name) - 1] = '\0';
+        app->bounce_until = now_ms + 800;
     } else {
+        app->running = true;
+        app->bounce_until = now_ms + 800;
         bundle_launch(&app->bundle);
     }
 }

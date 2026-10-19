@@ -129,6 +129,21 @@ track's plan log, so the other AI sees it when rebasing.
 - Clock: Track N's `clock.c` keeps `rtc_read_time()`'s signature unchanged,
   so the desktop clock and Auto appearance pick up NTP time automatically.
 
+## 3a. CHANGE 2026-10-19: the browser moved to Track D
+
+Jonas asked Track D (Claude) to build a Chrome-like browser
+(`BROWSER_CHROME_PLAN.md`). From now on Track D owns
+`kernel/src/ui/browser.*`, `kernel/src/web/**` (incl. `http.c`),
+`kernel/src/image/**` (inflate/PNG/GIF/progressive JPEG, `image.h`),
+`tests/test_web.c`, `tests/test_jpeg.c`, `qemu_browser.py`, new
+`qemu_web_tour.py`, and the `ojjy:` pages in `sysroot/System/Web/`.
+That is Track N's old N5-N8. **Track N keeps N2-N4** (X.509, certificate and
+CertificateVerify checks in `net/tls.c`, root store, `clock.c` + SNTP) and
+TLS 1.2 / HelloRetryRequest, i.e. `crypto/**`, `net/**`, `drivers/rtc.c`,
+`pl031.c`. The browser reads Track N's verification result through a small
+TLS API (`TlsConn` fields) and shows it; if Track N needs a browser hook
+(e.g. the "not private" page), it asks via a `hook:` commit.
+
 ## 4. Working rules (both tracks)
 
 1. Work only in your own worktree. `cd` there first, every time.

@@ -1,5 +1,10 @@
 # NET_WEB_PLAN.md — Track N: secure HTTPS, clock, web images, downloads
 
+> **2026-10-19: N5-N8 (images, <img>, downloads, browser polish) moved to
+> Track D** (`BROWSER_CHROME_PLAN.md`, `PARALLEL_PLAN.md` §3a). Track N continues
+> with N2-N4 (X.509, certificate verification, clock) and TLS 1.2 only. Do not
+> edit `kernel/src/web/**`, `kernel/src/image/**` or `ui/browser.*`.
+
 Track N of `PARALLEL_PLAN.md` (read that first: worktree, branch, file
 ownership, publishing rules). Worktree `ojjyOS-kernel/ojjyOS-v3-net`,
 branch `net-web`. Another AI works on the desktop (Track D) at the same

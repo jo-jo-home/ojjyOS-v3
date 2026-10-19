@@ -1,5 +1,14 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-18, night): two AIs in parallel — read `PARALLEL_PLAN.md`
+
+Track D (desktop) in worktree `ojjyOS-v3-ui` / branch `desktop-polish`
+(`DESKTOP_PLAN.md`); Track N (HTTPS certificate verification — TLS
+currently skips it —, NTP, web images, downloads, Web app) in worktree
+`ojjyOS-v3-net` / branch `net-web` (`NET_WEB_PLAN.md`). Strict file
+ownership in `PARALLEL_PLAN.md` §3; both fast-forward `main`; the main
+folder (Jonas's, branch `ui-polish-3`) is not edited by either.
+
 ## LATEST (2026-10-18, evening): security pass — 6 credential/VFS holes fixed
 
 Jonas asked for a detailed improvement list + a routine bug/security

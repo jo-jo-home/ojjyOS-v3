@@ -14,6 +14,17 @@ kernel, storage, networking, desktop) compiled from the 2026-10-18
 "make the OS better + routine bug/security check" request; work its
 section 0 fixes before anything else here.
 
+## >>> Current round (2026-10-18 night): TWO AIs IN PARALLEL — read `PARALLEL_PLAN.md`
+
+- Track D (desktop: LG4, S1-S4, every app, hygiene) — worktree
+  `ojjyOS-v3-ui`, branch `desktop-polish`, plan `DESKTOP_PLAN.md`.
+- Track N (secure HTTPS with certificate verification, NTP clock, PNG +
+  progressive JPEG, `<img>`, downloads, Web app polish) — worktree
+  `ojjyOS-v3-net`, branch `net-web`, plan `NET_WEB_PLAN.md`, prompt
+  `docs/handoff-prompts/PROMPT_4_NET_WEB.md`.
+- File ownership and publishing rules: `PARALLEL_PLAN.md` §3–4. The kernel
+  core (scheduler etc.) waits for the next round (`PARALLEL_PLAN.md` §5).
+
 ---
 
 ## 0. Before you start (5 minutes)

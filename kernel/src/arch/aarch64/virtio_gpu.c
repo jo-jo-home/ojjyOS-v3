@@ -59,10 +59,7 @@ static VirtQueue ctrlq;
 static union {
     GpuHdr hdr; GpuCreate2D create; GpuAttach attach; GpuSetScanout scanout;
 } gpu_req __attribute__((aligned(16)));
-static GpuTransfer gpu_xfer __attribute__((aligned(16)));
-static GpuFlush gpu_flush_req __attribute__((aligned(16)));
 static union { GpuHdr hdr; GpuDisplayInfo info; } gpu_resp __attribute__((aligned(16)));
-static GpuHdr gpu_resp2 __attribute__((aligned(16)));
 
 static VirtioDev *gpu_handle;
 static uint32_t gpu_w, gpu_h;
@@ -97,8 +94,59 @@ static uint32_t gpu_command(const void *req, uint32_t req_len, uint32_t resp_len
     return gpu_resp.hdr.type;
 }
 
-/* Copy rectangle (x,y,w,h) of guest memory to the host and show it. Both
- * commands go out together as two chains, then we wait for both. */
+/* Screen updates are asynchronous: each update (TRANSFER_TO_HOST_2D +
+ * RESOURCE_FLUSH, two chains) gets its own slot of 4 descriptors and its
+ * own request/response buffers, so the CPU can go back to reading input
+ * while the host copies pixels. A synchronous round trip per cursor move
+ * used to cost several ms on a busy host. fb_present() calls
+ * virtio_gpu_sync() before overwriting the scanout memory, so the host
+ * never reads a half-copied frame. */
+#define GPU_SLOTS 8
+typedef struct {
+    GpuTransfer xfer;
+    GpuFlush flush;
+    GpuHdr resp_xfer, resp_flush;
+} __attribute__((aligned(16))) GpuSlot;
+static GpuSlot gpu_slots[GPU_SLOTS];
+static uint8_t gpu_slot_pending[GPU_SLOTS];      /* chains still with the host */
+static int gpu_nslots, gpu_inflight;
+
+static void gpu_reap(void)
+{
+    while (virtio_poll_used(&ctrlq, NULL)) {
+        int slot = ctrlq.free_head / 4;           /* poll_used leaves the chain head here */
+        if (slot < gpu_nslots && gpu_slot_pending[slot]) {
+            gpu_slot_pending[slot]--;
+            gpu_inflight--;
+        }
+    }
+}
+
+/* Wait (bounded) until no update is in flight, or until a slot is free. */
+static int gpu_wait_slot(bool all)
+{
+    uint64_t deadline = virtio_now_ms() + 2000;
+    for (;;) {
+        gpu_reap();
+        if (all ? gpu_inflight == 0 : true) {
+            if (all) return 0;
+            for (int i = 0; i < gpu_nslots; i++)
+                if (!gpu_slot_pending[i]) return i;
+        }
+        if (virtio_now_ms() > deadline) {
+            if (!gpu_broken) serial_printf("[VIRTIO-GPU] Device stopped answering\n");
+            gpu_broken = true;
+            return -1;
+        }
+    }
+}
+
+static void virtio_gpu_sync(void)
+{
+    if (gpu_ready && !gpu_broken && gpu_inflight) gpu_wait_slot(true);
+}
+
+/* Copy rectangle (x,y,w,h) of guest memory to the host and show it. */
 static void gpu_update(int x, int y, int w, int h)
 {
     if (!gpu_ready || gpu_broken) return;
@@ -109,24 +157,28 @@ static void gpu_update(int x, int y, int w, int h)
     if (w <= 0 || h <= 0) return;
     GpuRect r = { (uint32_t)x, (uint32_t)y, (uint32_t)w, (uint32_t)h };
 
-    memset(&gpu_xfer, 0, sizeof(gpu_xfer));
-    gpu_xfer.hdr.type = GPU_CMD_TRANSFER_TO_HOST;
-    gpu_xfer.r = r;
-    gpu_xfer.offset = ((uint64_t)y * gpu_w + (uint64_t)x) * 4;
-    gpu_xfer.resource_id = GPU_RESOURCE_ID;
-    memset(&gpu_flush_req, 0, sizeof(gpu_flush_req));
-    gpu_flush_req.hdr.type = GPU_CMD_RESOURCE_FLUSH;
-    gpu_flush_req.r = r;
-    gpu_flush_req.resource_id = GPU_RESOURCE_ID;
+    int slot = gpu_wait_slot(false);
+    if (slot < 0) return;
+    GpuSlot *s = &gpu_slots[slot];
+    memset(s, 0, sizeof(*s));
+    s->xfer.hdr.type = GPU_CMD_TRANSFER_TO_HOST;
+    s->xfer.r = r;
+    s->xfer.offset = ((uint64_t)y * gpu_w + (uint64_t)x) * 4;
+    s->xfer.resource_id = GPU_RESOURCE_ID;
+    s->flush.hdr.type = GPU_CMD_RESOURCE_FLUSH;
+    s->flush.r = r;
+    s->flush.resource_id = GPU_RESOURCE_ID;
 
-    ctrlq.free_head = 0;
-    uint16_t a = virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&gpu_xfer, sizeof(gpu_xfer), VRING_DESC_F_NEXT);
-    virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&gpu_resp.hdr, sizeof(GpuHdr), VRING_DESC_F_WRITE);
-    uint16_t b = virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&gpu_flush_req, sizeof(gpu_flush_req), VRING_DESC_F_NEXT);
-    virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&gpu_resp2, sizeof(GpuHdr), VRING_DESC_F_WRITE);
+    ctrlq.free_head = (uint16_t)(slot * 4);
+    uint16_t a = virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&s->xfer, sizeof(s->xfer), VRING_DESC_F_NEXT);
+    virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&s->resp_xfer, sizeof(GpuHdr), VRING_DESC_F_WRITE);
+    uint16_t b = virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&s->flush, sizeof(s->flush), VRING_DESC_F_NEXT);
+    virtio_desc_add(&ctrlq, (uint64_t)(uintptr_t)&s->resp_flush, sizeof(GpuHdr), VRING_DESC_F_WRITE);
+    gpu_slot_pending[slot] = 2;
+    gpu_inflight += 2;
     virtio_submit(&ctrlq, a);
     virtio_submit(&ctrlq, b);
-    gpu_wait(2);
+    if (gpu_nslots == 1) gpu_wait_slot(true);    /* tiny queue: stay synchronous */
 }
 
 /* Pick the screen size from the host's preferred mode for scanout 0. */
@@ -188,7 +240,10 @@ static bool gpu_bringup(VirtioDev *dev, BootInfo *info)
     info->fb_pitch = w * 4;
     info->fb_bpp = 32;
     fb_init(info);
+    gpu_nslots = ctrlq.size / 4 < GPU_SLOTS ? ctrlq.size / 4 : GPU_SLOTS;
+    if (gpu_nslots < 1) gpu_nslots = 1;
     fb_set_flush_hook(gpu_update);
+    fb_set_sync_hook(virtio_gpu_sync);
     serial_printf("[VIRTIO-GPU] Display %dx%d @ %p attached (%s)\n",
         (int)w, (int)h, pixels,
         dev->kind == VIRTIO_TRANSPORT_PCI ? "PCI" : "virtio-mmio");

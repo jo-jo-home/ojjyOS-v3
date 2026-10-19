@@ -47,6 +47,9 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr, uint64_t c
  * timer interrupt wakes the loop).
  */
 void a64_poll_input(void);
+/* Pointer/keyboard devices only (virtio-input, xHCI HID): safe to call in the
+ * middle of drawing a frame so the cursor keeps up with the hand. */
+void a64_poll_pointer(void);
 
 static inline void interrupts_enable(void)
 {

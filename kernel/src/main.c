@@ -350,6 +350,9 @@ static void cmd_ui(const char *arg)
 {
     if (!ui_initialized) {
         compositor_init(fb_get_width(), fb_get_height());
+#ifndef __x86_64__
+        compositor_set_pointer_poll(a64_poll_pointer);   /* cursor moves mid-frame */
+#endif
         ui_initialized = true;
     }
     /* Shift+Esc switches to direct console drawing; restore buffering on
@@ -1217,6 +1220,13 @@ void kernel_main(BootInfo *boot_info)
             }
         }
 
-        hlt();
+        if (ui_mode && compositor_wants_fast_loop(timer_get_ticks())) {
+            /* Interacting: wait for the next 1 ms tick without sleeping
+             * (a hypervisor may wake a sleeping vCPU much later). */
+            uint64_t tick = timer_get_ticks();
+            while (timer_get_ticks() == tick) { }
+        } else {
+            hlt();
+        }
     }
 }

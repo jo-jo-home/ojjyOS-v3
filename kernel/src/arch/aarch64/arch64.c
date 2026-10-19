@@ -113,6 +113,12 @@ void a64_exception_handler(uint64_t esr, uint64_t elr, uint64_t spsr, uint64_t c
      * so idle input is checked each tick. Rendering and blocking I/O can
      * still delay a harvest; do not claim a hard one-millisecond bound.
  */
+void a64_poll_pointer(void)
+{
+    virtio_input_poll();
+    xhci_poll();
+}
+
 void a64_poll_input(void)
 {
     virtio_input_poll();

@@ -52017,13 +52017,13 @@ static const uint8_t text_display_2x_bits[] = {
 };
 
 const UiFontFace uifont_faces[TEXT_STYLE_COUNT][2] = {
-    [TEXT_SMALL] = { { text_small_1x_glyphs, 119, text_small_1x_bits, 11, 3, 14 }, { text_small_2x_glyphs, 119, text_small_2x_bits, 22, 6, 29 } },
-    [TEXT_SMALL_BOLD] = { { text_small_bold_1x_glyphs, 119, text_small_bold_1x_bits, 11, 3, 14 }, { text_small_bold_2x_glyphs, 119, text_small_bold_2x_bits, 22, 6, 29 } },
-    [TEXT_BODY] = { { text_body_1x_glyphs, 232, text_body_1x_bits, 13, 4, 17 }, { text_body_2x_glyphs, 232, text_body_2x_bits, 26, 7, 34 } },
-    [TEXT_BODY_MEDIUM] = { { text_body_medium_1x_glyphs, 119, text_body_medium_1x_bits, 13, 4, 17 }, { text_body_medium_2x_glyphs, 119, text_body_medium_2x_bits, 26, 7, 34 } },
-    [TEXT_BODY_BOLD] = { { text_body_bold_1x_glyphs, 232, text_body_bold_1x_bits, 13, 4, 17 }, { text_body_bold_2x_glyphs, 232, text_body_bold_2x_bits, 26, 7, 34 } },
-    [TEXT_TITLE] = { { text_title_1x_glyphs, 232, text_title_1x_bits, 15, 4, 20 }, { text_title_2x_glyphs, 232, text_title_2x_bits, 30, 8, 39 } },
-    [TEXT_HEADLINE] = { { text_headline_1x_glyphs, 232, text_headline_1x_bits, 20, 5, 26 }, { text_headline_2x_glyphs, 232, text_headline_2x_bits, 39, 10, 52 } },
-    [TEXT_LARGE] = { { text_large_1x_glyphs, 232, text_large_1x_bits, 28, 7, 36 }, { text_large_2x_glyphs, 232, text_large_2x_bits, 55, 14, 73 } },
-    [TEXT_DISPLAY] = { { text_display_1x_glyphs, 15, text_display_1x_bits, 70, 18, 94 }, { text_display_2x_glyphs, 15, text_display_2x_bits, 140, 35, 187 } },
+    [TEXT_SMALL] = { { text_small_1x_glyphs, 119, text_small_1x_bits, 11, 3, 14, 0 }, { text_small_2x_glyphs, 119, text_small_2x_bits, 22, 6, 29, 0 } },
+    [TEXT_SMALL_BOLD] = { { text_small_bold_1x_glyphs, 119, text_small_bold_1x_bits, 11, 3, 14, 0 }, { text_small_bold_2x_glyphs, 119, text_small_bold_2x_bits, 22, 6, 29, 0 } },
+    [TEXT_BODY] = { { text_body_1x_glyphs, 232, text_body_1x_bits, 13, 4, 17, 0 }, { text_body_2x_glyphs, 232, text_body_2x_bits, 26, 7, 34, 0 } },
+    [TEXT_BODY_MEDIUM] = { { text_body_medium_1x_glyphs, 119, text_body_medium_1x_bits, 13, 4, 17, 0 }, { text_body_medium_2x_glyphs, 119, text_body_medium_2x_bits, 26, 7, 34, 0 } },
+    [TEXT_BODY_BOLD] = { { text_body_bold_1x_glyphs, 232, text_body_bold_1x_bits, 13, 4, 17, 0 }, { text_body_bold_2x_glyphs, 232, text_body_bold_2x_bits, 26, 7, 34, 0 } },
+    [TEXT_TITLE] = { { text_title_1x_glyphs, 232, text_title_1x_bits, 15, 4, 20, 0 }, { text_title_2x_glyphs, 232, text_title_2x_bits, 30, 8, 39, 0 } },
+    [TEXT_HEADLINE] = { { text_headline_1x_glyphs, 232, text_headline_1x_bits, 20, 5, 26, 0 }, { text_headline_2x_glyphs, 232, text_headline_2x_bits, 39, 10, 52, 0 } },
+    [TEXT_LARGE] = { { text_large_1x_glyphs, 232, text_large_1x_bits, 28, 7, 36, 0 }, { text_large_2x_glyphs, 232, text_large_2x_bits, 55, 14, 73, 0 } },
+    [TEXT_DISPLAY] = { { text_display_1x_glyphs, 15, text_display_1x_bits, 70, 18, 94, 0 }, { text_display_2x_glyphs, 15, text_display_2x_bits, 140, 35, 187, 0 } },
 };

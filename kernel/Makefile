@@ -76,8 +76,20 @@ COMMON_C_SOURCES = src/main.c \
                    src/net/tls.c \
                    src/web/url.c \
                    src/web/http.c \
-                   src/web/html.c \
+                   src/web/dom.c \
+                   src/web/css.c \
+                   src/web/layout.c \
+                   src/web/paint.c \
+                   src/webfont.c \
+                   src/webfont_data.c \
+                   src/image/inflate.c \
+                   src/image/png.c \
+                   src/image/gif.c \
+                   src/image/image.c \
                    src/ui/browser.c \
+                   src/ui/browser_ui.c \
+                   src/ui/browser_profile.c \
+                   src/ui/browser_pages.c \
                    src/ui/netcmd.c \
                    src/ui/calcmath.c
 

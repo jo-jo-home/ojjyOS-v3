@@ -29,7 +29,8 @@ fi
 "$HOST_CC" "${FLAGS[@]}" tests/test_user.c kernel/src/{user,user_image,string}.c -o "$OUT/test_user"
 "$HOST_CC" "${FLAGS[@]}" tests/test_framebuffer.c kernel/src/{framebuffer,gfx,cursor_image,string}.c -o "$OUT/test_framebuffer"
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_net.c kernel/src/net/{net,tcp}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_net"
-"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_web.c kernel/src/web/{url,http,html}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_web"
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST -Itests tests/test_web.c kernel/src/web/{url,http,dom,css,layout}.c \
+    kernel/src/image/{inflate,png,gif,image,jpeg}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_web"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_crypto.c kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c kernel/src/string.c -o "$OUT/test_crypto"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_pubkey.c kernel/src/crypto/{sha256,sha512,bignum,rsa,ecdsa}.c kernel/src/string.c -o "$OUT/test_pubkey"
 "$HOST_CC" "${FLAGS[@]}" tests/test_gfx.c kernel/src/{gfx,string}.c -o "$OUT/test_gfx"

@@ -11,13 +11,23 @@
 #include "string.h"
 
 #define HTTP_IDLE_TIMEOUT_MS 20000
-#define HTTP_MAX_REDIRECTS   5
+#define HTTP_MAX_REDIRECTS   10
+
+static void (*cookie_get)(const Url *url, char *out, size_t size);
+static void (*cookie_set)(const Url *url, const char *value);
+
+void http_set_cookie_hooks(void (*get)(const Url *url, char *out, size_t size),
+                           void (*set)(const Url *url, const char *value))
+{
+    cookie_get = get;
+    cookie_set = set;
+}
 
 /* ------------------------------------------------------------------ */
 /* TLS connection pool (each TlsConn holds ~115 KB of record buffers)  */
 /* ------------------------------------------------------------------ */
 
-#define TLS_POOL 2
+#define TLS_POOL 6
 typedef struct TlsSlot { bool used; int tcp; TlsConn conn; } TlsSlot;
 static TlsSlot *tls_pool[TLS_POOL];
 
@@ -125,6 +135,25 @@ int http_parse_head(const uint8_t *d, size_t len, HttpResponseHead *h)
                 v = v * 10 + (*c - '0');
             }
             if (ok) h->content_length = v;
+        } else if (header_is(l, ll, "content-encoding")) {
+            header_value(l, ll, 16, value, sizeof(value));
+            for (char *c = value; *c; c++) *c = lower(*c);
+            if (strncmp(value, "gzip", 4) == 0 || strncmp(value, "x-gzip", 6) == 0) h->gzip = true;
+            else if (strncmp(value, "deflate", 7) == 0) h->deflate = true;
+        } else if (header_is(l, ll, "content-disposition")) {
+            char cd[200];
+            header_value(l, ll, 19, cd, sizeof(cd));
+            if (lower(cd[0]) == 'a') h->attachment = true;
+            for (char *c = cd; *c; c++) {
+                if (strncmp(c, "filename=", 9) != 0) continue;
+                c += 9;
+                bool q = *c == '"';
+                if (q) c++;
+                size_t k = 0;
+                while (*c && (q ? *c != '"' : (*c != ';' && *c != ' ')) && k < sizeof(h->filename) - 1) h->filename[k++] = *c++;
+                h->filename[k] = '\0';
+                break;
+            }
         } else if (header_is(l, ll, "transfer-encoding")) {
             header_value(l, ll, 17, value, sizeof(value));
             for (char *c = value; *c; c++) *c = lower(*c);
@@ -235,7 +264,7 @@ static void begin(HttpFetch *f)
     f->tls_suite[0] = '\0';
     if (!f->secure && strcmp(f->url.scheme, "http") != 0) { set_error(f, "unsupported URL scheme"); return; }
 
-    /* GET request; identity encoding, close when done. */
+    /* Request line + headers; identity encoding, close when done. */
     char host[URL_HOST_MAX + 8];
     strcpy(host, f->url.host);
     if (f->url.port != (f->secure ? 443 : 80)) {
@@ -245,11 +274,22 @@ static void begin(HttpFetch *f)
         host[l] = ':';
         strcpy(host + l + 1, num);
     }
+    static char cookie[4096];
+    cookie[0] = '\0';
+    if (cookie_get) cookie_get(&f->url, cookie, sizeof(cookie));
+    char clen[24];
+    utoa(f->post ? f->post_len : 0, clen, 10);
     const char *parts[] = {
-        "GET ", f->url.path, " HTTP/1.1\r\nHost: ", host,
-        "\r\nUser-Agent: ojjyOS-Web/3.1 (custom kernel by Jonas Lee)\r\n"
-        "Accept: text/html, text/plain;q=0.9, */*;q=0.5\r\n"
-        "Accept-Encoding: identity\r\nConnection: close\r\n\r\n"
+        f->post ? "POST " : "GET ", f->url.path, " HTTP/1.1\r\nHost: ", host,
+        "\r\nUser-Agent: " HTTP_USER_AGENT "\r\n"
+        "Accept: text/html,application/xhtml+xml,text/plain;q=0.9,image/png,image/jpeg,image/gif,*/*;q=0.5\r\n"
+        "Accept-Language: en-US,en;q=0.9\r\n"
+        "Accept-Encoding: identity\r\nConnection: close\r\n",
+        cookie[0] ? "Cookie: " : "", cookie, cookie[0] ? "\r\n" : "",
+        f->referer[0] ? "Referer: " : "", f->referer, f->referer[0] ? "\r\n" : "",
+        f->post ? "Content-Type: " : "", f->post ? f->body_type : "", f->post ? "\r\nContent-Length: " : "",
+        f->post ? clen : "", f->post ? "\r\n" : "",
+        "\r\n"
     };
     f->request_len = 0;
     for (unsigned i = 0; i < ARRAY_SIZE(parts); i++) {
@@ -258,6 +298,27 @@ static void begin(HttpFetch *f)
         memcpy(f->request + f->request_len, parts[i], n);
         f->request_len += n;
     }
+    if (f->post && f->post_len) {
+        if (f->request_len + f->post_len >= sizeof(f->request)) { set_error(f, "form data too long"); return; }
+        memcpy(f->request + f->request_len, f->post_body, f->post_len);
+        f->request_len += f->post_len;
+    }
+}
+
+void http_start_request(HttpFetch *f, const Url *url, bool post, const char *body, size_t body_len,
+                        const char *body_type, const char *referer, uint8_t *buf, size_t cap)
+{
+    memset(f, 0, sizeof(*f));
+    f->conn = -1;
+    f->buf = buf;
+    f->cap = cap;
+    f->url = *url;
+    f->post = post;
+    f->post_body = body;
+    f->post_len = body_len;
+    if (body_type) strncpy(f->body_type, body_type, sizeof(f->body_type) - 1);
+    if (referer) strncpy(f->referer, referer, sizeof(f->referer) - 1);
+    begin(f);
 }
 
 void http_start_url(HttpFetch *f, const Url *url, uint8_t *buf, size_t cap)
@@ -295,6 +356,23 @@ static void finish(HttpFetch *f)
     HttpResponseHead *h = &f->head;
     int r = http_parse_head(f->buf, f->len, h);
     if (r != 1) { set_error(f, f->len ? "malformed response from server" : "server sent no data"); return; }
+    if (cookie_set) {
+        /* every Set-Cookie header line */
+        size_t line = 0;
+        while (line < h->header_len && f->buf[line] != '\n') line++;
+        line++;
+        while (line + 2 < h->header_len) {
+            size_t e = line;
+            while (e < h->header_len && f->buf[e] != '\r' && f->buf[e] != '\n') e++;
+            if (header_is(f->buf + line, e - line, "set-cookie")) {
+                static char value[1024];
+                header_value(f->buf + line, e - line, 10, value, sizeof(value));
+                cookie_set(&f->url, value);
+            }
+            line = e;
+            while (line < h->header_len && (f->buf[line] == '\r' || f->buf[line] == '\n')) line++;
+        }
+    }
 
     if ((h->status == 301 || h->status == 302 || h->status == 303 || h->status == 307 || h->status == 308) &&
         h->location[0]) {
@@ -302,6 +380,7 @@ static void finish(HttpFetch *f)
         Url next;
         if (!url_resolve(&f->url, h->location, &next)) { set_error(f, "bad redirect address"); return; }
         f->url = next;
+        if (h->status == 303 || ((h->status == 301 || h->status == 302) && f->post)) { f->post = false; f->post_len = 0; }
         begin(f);
         return;
     }

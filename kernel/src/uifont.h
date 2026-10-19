@@ -40,6 +40,7 @@ typedef struct {
     uint16_t count;
     const uint8_t *bits;
     int16_t ascent, descent, line;     /* 2x display faces exceed 127 px */
+    uint8_t packed4;                   /* 1: 4-bit coverage, two pixels per byte (web faces) */
 } UiFontFace;
 
 extern const UiFontFace uifont_faces[TEXT_STYLE_COUNT][2];
@@ -62,5 +63,10 @@ int text_y_center(int top, int h, TextStyle st);
 bool text_has_glyph(uint32_t cp);
 /* Density used for drawing (1 or 2); set by the framebuffer's HiDPI mode. */
 void text_set_density(int density);
+int text_density(void);
+/* Draw with an explicit face at the current density (the face must be the
+ * density's variant). Same conventions as text_draw_n. */
+int text_draw_face(GfxSurface *s, int x, int y, const char *str, int max_bytes, const UiFontFace *f, uint32_t color,
+                   uint8_t alpha);
 
 #endif /* _OJJY_UIFONT_H */

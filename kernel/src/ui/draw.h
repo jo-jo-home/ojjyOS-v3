@@ -20,4 +20,10 @@ void ui_mark_dirty(void);
 void ui_glass_control(int x, int y, int w, int h, int r, bool raised);
 void ui_push_button(int x, int y, int w, int h, const char *label, bool primary);
 
+/* Shared text clipboard (TextEdit, Notes, browser). */
+void ui_clipboard_set(const char *text);
+const char *ui_clipboard_get(void);
+/* True while a Command key is held (Cmd-click opens links in new tabs). */
+bool ui_super_held(void);
+
 #endif /* _OJJY_UI_DRAW_H */

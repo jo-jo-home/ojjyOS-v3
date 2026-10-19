@@ -221,6 +221,16 @@ typedef struct {
 } TextEditState;
 
 static char text_clipboard[TEXTEDIT_LINE_MAX];
+static uint8_t last_modifiers;
+
+void ui_clipboard_set(const char *text)
+{
+    strncpy(text_clipboard, text, sizeof(text_clipboard) - 1);
+    text_clipboard[sizeof(text_clipboard) - 1] = '\0';
+}
+
+const char *ui_clipboard_get(void) { return text_clipboard; }
+bool ui_super_held(void) { return (last_modifiers & INPUT_MOD_SUPER) != 0; }
 
 typedef struct {
     int index;                  /* desktop picture being viewed */
@@ -2584,8 +2594,8 @@ static void draw_window(int idx)
     if (!settings_get()->reduced_transparency)
         gfx_round_rect_rim(surface(), draw_x, draw_y, draw_w, draw_h, r, dark ? 120 : 170);
     (void)highlight;
-    {
-        const char *title = state->type == APP_WEB ? browser_title() : win->title;
+    if (state->type != APP_WEB) {
+        const char *title = win->title;
         Color tc = focused ? theme->text : theme->text_muted;
         int ty = text_y_center(draw_y, 36, TEXT_BODY_BOLD);
         if (state->type == APP_FINDER) {
@@ -2659,7 +2669,8 @@ static void draw_window(int idx)
             draw_about_window(content_x, content_y, content_w, content_h);
             break;
         case APP_WEB:
-            browser_draw(content_x, content_y, content_w, content_h);
+            /* the browser owns the whole window: tabs live in the title bar */
+            browser_draw(draw_x, draw_y, draw_w, draw_h);
             break;
         case APP_CALCULATOR:
             draw_calculator_window(&state->calc, content_x, content_y, content_w, content_h);
@@ -6311,8 +6322,8 @@ static int app_open_window(AppType type, const char *title)
     if (type == APP_CALENDAR) { w = 720; h = 440; }
     if (type == APP_ABOUT) { w = 460; h = 300; }
     if (type == APP_WEB) {
-        w = MIN(880, (int)comp_width - 40);
-        h = MIN(580, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 40);
+        w = MIN(1240, (int)comp_width - 60);
+        h = MIN(820, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 24);
     }
     if (type == APP_CALCULATOR) { w = 300; h = 360; }
     if (type == APP_MONITOR) { w = 540; h = 380; }
@@ -6546,9 +6557,9 @@ void compositor_open_default_apps(void)
  * Handle a Cmd (Super) shortcut inside an app.
  * Returns true if the key was consumed.
  */
-static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
+static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode, uint8_t modifiers)
 {
-    if (state->type == APP_WEB) return browser_shortcut(keycode);
+    if (state->type == APP_WEB) return browser_shortcut(keycode, modifiers);
     if (state->type != APP_TEXTEDIT && state->type != APP_NOTES) {
         return false;
     }
@@ -6601,6 +6612,7 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
 void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
 {
     last_input_ms = timer_get_ticks();
+    last_modifiers = modifiers;
      mark_dirty();
 
    if (login_screen_visible()) {
@@ -6741,7 +6753,7 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
      * (The old global Cmd+C shadowed the editor's copy.) */
     if ((modifiers & INPUT_MOD_SUPER) && overlay == OVERLAY_NONE &&
         active_window_index >= 0 && active_window_index < window_count) {
-        if (handle_app_shortcut(&app_states[active_window_index], keycode)) {
+        if (handle_app_shortcut(&app_states[active_window_index], keycode, modifiers)) {
             return;
         }
     }
@@ -7777,6 +7789,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         return;
                     }
 
+                    if (state->type == APP_WEB && browser_titlebar_click(x, y)) {
+                        if (i != window_count - 1) raise_window_to_top(i);
+                        return;
+                    }
+
                     /* Finder's unified titlebar toolbar (was unreachable). */
                     if (state->type == APP_FINDER && y >= win->y + 8 && y <= win->y + 28) {
                         int tb_x = finder_toolbar_x(win, win->x);
@@ -8357,6 +8374,7 @@ void compositor_handle_scroll(int32_t dx, int32_t dy)
  */
 void compositor_handle_key_release(KeyCode keycode, uint8_t modifiers)
 {
+    last_modifiers = modifiers;
      mark_dirty();
 
    bool super_now = (modifiers & INPUT_MOD_SUPER) != 0;
@@ -8535,6 +8553,17 @@ void compositor_handle_right_click(int x, int y)
 
     active_menu = 0;
     overlay_set(OVERLAY_NONE);
+    /* the topmost window under the pointer gets the right click first */
+    for (int i = window_count - 1; i >= 0; i--) {
+        CompositorWindow *win = &windows[i];
+        if (win->minimized || x < win->x || x >= win->x + win->w || y < win->y || y >= win->y + win->h) continue;
+        if (app_states[i].type == APP_WEB && browser_right_click(x, y)) {
+            active_window_index = i;
+            if (i != window_count - 1) raise_window_to_top(i);
+            return;
+        }
+        break;
+    }
     ctx_menu_open = true;
     ctx_menu_x = x;
     ctx_menu_y = y;

@@ -32,6 +32,10 @@ typedef struct {
     char location[URL_TEXT_MAX];
     long content_length;        /* -1 when absent */
     bool chunked;
+    bool gzip;                  /* Content-Encoding: gzip / deflate */
+    bool deflate;
+    bool attachment;            /* Content-Disposition: attachment */
+    char filename[96];          /* Content-Disposition filename */
     size_t header_len;          /* bytes up to and including the blank line */
 } HttpResponseHead;
 
@@ -53,12 +57,25 @@ typedef struct {
     struct TlsSlot *tls;        /* pooled TLS connection while https is open */
     ip4_t ip;
     size_t sent, chunk_scan;
-    char request[URL_PATH_MAX + URL_HOST_MAX + 256];
+    char request[8192];
     size_t request_len;
+    bool post;
+    const char *post_body;      /* POST body (caller-owned, valid until done) */
+    size_t post_len;
+    char body_type[80];
+    char referer[256];
     uint64_t phase_ms, activity_ms;
 } HttpFetch;
 
 void http_start(HttpFetch *f, const char *url_text, uint8_t *buf, size_t cap);
+/* Full request: method "GET"/"POST", optional body + content type, Referer. */
+void http_start_request(HttpFetch *f, const Url *url, bool post, const char *body, size_t body_len,
+                        const char *body_type, const char *referer, uint8_t *buf, size_t cap);
+/* Cookie jar hooks (the browser owns the jar): get() writes a Cookie header
+ * value for a request URL ("" for none); set() receives each Set-Cookie value. */
+void http_set_cookie_hooks(void (*get)(const Url *url, char *out, size_t size),
+                           void (*set)(const Url *url, const char *value));
+#define HTTP_USER_AGENT "Mozilla/5.0 (ojjyOS 3.1) ojjyOSWeb/3.1 (custom kernel by Jonas Lee)"
 void http_start_url(HttpFetch *f, const Url *url, uint8_t *buf, size_t cap);
 HttpPhase http_poll(HttpFetch *f);
 void http_cancel(HttpFetch *f);

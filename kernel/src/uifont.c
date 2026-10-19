@@ -12,6 +12,8 @@
 
 static int density = 1;
 
+int text_density(void) { return density; }
+
 void text_set_density(int d) { density = d == 2 ? 2 : 1; }
 
 static const UiFontFace *face(TextStyle st)
@@ -64,7 +66,14 @@ static void blit_glyph(GfxSurface *s, const UiFontFace *f, const UiGlyph *g, int
         uint32_t *dst = s->pixels + py * s->pitch;
         const uint8_t *src = bits + row * g->w;
         for (int col = 0; col < g->w; col++) {
-            uint32_t cov = src[col];
+            uint32_t cov;
+            if (f->packed4) {
+                int idx = row * g->w + col;
+                uint8_t b = bits[idx >> 1];
+                cov = (uint32_t)((idx & 1) ? (b & 15) : (b >> 4)) * 17;
+            } else {
+                cov = src[col];
+            }
             if (!cov) continue;
             int px = x0 + col;
             if (px < s->clip_x1 || px >= s->clip_x2) continue;
@@ -76,8 +85,13 @@ static void blit_glyph(GfxSurface *s, const UiFontFace *f, const UiGlyph *g, int
 
 int text_draw_n(GfxSurface *s, int x, int y, const char *str, int max_bytes, TextStyle st, uint32_t color, uint8_t alpha)
 {
-    if (!str) return 0;
-    const UiFontFace *f = face(st);
+    return text_draw_face(s, x, y, str, max_bytes, face(st), color, alpha);
+}
+
+int text_draw_face(GfxSurface *s, int x, int y, const char *str, int max_bytes, const UiFontFace *f, uint32_t color,
+                   uint8_t alpha)
+{
+    if (!str || !f) return 0;
     int len = 0;
     while (str[len] && (max_bytes < 0 || len < max_bytes)) len++;
     /* Callers use logical (1x) coordinates; HiDPI scales them here. */

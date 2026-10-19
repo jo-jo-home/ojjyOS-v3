@@ -14,24 +14,20 @@ from PIL import Image
 from qemu_smoke import VM
 
 SITES = [
-    ('google', 'google.com'),
-    ('google-search', 'ojjy operating system'),
     ('wikipedia', 'https://en.wikipedia.org/wiki/Operating_system'),
-    ('youtube', 'youtube.com'),
-    ('github', 'github.com'),
-    ('reddit', 'reddit.com'),
+    ('search', 'operating system'),
     ('hn', 'news.ycombinator.com'),
-    ('bbc', 'bbc.com'),
-    ('cnn-lite', 'lite.cnn.com'),
     ('npr', 'text.npr.org'),
+    ('python', 'docs.python.org/3/'),
+    ('mdn', 'developer.mozilla.org/en-US/docs/Web/HTML'),
+    ('github', 'github.com'),
+    ('bbc', 'bbc.com'),
     ('apple', 'apple.com'),
-    ('amazon', 'amazon.com'),
-    ('mdn', 'developer.mozilla.org'),
-    ('python', 'docs.python.org'),
-    ('stackoverflow', 'stackoverflow.com'),
     ('weather', 'weather.gov'),
+    ('cnn-lite', 'lite.cnn.com'),
+    ('old-reddit', 'old.reddit.com'),
+    ('youtube', 'youtube.com'),
     ('craigslist', 'craigslist.org'),
-    ('coolmath', 'coolmathgames.com'),
 ]
 
 
@@ -95,8 +91,9 @@ def run(args):
             mark = len(vm.text())
             chord('l'); vm.type(url + '\n')
             m = until(r'\[WEB\] (loaded status=\d+[^\n]*|failed: [^\n]*)', args.timeout, mark)
+            until(r'\[WEB\] layout items', 15, mark)
             line = m[1] if m else 'timeout'
-            time.sleep(2)
+            time.sleep(args.settle)
             vm.screenshot(out / f'{name}.png')
             results.append((name, url, line))
             print(f'{name:14} {url:50} {line}', flush=True)
@@ -113,4 +110,5 @@ if __name__ == '__main__':
     parser.add_argument('--sites', default='')
     parser.add_argument('--timeout', type=int, default=60)
     parser.add_argument('--zoom', action='store_true')
+    parser.add_argument('--settle', type=float, default=4)
     run(parser.parse_args())

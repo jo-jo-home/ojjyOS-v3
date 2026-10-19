@@ -103,7 +103,7 @@ def main(out_path):
     by_name = {}
     for name, scale, tag, f in faces:
         by_name.setdefault(name, []).append(
-            f"{{ {tag}_glyphs, {len(f['glyphs'])}, {tag}_bits, {f['ascent']}, {f['descent']}, {f['line']} }}")
+            f"{{ {tag}_glyphs, {len(f['glyphs'])}, {tag}_bits, {f['ascent']}, {f['descent']}, {f['line']}, 0 }}")
     for name, _, _, _ in STYLES:
         out.append(f"    [{name}] = {{ {', '.join(by_name[name])} }},")
     out.append("};")

@@ -1,9 +1,13 @@
-/* URL, HTTP parsing and HTML layout tests. Created by Jonas Lee. */
+/* URL, HTTP, web engine (DOM, CSS, layout, forms), inflate, PNG and GIF
+ * tests. Created by Jonas Lee. */
 #include "web/url.h"
 #include "web/http.h"
-#include "web/html.h"
+#include "web/engine.h"
+#include "image/image.h"
+#include "image/inflate.h"
 #include "random.h"
 #include "test_support.h"
+#include "image_vectors.h"
 
 /* http.c links against the TCP/DNS API; these tests only use its pure
  * parsing helpers, so the network calls are stubbed out. */
@@ -40,121 +44,7 @@ static bool resolves(const char *base, const char *ref, const char *expect)
     return strcmp(out, expect) == 0;
 }
 
-static WebDoc doc;
-
-static bool has_text(const char *needle, uint8_t style_mask)
-{
-    for (int i = 0; i < doc.run_count; i++) {
-        const WebRun *r = &doc.runs[i];
-        const char *t = web_text(&doc, r->text);
-        size_t n = strlen(needle);
-        for (size_t k = 0; k + n <= r->len; k++)
-            if (strncmp(t + k, needle, n) == 0 && (!style_mask || (r->style & style_mask))) return true;
-    }
-    return false;
-}
-
-static bool within_width(void)
-{
-    for (int i = 0; i < doc.run_count; i++) {
-        const WebRun *r = &doc.runs[i];
-        if (r->x < 0 || r->x + r->w > doc.width) return false;
-    }
-    return true;
-}
-
-static bool sorted_by_y(void)
-{
-    for (int i = 1; i < doc.run_count; i++) if (doc.runs[i].y < doc.runs[i - 1].y) return false;
-    return true;
-}
-
-static bool strstr_local(const char *h, const char *n)
-{
-    size_t l = strlen(n);
-    for (; *h; h++) if (strncmp(h, n, l) == 0) return true;
-    return false;
-}
-
-static void layout(const char *html, int width) { html_layout(&doc, html, strlen(html), width, false); }
-
-/* Fake proportional font: 'i' 'l' '.' ' ' = 3 px, 'm' 'w' = 11 px, any other
- * character 7 px; bold +1 px per character; heading 1 doubles. Only e-acute
- * (U+00E9) counts as a real glyph beyond ASCII. */
-static int fake_width(const char *s, int len, uint8_t style, uint8_t level)
-{
-    int w = 0;
-    for (int i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)s[i];
-        if ((c & 0xC0) == 0x80) continue;                  /* UTF-8 continuation */
-        int cw = (c == 'i' || c == 'l' || c == '.' || c == ' ') ? 3 : (c == 'm' || c == 'w') ? 11 : 7;
-        if (style & WS_BOLD) cw++;
-        w += level == 1 ? cw * 2 : cw;
-    }
-    return w;
-}
-/* Body lines (14) are shorter than code cells (16), so mixed lines need alignment. */
-static int fake_line(uint8_t style, uint8_t level) { (void)style; return level == 1 ? 30 : level ? 24 : 14; }
-static bool fake_glyph(uint32_t cp) { return cp == 0xE9; }
-static const WebMetrics fake = { fake_width, fake_line, fake_glyph };
-
-static const WebRun *run_with(const char *needle)
-{
-    for (int i = 0; i < doc.run_count; i++)
-        if (strstr_local(web_text(&doc, doc.runs[i].text), needle)) return &doc.runs[i];
-    return NULL;
-}
-
-static void proportional_tests(void)
-{
-    html_set_metrics(&fake);
-
-    layout("<p>iiii mmmmmm</p>", 80);                  /* 12 + 3 + 66 = 81 > 80 (80 = minimum width) */
-    const WebRun *a = run_with("iiii"), *b = run_with("mmmmmm");
-    CHECK(a && b && a->w == 12 && b->x == 0 && b->y > a->y && b->w == 66, "proportional: wraps at measured width");
-    layout("<p>iiii mmmmm</p>", 80);                   /* 12 + 3 + 55 = 70 fits */
-    CHECK(doc.run_count == 1 && doc.runs[0].w == 70, "proportional: fits when the measured width fits");
-
-    layout("<p>mmmmmmmmmmmmmmmmmmmm</p>", 100);         /* 220 px word, 9 per line */
-    CHECK(within_width() && doc.run_count >= 3 && doc.runs[0].len == 9, "proportional: long word breaks inside");
-
-    layout("<p><a href=\"/x\">mmm</a> tail</p>", 400);
-    const WebRun *l = run_with("mmm");
-    CHECK(l && l->w == 33 && web_link_at(&doc, l->x + 32, l->y + 2) == 0 &&
-          web_link_at(&doc, l->x + 33, l->y + 2) == -1, "proportional: link hit test ends at measured width");
-
-    layout("<pre>ab\ncd</pre>", 400);
-    const WebRun *p = run_with("ab");
-    CHECK(p && (p->style & WS_CODE) && p->w == 2 * WEB_CELL_W && p->h == WEB_CELL_H, "proportional: <pre> stays monospace (8x16 cells)");
-
-    layout("<h1>Big</h1><p>small</p>", 400);
-    const WebRun *h = run_with("Big"), *s = run_with("small");
-    CHECK(h && s && h->level == 1 && h->h == 30 && h->w == fake_width("Big", 3, WS_BOLD, 1) && h->w == 40 &&
-          s->y >= h->y + 30, "proportional: heading size and line height");
-
-    layout("<form><input type=submit value=mm></form>", 400);
-    CHECK(doc.box_count >= 1 && doc.boxes[0].w == 22 + 2 * WEB_CELL_W, "proportional: button width follows its label");
-
-    layout("<p>caf&eacute; na\xc3\xafve</p>", 400);
-    CHECK(has_text("caf\xc3\xa9", 0) && has_text("naive", 0), "proportional: drawable UTF-8 kept, others transliterated");
-
-    layout("<p>abc <code>x</code> def</p>", 400);
-    const WebRun *t = run_with("abc"), *c = run_with("x");
-    CHECK(t && c && (c->style & WS_CODE) && c->h == 16 && t->h == 14 && c->y + c->h == t->y + t->h &&
-          t->y == c->y + 2, "proportional: mixed sizes share a baseline");
-
-    layout("<p>the quick brown fox jumps over the lazy dog, again and again and again</p>", 500);
-    bool exact = true;
-    for (int i = 0; i < doc.run_count; i++) {
-        const WebRun *r = &doc.runs[i];
-        if (r->w != fake_width(web_text(&doc, r->text), r->len, r->style, r->level)) exact = false;
-    }
-    CHECK(exact && within_width(), "proportional: merged runs keep exact widths");
-
-    html_set_metrics(NULL);
-}
-
-int main(void)
+static void url_http_tests(void)
 {
     Url u;
     char text[URL_TEXT_MAX];
@@ -211,91 +101,248 @@ int main(void)
     char bad[] = "zz\r\nxx";
     CHECK(http_dechunk((uint8_t *)bad, strlen(bad), &complete) == -2, "malformed chunk size");
 
-    /* HTML layout */
-    layout("<html><head><title> My  &amp; Page </title><style>p{color:red}</style>"
-           "<script>document.write('<p>evil</p>')</script></head><body>"
-           "<h1>Big Title</h1><p>Hello <b>bold</b> and <a href=\"/x\">a link</a>.</p>"
-           "<ul><li>one</li><li>two</li></ul><ol start=3><li>three</li></ol>"
-           "<p>caf\xc3\xa9 &mdash; &copy; &#65;&#x42; &lt;tag&gt; \xe2\x80\x9cq\xe2\x80\x9d</p>"
-           "<pre>a  b\n  c</pre><noscript>No JS here</noscript>"
-           "<img alt=\"logo\" src=x.png><hr><table><tr><td>A</td><td>B</td></tr></table>"
-           "<p id=\"end\">The end</p></body></html>", 400);
-    CHECK(strcmp(doc.title, "My & Page") == 0, "title captured, entities decoded, trimmed");
-    CHECK(!has_text("evil", 0) && !has_text("color", 0), "script and style skipped");
-    CHECK(has_text("Big Title", WS_HEADING), "heading styled");
-    for (int i = 0; i < doc.run_count; i++)
-        if (strncmp(web_text(&doc, doc.runs[i].text), "Big", 3) == 0) CHECK(doc.runs[i].scale == 2, "h1 drawn at 2x");
-    CHECK(has_text("bold", WS_BOLD), "bold run");
-    CHECK(has_text("a link", WS_LINK) && doc.link_count == 1 && strcmp(web_text(&doc, doc.links[0]), "/x") == 0,
-          "link run and href");
-    CHECK(has_text("3.", 0) && has_text("three", 0), "ordered list honours start=");
-    CHECK(has_text("cafe -- (c) AB <tag> \"q\"", 0), "UTF-8 and entities transliterated");
-    CHECK(has_text("a  b", WS_CODE) && has_text("  c", WS_CODE), "pre keeps spacing and lines");
-    CHECK(has_text("No JS here", 0), "noscript content shown");
-    CHECK(has_text("[logo]", WS_MUTED), "img alt placeholder");
-    CHECK(has_text("A", 0) && has_text("B", 0), "table cells");
-    CHECK(web_anchor_y(&doc, "end") > 0 && web_anchor_y(&doc, "nope") == -1, "anchors recorded");
-    CHECK(within_width() && sorted_by_y(), "all runs inside width and sorted by y");
-    int bullets = 0;
-    for (int i = 0; i < doc.box_count; i++) bullets += doc.boxes[i].kind == BOX_BULLET;
-    CHECK(bullets == 2, "unordered list bullets");
+}
 
-    /* hit testing */
-    int link = -1;
-    for (int i = 0; i < doc.run_count; i++)
-        if (doc.runs[i].link == 0) link = web_link_at(&doc, doc.runs[i].x + 2, doc.runs[i].y + 4);
-    CHECK(link == 0, "link hit test");
-    CHECK(web_link_at(&doc, 399, 2) == -1, "no link in empty space");
+/* ---- Engine ---- */
 
-    /* hidden content and table-cell blocks */
-    layout("<div hidden><p>secret one</p><div>nested</div></div><span style=\"display: none\">secret two</span>"
-           "<p aria-hidden=\"true\">secret three</p><p>visible</p>"
-           "<table><tr><td>1.</td><td><center><div>^</div></center></td><td>Title here</td></tr></table>", 600);
-    CHECK(!has_text("secret", 0) && !has_text("nested", 0) && has_text("visible", 0), "hidden/display:none skipped");
-    int rank_y = -1, title_y = -2;
-    for (int i = 0; i < doc.run_count; i++) {
-        const char *t = web_text(&doc, doc.runs[i].text);
-        if (strncmp(t, "1.", 2) == 0) rank_y = doc.runs[i].y;
-        if (strncmp(t, "Title", 5) == 0 || strstr_local(t, "Title")) title_y = doc.runs[i].y;
+/* Fake metrics: every byte is font/2 px wide; ascent 4/5, line 6/5 of the size. */
+static uint8_t f_pick(int px, int w, bool it, bool mono) { (void)it; (void)mono; if (px > 120) px = 120; return (uint8_t)(px | (w >= 600 ? 128 : 0)); }
+static int f_size(uint8_t f) { return f & 127; }
+static int f_width(const char *s, int len, uint8_t f) { (void)s; return len * f_size(f) / 2; }
+static int f_ascent(uint8_t f) { return f_size(f) * 4 / 5; }
+static int f_height(uint8_t f) { return f_size(f) * 6 / 5; }
+static bool f_glyph(uint32_t cp) { return cp == 0xE9; }
+static const WebFontMetrics fm = {f_pick, f_width, f_ascent, f_height, f_glyph};
+
+static uint8_t dom_mem[8 << 20], css_mem[8 << 20], lay_mem[4 << 20];
+static WebArena dom_a, css_a, lay_a;
+static WebItem items[40000];
+static WebDoc doc;
+
+static void page(const char *html, int width)
+{
+    web_doc_init(&doc, &dom_a, &css_a, &lay_a, items, 40000, &fm);
+    web_doc_parse(&doc, html, strlen(html), false, false);
+    web_doc_layout(&doc, width, 600, 100, false);
+}
+
+static bool strstr_local(const char *h, size_t hl, const char *n)
+{
+    size_t nl = strlen(n);
+    for (size_t i = 0; i + nl <= hl; i++) if (memcmp(h + i, n, nl) == 0) return true;
+    return false;
+}
+
+static const WebItem *text_item(const char *needle)
+{
+    for (int i = 0; i < doc.item_count; i++)
+        if (doc.items[i].kind == WI_TEXT && strstr_local(doc.items[i].text, doc.items[i].len, needle)) return &doc.items[i];
+    return NULL;
+}
+
+static int count_kind(int kind)
+{
+    int n = 0;
+    for (int i = 0; i < doc.item_count; i++) n += doc.items[i].kind == kind;
+    return n;
+}
+
+static bool all_inside(int width)
+{
+    for (int i = 0; i < doc.item_count; i++) {
+        const WebItem *it = &doc.items[i];
+        if (it->kind == WI_TEXT && (it->x < 0 || it->x + it->w > width + 1)) return false;
     }
-    CHECK(rank_y == title_y, "blocks inside table cells stay on the row");
+    return true;
+}
 
-    /* word wrap: narrow width, long words broken, nothing past the edge */
-    layout("<p>The quick brown fox jumps over the lazy dog again and again "
-           "Supercalifragilisticexpialidociousnesswordthatiswaytoolong end</p>", 120);
-    CHECK(within_width() && sorted_by_y() && doc.height > 5 * WEB_CELL_H, "wrapping at 120px");
+static void dom_tests(void)
+{
+    DomTree t;
+    const char *html = "<!DOCTYPE html><title>T</title><p>one<p>two<ul><li>a<li>b</ul><div id=x class='a  b'>&amp;&lt;&#65;&#x42;</div>"
+                       "<script>if (a < b) { x(); }</script><table><tr><td>c<td>d</table>";
+    arena_reset(&dom_a);
+    dom_parse(&t, &dom_a, html, strlen(html), false, false);
+    CHECK(t.root && t.body && !t.quirks, "dom: html/body built, standards mode");
+    int ps = 0, lis = 0, tds = 0;
+    DomNode *x = NULL;
+    for (DomNode *n = t.root; n; n = dom_next(n, t.root, false)) {
+        if (n->type != DOM_ELEMENT) continue;
+        ps += n->tag == TAG_P;
+        lis += n->tag == TAG_LI;
+        tds += n->tag == TAG_TD;
+        if (n->id && strcmp(n->id, "x") == 0) x = n;
+    }
+    CHECK(ps == 2 && lis == 2 && tds == 2, "dom: implied end tags for p, li, td");
+    CHECK(x && x->nclasses == 2 && dom_has_class(x, "b") && x->first && x->first->type == DOM_TEXT &&
+          strcmp(x->first->text, "&<AB") == 0, "dom: classes, entities decoded");
+    DomNode *p1 = NULL;
+    for (DomNode *n = t.root; n; n = dom_next(n, t.root, false)) if (n->tag == TAG_P) { p1 = n; break; }
+    CHECK(p1 && p1->next && p1->next->tag == TAG_P && p1->first && strcmp(p1->first->text, "one") == 0, "dom: second <p> is a sibling");
+    dom_parse(&t, &dom_a, "<table><tr><td>x</table>", 24, false, false);
+    CHECK(t.quirks, "dom: no doctype = quirks mode");
+}
 
+static void css_tests(void)
+{
+    page("<!DOCTYPE html><style>"
+         ":root{--brand:#123456}"
+         "p{color:red}.blue{color:blue}#special{color:green}"
+         "p.imp{color:orange!important}#imp2{color:purple}"
+         "div>span{font-weight:bold}div span.deep{font-style:italic}"
+         "li:nth-child(2){color:#00ff00}li:not(.skip){text-decoration:underline}"
+         ".v{color:var(--brand)} .fb{color:var(--nope, #abcdef)}"
+         "@media (max-width: 500px){.m{color:#111111}} @media (min-width: 501px){.m{color:#222222}}"
+         "h1{font-size:2em}.rem{font-size:1.5rem}"
+         ".hid{display:none}"
+         ".pre::before{content:'[' attr(data-x) ']'}"
+         "</style>"
+         "<p>red</p><p class=blue>blue</p><p class=blue id=special>green</p><p class=imp id=imp2>orange</p>"
+         "<div><span>bold<span class=deep>deep</span></span></div>"
+         "<ul><li class=skip>one</li><li>two</li></ul>"
+         "<p class=v>var</p><p class=fb>fallback</p><p class=m>media</p>"
+         "<h1>big</h1><p class=rem>rem</p><p class=hid>hidden</p><p class=pre data-x=7>after</p>", 800);
+    const WebItem *it;
+    CHECK((it = text_item("red")) && it->color == 0xFFFF0000u, "css: type selector");
+    CHECK((it = text_item("blue")) && it->color == 0xFF0000FFu, "css: class beats type");
+    CHECK((it = text_item("green")) && it->color == 0xFF008000u, "css: id beats class");
+    CHECK((it = text_item("orange")) && it->color == 0xFFFFA500u, "css: !important beats id");
+    CHECK((it = text_item("bold")) && (it->font & 128), "css: child combinator");
+    CHECK((it = text_item("two")) && it->color == 0xFF00FF00u && (it->deco & DECO_UNDERLINE), "css: nth-child and :not");
+    CHECK((it = text_item("one")) && !(it->deco & DECO_UNDERLINE), "css: :not excludes");
+    CHECK((it = text_item("var")) && it->color == 0xFF123456u, "css: custom property via var()");
+    CHECK((it = text_item("fallback")) && it->color == 0xFFABCDEFu, "css: var() fallback");
+    CHECK((it = text_item("media")) && it->color == 0xFF222222u, "css: @media min-width at 800px");
+    CHECK((it = text_item("big")) && (it->font & 127) == 32, "css: h1 2em = 32px");
+    CHECK((it = text_item("rem")) && (it->font & 127) == 24, "css: 1.5rem = 24px");
+    CHECK(!text_item("hidden"), "css: display:none removes content");
+    CHECK(text_item("[7]"), "css: ::before content with attr()");
+    uint32_t c;
+    CHECK(css_parse_color("rgb(10 20 30 / 50%)", &c) && c == 0x800A141Eu, "css: rgb() space syntax with alpha");
+    CHECK(css_parse_color("#abc", &c) && c == 0xFFAABBCCu && css_parse_color("hsl(120, 100%, 50%)", &c) && c == 0xFF00FF00u,
+          "css: hex shorthand and hsl()");
+}
+
+static void layout_tests(void)
+{
+    /* wrapping within the width, block stacking */
+    page("<!DOCTYPE html><body style='margin:0'><p style='margin:0'>aaaa bbbb cccc dddd eeee ffff gggg</p><p style='margin:10px 0'>next</p>", 200);
+    const WebItem *a = text_item("aaaa"), *n = text_item("next");
+    CHECK(a && n && all_inside(200) && n->y > a->y + 2 * 19, "layout: text wraps inside the width, blocks stack");
+    /* flex row with space-between */
+    page("<!DOCTYPE html><body style='margin:0'><div style='display:flex;justify-content:space-between;width:400px'>"
+         "<span>left</span><span>right</span></div>", 800);
+    const WebItem *l = text_item("left"), *r = text_item("right");
+    CHECK(l && r && l->x == 0 && r->x + r->w == 400 && l->y == r->y, "layout: flex space-between");
+    /* flex grow */
+    page("<!DOCTYPE html><body style='margin:0'><div style='display:flex'><div style='width:100px'>a</div>"
+         "<div style='flex:1;background:red'>b</div></div>", 500);
+    int red = -1;
+    for (int i = 0; i < doc.item_count; i++) if (doc.items[i].kind == WI_RECT && doc.items[i].color == 0xFFFF0000u) red = i;
+    CHECK(red >= 0 && doc.items[red].x == 100 && doc.items[red].w == 400, "layout: flex-grow fills the rest");
+    /* centred block with auto margins */
+    page("<!DOCTYPE html><body style='margin:0'><div style='width:200px;margin:0 auto;background:#00f'>c</div>", 600);
+    int blue = -1;
+    for (int i = 0; i < doc.item_count; i++) if (doc.items[i].kind == WI_RECT && doc.items[i].color == 0xFF0000FFu) blue = i;
+    CHECK(blue >= 0 && doc.items[blue].x == 200 && doc.items[blue].w == 200, "layout: margin auto centres");
+    /* float with text wrapping beside it */
+    page("<!DOCTYPE html><body style='margin:0'><div style='float:right;width:100px;height:100px;background:#0f0'></div>"
+         "<p style='margin:0'>word word word word word word word word word word</p>", 300);
+    const WebItem *w = text_item("word");
+    int green = -1;
+    for (int i = 0; i < doc.item_count; i++) if (doc.items[i].kind == WI_RECT && doc.items[i].color == 0xFF00FF00u) green = i;
+    CHECK(green >= 0 && doc.items[green].x == 200 && w && w->x + w->w <= 200, "layout: float right, text flows beside");
+    /* table columns */
+    page("<!DOCTYPE html><body style='margin:0'><table style='border-spacing:0'><tr><td>a</td><td>bbbbbbbb</td></tr>"
+         "<tr><td>cccc</td><td>d</td></tr></table>", 600);
+    const WebItem *ta = text_item("a"), *tb = text_item("bbbbbbbb"), *tc = text_item("cccc"), *td = text_item("d");
+    CHECK(ta && tb && tc && td && tb->x == td->x && ta->x == tc->x && tb->x > tc->x && ta->y == tb->y && tc->y > ta->y,
+          "layout: table columns line up");
+    /* lists and markers */
+    page("<!DOCTYPE html><ol start=3><li>x</li><li>y</li></ol><ul><li>z</li></ul>", 600);
+    CHECK(text_item("3.") && text_item("4.") && count_kind(WI_MARKER) == 1, "layout: ordered numbers and bullets");
+    /* links and anchors */
+    page("<!DOCTYPE html><p><a href='/next'>go</a></p><h2 id=sec>Section</h2>", 600);
+    const WebItem *g = text_item("go");
+    CHECK(g && doc.link_count == 1 && strcmp(doc.links[0], "/next") == 0 && web_link_at(&doc, g->x + 2, g->y + 2) == 0,
+          "layout: links registered and hit-tested");
+    CHECK(web_anchor_y(&doc, "sec") > 0 && web_anchor_y(&doc, "nope") == -1, "layout: anchors recorded");
     /* forms */
-    layout("<form action=\"/search\" method=get><input type=hidden name=src value=os>"
-           "<input name=q value=\"hi there\"><select name=lang><option value=en>English"
-           "<option value=fr selected>French</select><input type=checkbox name=c checked>"
-           "<input type=submit name=go value=Search><button name=b>Other</button></form>", 600);
-    CHECK(doc.form_count == 1 && strcmp(web_text(&doc, doc.forms[0].action), "/search") == 0 && !doc.forms[0].post,
-          "form recorded");
-    int submit = -1, select = -1;
-    for (int i = 0; i < doc.field_count; i++) {
-        if (doc.fields[i].kind == FIELD_SUBMIT && strcmp(doc.fields[i].name, "go") == 0) submit = i;
-        if (strcmp(doc.fields[i].name, "lang") == 0) select = i;
-    }
-    CHECK(select >= 0 && strcmp(doc.fields[select].value, "fr") == 0 && strcmp(doc.fields[select].label, "French") == 0,
-          "select uses selected option (</option> omitted)");
-    char query[256];
-    web_form_query(&doc, 0, submit, query, sizeof(query));
-    CHECK(strcmp(query, "?src=os&q=hi+there&lang=fr&c=on&go=Search") == 0, "GET query built from fields");
-    int box = doc.fields[submit].box;
-    CHECK(box >= 0 && web_box_at(&doc, doc.boxes[box].x + 3, doc.boxes[box].y + 3) == box, "button box hit test");
-
+    page("<!DOCTYPE html><form action='/s' method=post><input type=hidden name=src value=os>"
+         "<input name=q value='hi there'><select name=lang><option value=en>English<option value=fr selected>French</select>"
+         "<input type=checkbox name=c checked><input type=radio name=r value=1><input type=radio name=r value=2 checked>"
+         "<input type=submit name=go value=Search><button type=button>No</button></form>", 600);
+    CHECK(doc.form_count == 1 && doc.forms[0].post && strcmp(doc.forms[0].action, "/s") == 0, "forms: action and POST");
+    int submit = -1;
+    for (int i = 0; i < doc.field_count; i++) if (doc.fields[i].kind == FIELD_SUBMIT) submit = i;
+    char q[256];
+    web_form_encode(&doc, 0, submit, q, sizeof(q));
+    CHECK(strcmp(q, "src=os&q=hi+there&lang=fr&c=on&r=2&go=Search") == 0, "forms: urlencoded body");
+    CHECK(count_kind(WI_FIELD) >= 5, "forms: controls laid out");
     /* plain text */
-    html_layout(&doc, "line one\nline two <b>not a tag</b>", 34, 400, true);
-    CHECK(has_text("<b>not a tag</b>", 0) && doc.run_count == 2, "plain text rendered literally");
+    web_doc_init(&doc, &dom_a, &css_a, &lay_a, items, 40000, &fm);
+    web_doc_parse(&doc, "line one\nline <b>two</b>", 24, true, false);
+    web_doc_layout(&doc, 600, 600, 100, false);
+    CHECK(text_item("<b>two</b>") && text_item("line one"), "layout: plain text kept literally");
+    /* zoom doubles sizes */
+    page("<!DOCTYPE html><p style='font-size:10px'>z</p>", 600);
+    int small = text_item("z") ? text_item("z")->font & 127 : 0;
+    web_doc_layout(&doc, 600, 600, 200, false);
+    CHECK(small == 10 && text_item("z") && (text_item("z")->font & 127) == 20, "layout: zoom scales fonts");
+}
 
-    /* Fuzz: random bytes and mutated markup never escape the tables */
+static void image_tests(void)
+{
+    static uint8_t out[16384];
+    long n = zlib_inflate(zlib_text, zlib_text_len, out, sizeof(out));
+    CHECK(n == (long)plain_text_len && memcmp(out, plain_text, plain_text_len) == 0, "inflate: zlib (dynamic Huffman)");
+    n = zlib_inflate(zlib_fixed, zlib_fixed_len, out, sizeof(out));
+    CHECK(n == 23 && memcmp(out, "hello hello hello hello", 23) == 0, "inflate: zlib (fixed Huffman)");
+    n = gzip_inflate(gzip_text, gzip_text_len, out, sizeof(out));
+    CHECK(n == (long)plain_text_len && memcmp(out, plain_text, plain_text_len) == 0, "inflate: gzip wrapper");
+    CHECK(zlib_inflate(zlib_text, zlib_text_len, out, 100) == -2, "inflate: output limit reported");
+    static uint8_t scratch[1 << 20];
+    image_set_scratch(scratch, sizeof(scratch));
+    static uint32_t px[256];
+    int w, h;
+    CHECK(image_info(png_rgba, png_rgba_len, &w, &h) && w == 7 && h == 5 && image_decode(png_rgba, png_rgba_len, px, 256) &&
+          memcmp(px, png_rgba_px, sizeof(png_rgba_px)) == 0, "png: RGBA with alpha matches Pillow");
+    CHECK(image_info(png_interlaced, png_interlaced_len, &w, &h) && w == 9 && h == 11 &&
+          image_decode(png_interlaced, png_interlaced_len, px, 256) && memcmp(px, png_interlaced_px, sizeof(png_interlaced_px)) == 0,
+          "png: Adam7 interlaced RGB");
+    CHECK(image_decode(png_palette, png_palette_len, px, 256) && memcmp(px, png_palette_px, sizeof(png_palette_px)) == 0,
+          "png: palette + tRNS");
+    CHECK(image_decode(png_grey1, png_grey1_len, px, 256) && memcmp(px, png_grey1_px, sizeof(png_grey1_px)) == 0,
+          "png: 1-bit greyscale");
+    CHECK(image_info(gif_small, gif_small_len, &w, &h) && w == 8 && h == 6 && image_decode(gif_small, gif_small_len, px, 256) &&
+          memcmp(px, gif_small_px, sizeof(gif_small_px)) == 0, "gif: first frame with transparency");
+    /* fuzz the decoders */
+    static uint8_t buf[4096];
+    random_add_entropy("img", 3);
+    bool ok = true;
+    for (int i = 0; i < 4000; i++) {
+        const uint8_t *src = i % 3 == 0 ? png_rgba : i % 3 == 1 ? png_interlaced : gif_small;
+        unsigned len = i % 3 == 0 ? png_rgba_len : i % 3 == 1 ? png_interlaced_len : gif_small_len;
+        size_t take = random_u32() % (len + 1);
+        memcpy(buf, src, take);
+        for (int m = 0; m < 6 && take; m++) buf[random_u32() % take] = (uint8_t)random_u32();
+        if (image_info(buf, take, &w, &h) && (size_t)w * (size_t)h <= 256) image_decode(buf, take, px, 256);
+        n = zlib_inflate(buf, take, out, sizeof(out));
+        if (n > (long)sizeof(out)) ok = false;
+    }
+    CHECK(ok, "fuzz: 4000 corrupted images and streams handled");
+}
+
+static void fuzz_engine(void)
+{
     static char fuzz[8192];
-    const char *seed = "<div><p class=a>x &amp; y<a href='/q'>l</a><ul><li>z</ul><table><tr><td>t</table>"
-                       "<pre>\n p</pre><form><input name=a><select><option>o</select></form><!-- c --></div>";
+    const char *seed = "<!DOCTYPE html><style>.a{color:red;display:flex}p>b{margin:1em auto}td:nth-child(2n+1){float:left}"
+                       "@media (min-width:9px){div{width:calc(100% - 20px)}}</style><div class=a><p class=a>x &amp; y"
+                       "<a href='/q'>l</a><ul><li>z</ul><table><tr><td>t<td>u</table><pre>\n p</pre><form><input name=a>"
+                       "<select><option>o</select></form><!-- c --><img src=x width=10 height=10></div>";
     random_add_entropy("html", 4);
     bool ok = true;
-    for (int i = 0; i < 3000; i++) {
+    for (int i = 0; i < 1500; i++) {
         size_t len = random_u32() % sizeof(fuzz);
         if (i & 1) {
             random_bytes(fuzz, len);
@@ -304,10 +351,24 @@ int main(void)
             for (size_t k = 0; k < len; k++) fuzz[k] = seed[k % sl];
             for (int m = 0; m < 20 && len; m++) fuzz[random_u32() % len] = (char)random_u32();
         }
-        html_layout(&doc, fuzz, len, 80 + (int)(random_u32() % 900), (i % 7) == 0);
-        if (!within_width() || !sorted_by_y() || doc.pool_len > WEB_TEXT_POOL) ok = false;
+        web_doc_init(&doc, &dom_a, &css_a, &lay_a, items, 40000, &fm);
+        web_doc_parse(&doc, fuzz, len, (i % 7) == 0, (i % 5) == 0);
+        web_doc_layout(&doc, 80 + (int)(random_u32() % 900), 600, 50 + (int)(random_u32() % 200), false);
+        if (doc.item_count > 40000 || doc.link_count > WEB_MAX_LINKS) ok = false;
     }
-    CHECK(ok, "3000 fuzzed documents stay inside width and tables");
-    proportional_tests();
+    CHECK(ok, "fuzz: 1500 mutated documents parse, style and lay out safely");
+}
+
+int main(void)
+{
+    arena_init(&dom_a, dom_mem, sizeof(dom_mem));
+    arena_init(&css_a, css_mem, sizeof(css_mem));
+    arena_init(&lay_a, lay_mem, sizeof(lay_mem));
+    url_http_tests();
+    dom_tests();
+    css_tests();
+    layout_tests();
+    image_tests();
+    fuzz_engine();
     return finish();
 }

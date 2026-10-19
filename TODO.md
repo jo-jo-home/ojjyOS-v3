@@ -22,6 +22,12 @@ section 0 fixes before anything else here.
   progressive JPEG, `<img>`, downloads, Web app polish) — worktree
   `ojjyOS-v3-net`, branch `net-web`, plan `NET_WEB_PLAN.md`, prompt
   `docs/handoff-prompts/PROMPT_4_NET_WEB.md`.
+  - [x] **N1 done (2026-10-19, `04419bb`)**: SHA-384/512, big integers
+        (Montgomery), RSA PKCS#1 v1.5 + PSS, ECDSA P-256/P-384 — all
+        host-tested against OpenSSL vectors + fuzz, in the kernel build.
+  - [ ] N2 ASN.1 DER + X.509 parser, N3 TLS chain + CertificateVerify
+        (the security fix), N4 SNTP clock, N5 PNG + progressive JPEG,
+        N6 `<img>`, N7 downloads, N8 Web polish — see `NET_WEB_PLAN.md`.
 - File ownership and publishing rules: `PARALLEL_PLAN.md` §3–4. The kernel
   core (scheduler etc.) waits for the next round (`PARALLEL_PLAN.md` §5).
 

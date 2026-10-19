@@ -69,6 +69,12 @@ void compositor_handle_mouse_absolute(int32_t x, int32_t y);
 void compositor_handle_mouse(int x, int y, bool down, bool up);
 void compositor_handle_right_click(int x, int y);
 void compositor_handle_scroll(int32_t dx, int32_t dy);
+/* Device poll used to move the cursor while a frame is being drawn
+ * (pointer devices only; NULL = cursor moves between frames only). */
+void compositor_set_pointer_poll(void (*poll)(void));
+/* True while the user is interacting or the scene is animating: the main
+ * loop should then wait for the next tick without sleeping the CPU. */
+bool compositor_wants_fast_loop(uint64_t now_ms);
 void compositor_get_cursor(int32_t *x, int32_t *y);
 bool compositor_overlay_active(void);
 void compositor_on_user_switched(void);

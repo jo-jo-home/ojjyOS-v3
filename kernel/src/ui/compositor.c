@@ -12,6 +12,7 @@
 #include "../fs/vfs.h"
 #include "../drivers/rtc.h"
 #include "../drivers/driver.h"
+#include "../drivers/input.h"
 #include "../serial.h"
 #include "../memory.h"
 #include "../system.h"
@@ -96,6 +97,9 @@ static int resize_orig_w = 0;
 static int resize_orig_h = 0;
 static int cursor_x = 0;
 static int cursor_y = 0;
+static bool pointer_absolute;            /* last move came from a tablet/USB pointer */
+static uint64_t last_input_ms;           /* any key/pointer/scroll (fast-loop window) */
+static bool last_tick_animating;
 
 static char active_app_name[32] = "Finder";
 
@@ -6596,6 +6600,7 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode)
 
 void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
 {
+    last_input_ms = timer_get_ticks();
      mark_dirty();
 
    if (login_screen_visible()) {
@@ -7174,6 +7179,7 @@ bool compositor_overlay_active(void)
 
 void compositor_handle_mouse(int x, int y, bool down, bool up)
 {
+    last_input_ms = timer_get_ticks();
      mark_dirty();
 
    cursor_x = x;
@@ -8211,6 +8217,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
 
 void compositor_handle_mouse_absolute(int32_t x, int32_t y)
 {
+    pointer_absolute = true;
+    last_input_ms = timer_get_ticks();
     int old_y = cursor_y;
     int nx = MAX(0, MIN(x, (int)comp_width - 1));
     int ny = MAX(0, MIN(y, (int)comp_height - 1));
@@ -8272,6 +8280,7 @@ void compositor_handle_mouse_move(int32_t dx, int32_t dy)
     int64_t y = (int64_t)cursor_y + (int64_t)dy * speed;
     compositor_handle_mouse_absolute((int32_t)MAX(0, MIN(x, (int)comp_width - 1)),
                                      (int32_t)MAX(0, MIN(y, (int)comp_height - 1)));
+    pointer_absolute = false;            /* relative mice keep the speed setting */
 }
 
 /*
@@ -8292,6 +8301,7 @@ void compositor_get_cursor(int32_t *x, int32_t *y)
  */
 void compositor_handle_scroll(int32_t dx, int32_t dy)
 {
+    last_input_ms = timer_get_ticks();
      mark_dirty();
 
    (void)dx;
@@ -8393,6 +8403,48 @@ static bool any_dock_bounce(uint64_t now_ms)
     return false;
 }
 
+/* Pointer pump: drawing a frame takes tens of ms (every window is redrawn),
+ * and the main loop only reads input between frames, so the cursor used to
+ * move once per frame. pointer_pump() runs between frame stages: it polls the
+ * pointer devices and moves the cursor overlay to the newest absolute
+ * position right away. Events stay queued, in order, for the main loop. */
+static void (*pointer_poll_fn)(void);
+static uint64_t ptr_last_pump_ms;
+static uint32_t ptr_gap_max;             /* longest time the pointer went unread (ms) */
+
+void compositor_set_pointer_poll(void (*poll)(void))
+{
+    pointer_poll_fn = poll;
+}
+
+/* Sleeping (wfi/hlt) between loop turns adds wake-up latency - under a
+ * hypervisor on a busy host one "1 ms" sleep measured 6-12 ms, sometimes
+ * 47 ms - so while the user is interacting or something is moving, the
+ * main loop should wait without sleeping. Idle desktops still sleep. */
+bool compositor_wants_fast_loop(uint64_t now_ms)
+{
+    return now_ms - last_input_ms < 250 || need_redraw || last_tick_animating;
+}
+
+static void pointer_pump_at(int where)
+{
+    uint64_t now = timer_get_ticks();
+    if (ptr_last_pump_ms && now - ptr_last_pump_ms > ptr_gap_max) ptr_gap_max = (uint32_t)(now - ptr_last_pump_ms);
+    if (ptr_last_pump_ms && now - ptr_last_pump_ms >= 100)
+        serial_printf("[PERF] pointer stall %d ms before line %d\n", (int)(now - ptr_last_pump_ms), where);
+    ptr_last_pump_ms = now;
+    if (pointer_poll_fn) pointer_poll_fn();
+    if (pointer_absolute) {
+        int32_t mx, my;
+        input_get_mouse_position(&mx, &my);
+        fb_cursor_move(MAX(0, MIN(mx, (int)comp_width - 1)), MAX(0, MIN(my, (int)comp_height - 1)));
+    } else {
+        fb_cursor_move(cursor_x, cursor_y);
+    }
+}
+
+#define pointer_pump() pointer_pump_at(__LINE__)
+
 /* Frame-time receipts: "[PERF]" serial lines (tests/qemu_perf.py). */
 static uint32_t perf_frames, perf_max_ms;
 static uint64_t perf_total_ms, perf_window_start;
@@ -8405,8 +8457,9 @@ static void perf_record_frame(uint64_t start_ms, uint64_t end_ms)
     if (ms > perf_max_ms) perf_max_ms = ms;
     if (!perf_window_start) perf_window_start = start_ms;
     if (end_ms - perf_window_start >= 5000) {
-        serial_printf("[PERF] frames=%d avg_ms=%d max_ms=%d\n", (int)perf_frames,
-                      (int)(perf_total_ms / perf_frames), (int)perf_max_ms);
+        serial_printf("[PERF] frames=%d avg_ms=%d max_ms=%d ptr_gap_max_ms=%d\n", (int)perf_frames,
+                      (int)(perf_total_ms / perf_frames), (int)perf_max_ms, (int)ptr_gap_max);
+        ptr_gap_max = 0;
         perf_frames = perf_max_ms = 0;
         perf_total_ms = 0;
         perf_window_start = 0;
@@ -8491,9 +8544,10 @@ void compositor_tick(uint64_t now_ms)
 {
     static bool login_frame_visible;
     /* Pointer overlay is independent of the 30fps scene/animation budget. */
-    fb_cursor_move(cursor_x, cursor_y);
+    pointer_pump();
     if (netcmd_busy()) netcmd_poll(terminal_net_print);
     browser_poll();
+    pointer_pump();
     {
         /* Network status shows in the menu bar, Control Center and Settings:
          * repaint when it changes (DHCP finishes in the background). */
@@ -8532,6 +8586,7 @@ void compositor_tick(uint64_t now_ms)
      * flashing a full-screen repaint sweep under emulation. */
     bool animating = anim_changed || any_dock_bounce(now_ms) || ghost.kind != GHOST_NONE ||
                      now_ms < anim_keepalive_until;
+    last_tick_animating = animating;
     if (!need_redraw && !animating) {
         return;
     }
@@ -8543,10 +8598,13 @@ void compositor_tick(uint64_t now_ms)
     if (login_frame_visible && !login_screen_visible()) ghost_capture_screen();
 
     draw_wallpaper();
+    pointer_pump();
 
     if (login_screen_visible()) {
         draw_login_screen();
+        pointer_pump();
         fb_present();
+        pointer_pump();
         login_frame_visible = true;
         return;
     }
@@ -8559,6 +8617,7 @@ void compositor_tick(uint64_t now_ms)
         for (int i = 0; i < window_count; i++) {
             if (!windows[i].minimized) {
                 draw_window_animated(i);
+                pointer_pump();
             }
         }
         draw_mission_control(anim_mission_control);
@@ -8566,15 +8625,18 @@ void compositor_tick(uint64_t now_ms)
         for (int i = 0; i < window_count; i++) {
             if (!windows[i].minimized) {
                 draw_window_animated(i);
+                pointer_pump();
             }
         }
     }
     draw_ghost(GHOST_CLOSE, now_ms);
 
     draw_menu_bar();
+    pointer_pump();
 
     if (anim_launchpad == 0) {
         draw_dock(now_ms);
+        pointer_pump();
     }
     draw_ghost(GHOST_MINIMIZE, now_ms);
 
@@ -8592,8 +8654,10 @@ void compositor_tick(uint64_t now_ms)
     draw_menu_dropdown();
     draw_context_menu();
     draw_ghost(GHOST_SCREEN, now_ms);
+    pointer_pump();
 
     fb_present();
+    pointer_pump();
     perf_record_frame(frame_start, timer_get_ticks());
     if (login_frame_visible) {
         serial_printf("[UI] Desktop presented\n");

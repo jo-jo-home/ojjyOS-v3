@@ -87,6 +87,9 @@ uint32_t *fb_backbuffer(void);
 /* Displays that need an explicit "show this rectangle" step (virtio-gpu)
  * register a hook; fb_present/the cursor call it with changed areas. */
 void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h));
+/* Called before the scanout memory is rewritten (fb_present): waits until
+ * the display device has finished reading earlier asynchronous updates. */
+void fb_set_sync_hook(void (*hook)(void));
 void fb_flush_all(void);
 bool fb_backbuffer_active(void);
 /* Cursor-free backbuffer + tiny scanout overlay. Full presents reapply it. */

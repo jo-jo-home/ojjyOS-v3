@@ -60,6 +60,8 @@ void fb_reset_clip(void)
 static void (*flush_hook)(int x, int y, int w, int h);
 
 void fb_set_flush_hook(void (*hook)(int x, int y, int w, int h)) { flush_hook = hook; }
+static void (*sync_hook)(void);
+void fb_set_sync_hook(void (*hook)(void)) { sync_hook = hook; }
 void fb_flush_all(void) { if (flush_hook) flush_hook(0, 0, (int)fb_width, (int)fb_height); }
 bool fb_backbuffer_active(void) { return fb_back_active; }
 
@@ -191,6 +193,7 @@ bool fb_use_backbuffer(bool enable)
 void fb_present(void)
 {
     if (!fb_back_active || !fb_screen) return;
+    if (sync_hook) sync_hook();
     for (uint32_t y = 0; y < fb_height; y++) {
         uint64_t *dst = (uint64_t *)(fb_screen + y * fb_screen_pitch);
         const uint64_t *src = (const uint64_t *)(fb_back + y * fb_width);

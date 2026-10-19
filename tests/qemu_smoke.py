@@ -205,7 +205,9 @@ def protected_checks(vm, arch, output):
         if not match or match[1] != match[2]:
             raise RuntimeError(f"private page leak after {name}: {text}")
         if name == "spin":
-            elapsed = re.search(r"ms=(\d+)", text)
+            # Match spin's own reap line: under slow TCG the previous program's
+            # trailing "[app N] exited ... ms=1" can land inside this window.
+            elapsed = re.search(r"status=timeout code=-110 syscalls=\d+ ms=(\d+)", text)
             if not elapsed or not 100 <= int(elapsed[1]) < 150:
                 raise RuntimeError(f"watchdog budget failed: {text}")
         if status == "fault":

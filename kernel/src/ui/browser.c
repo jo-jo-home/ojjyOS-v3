@@ -28,6 +28,7 @@
 #include "serial.h"
 #include "memory.h"
 #include "image/image.h"
+#include "timer.h"
 
 Browser *BR;
 
@@ -183,7 +184,7 @@ static void relayout(void)
 {
     Tab *t = active_tab();
     if (!t || !BR->doc_parsed || BR->doc_tab != BR->active) return;
-    uint64_t t0 = net_now();
+    uint64_t t0 = timer_get_ticks();
     int w = BR->cw - 2;
     if (w < 200) w = 200;
     web_doc_layout(BR->doc, w, BR->ch, t->zoom, false);
@@ -198,7 +199,7 @@ static void relayout(void)
     }
     if (BR->find_open) br_find_update();
     serial_printf("[WEB] layout items=%d height=%d ms=%u%s\n", BR->doc->item_count, (int)BR->doc->height,
-                  (unsigned)(net_now() - t0), BR->doc->truncated ? " (truncated)" : "");
+                  (unsigned)(timer_get_ticks() - t0), BR->doc->truncated ? " (truncated)" : "");
     /* diagnostic receipt for tests: where the first links landed */
     int shown = 0;
     for (int i = 0; i < BR->doc->item_count && shown < 4; i++) {
@@ -264,12 +265,14 @@ static void image_done(int index, const uint8_t *data, size_t len)
     int w = 0, h = 0;
     if (!image_info(data, len, &w, &h) || w <= 0 || h <= 0 || (uint64_t)w * (uint64_t)h > 16u * 1024 * 1024) {
         im->state = IMG_FAILED;
+        serial_printf("[WEB] image %d undecodable (%02x %02x %02x %02x)\n", index, len > 0 ? data[0] : 0, len > 1 ? data[1] : 0,
+                      len > 2 ? data[2] : 0, len > 3 ? data[3] : 0);
         return;
     }
     size_t need = (size_t)w * (size_t)h * 4;
     if (img_used + need > IMG_POOL) { im->state = IMG_FAILED; return; }
     uint32_t *px = (uint32_t *)(img_pool + img_used);
-    if (!image_decode(data, len, px, (size_t)w * (size_t)h)) { im->state = IMG_FAILED; return; }
+    if (!image_decode(data, len, px, (size_t)w * (size_t)h)) { im->state = IMG_FAILED; serial_printf("[WEB] image %d decode failed %dx%d\n", index, w, h); return; }
     img_used += (need + 15) & ~(size_t)15;
     im->pixels = px;
     im->w = (int16_t)(w > 32767 ? 32767 : w);
@@ -288,6 +291,9 @@ static void poll_resources(void)
         r->busy = false;
         if (r->generation != doc_generation || !t || r->tab != BR->doc_tab) continue;
         bool ok = ph == HTTP_DONE && r->fetch.head.status >= 200 && r->fetch.head.status < 300;
+        serial_printf("[WEB] %s %d status=%d bytes=%u type=%s%s\n", r->kind == RES_SHEET ? "sheet" : "image", r->index,
+                      ph == HTTP_DONE ? r->fetch.head.status : -1, (unsigned)r->fetch.body_len, r->fetch.head.content_type,
+                      ph == HTTP_ERROR ? r->fetch.error : "");
         if (r->kind == RES_SHEET) {
             Tab *dt = &BR->tabs[r->tab];
             if (ok && dt->sused + r->fetch.body_len + 1 < SHEET_CAP) {

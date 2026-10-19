@@ -130,7 +130,8 @@ typedef enum {
     P_FLEX_SHRINK, P_FLEX_BASIS, P_JUSTIFY_CONTENT, P_ALIGN_ITEMS, P_ALIGN_SELF, P_GAP, P_ROW_GAP, P_COLUMN_GAP,
     P_ORDER, P_OVERFLOW, P_OVERFLOW_X, P_OVERFLOW_Y, P_OPACITY, P_CLIP, P_CLIP_PATH, P_VERTICAL_ALIGN,
     P_TOP, P_RIGHT, P_BOTTOM, P_LEFT, P_INSET, P_TABLE_LAYOUT, P_BORDER_SPACING, P_GRID_TEMPLATE_COLUMNS,
-    P_CONTENT_VISIBILITY, P_FONT_VARIANT, P_TRANSFORM, P_PLACE_ITEMS, P_PLACE_CONTENT, P_MASK, P_CLEAR, P_CONTENT,
+    P_CONTENT_VISIBILITY, P_FONT_VARIANT, P_TRANSFORM, P_PLACE_ITEMS, P_PLACE_CONTENT, P_MASK, P_CLEAR, P_CONTENT, P_GRID_TEMPLATE_AREAS, P_GRID_COLUMN, P_GRID_COLUMN_START, P_GRID_COLUMN_END,
+    P_GRID_AREA, P_GRID_ROW, P_GRID_ROW_START, P_GRID_TEMPLATE,
     P_COUNT
 } PropId;
 
@@ -181,6 +182,9 @@ static const struct { const char *name; uint8_t id; } prop_names[] = {
     {"font-variant", P_FONT_VARIANT}, {"transform", P_TRANSFORM}, {"place-items", P_PLACE_ITEMS},
     {"place-content", P_PLACE_CONTENT}, {"mask", P_MASK}, {"mask-image", P_MASK}, {"-webkit-mask", P_MASK},
     {"-webkit-mask-image", P_MASK}, {"clear", P_CLEAR}, {"content", P_CONTENT},
+    {"grid-template-areas", P_GRID_TEMPLATE_AREAS}, {"grid-column", P_GRID_COLUMN}, {"grid-column-start", P_GRID_COLUMN_START},
+    {"grid-column-end", P_GRID_COLUMN_END}, {"grid-area", P_GRID_AREA}, {"grid-row", P_GRID_ROW},
+    {"grid-row-start", P_GRID_ROW_START}, {"grid-template", P_GRID_TEMPLATE},
 };
 
 static uint8_t prop_id(const char *s, size_t n)
@@ -906,7 +910,9 @@ static bool media_list(const CssSheetSet *S, const char *p, const char *end)
 /* Parse declarations [p,end) into an arena array. */
 static CssDecl *parse_decls(CssSheetSet *S, const char *p, const char *end, uint16_t *count)
 {
-    CssDecl tmp[160];
+    /* Design systems put hundreds of custom properties in one rule. Not
+     * re-entered while running, so a static buffer keeps the stack small. */
+    static CssDecl tmp[2048];
     int n = 0;
     while (p < end) {
         p = skip_ws(p, end);
@@ -1123,6 +1129,12 @@ void css_add_sheet(CssSheetSet *S, const char *css, size_t len)
 int css_import_count(const CssSheetSet *S) { return S ? S->import_count : 0; }
 const char *css_import_url(const CssSheetSet *S, int i) { return S && i >= 0 && i < S->import_count ? S->imports[i] : ""; }
 int css_rule_count(const CssSheetSet *S) { return S ? S->rule_count : 0; }
+
+bool css_media_matches(const CssSheetSet *S, const char *media)
+{
+    if (!S || !media) return true;
+    return media_list(S, media, media + strlen(media));
+}
 
 /* ------------------------------------------------------------------ */
 /* Rule index                                                          */
@@ -1666,6 +1678,194 @@ static void initial_values(CssStyle *s)
     s->min_h.kind = LEN_SET;
 }
 
+static const char *strchr_local(const char *s, char c)
+{
+    for (; *s; s++) if (*s == c) return s;
+    return NULL;
+}
+
+static CssGrid *grid_of(const Ctx *C, CssStyle *s)
+{
+    if (!s->grid) s->grid = (CssGrid *)arena_alloc(C->S->a, sizeof(CssGrid));
+    return s->grid;
+}
+
+/* One track size: length, %, fr, auto, min-content, max-content. */
+static bool parse_track_size(const Ctx *C, const char *p, const char *e, int fs, uint8_t *kind, int32_t *px, int32_t *pct, int32_t *fr)
+{
+    p = skip_ws(p, e);
+    while (e > p && ws(e[-1])) e--;
+    size_t n = (size_t)(e - p);
+    if (!n) return false;
+    if (ieq(p, n, "auto") || istarts(p, "fit-content")) { *kind = TK_AUTO; return true; }
+    if (ieq(p, n, "min-content")) { *kind = TK_MINC; return true; }
+    if (ieq(p, n, "max-content")) { *kind = TK_MAXC; return true; }
+    if (n > 2 && lc(e[-2]) == 'f' && lc(e[-1]) == 'r') {
+        const char *q = p;
+        int32_t v;
+        if (!parse_num(&q, e - 2, &v)) return false;
+        *kind = TK_FR;
+        *fr = v;
+        return true;
+    }
+    CssLen l;
+    if (!parse_len(C, p, e, fs, &l) || l.kind != LEN_SET) return false;
+    *kind = TK_FIXED;
+    *px = l.px;
+    *pct = l.pct;
+    return true;
+}
+
+static bool parse_track(const Ctx *C, const char *p, const char *e, int fs, CssTrack *t)
+{
+    memset(t, 0, sizeof(*t));
+    p = skip_ws(p, e);
+    if (istarts(p, "minmax(")) {
+        const char *a = p + 7, *close = skip_group(p + 6, e) - 1, *comma = a;
+        int depth = 0;
+        while (comma < close && !(depth == 0 && *comma == ',')) { if (*comma == '(') depth++; else if (*comma == ')') depth--; comma++; }
+        if (comma >= close) return false;
+        uint8_t k;
+        int32_t px = 0, pct = 0, fr = 0;
+        if (!parse_track_size(C, a, comma, fs, &k, &px, &pct, &fr)) return false;
+        t->min_kind = k == TK_FIXED ? TK_FIXED : TK_AUTO;
+        t->min_px = px;
+        t->min_pct = pct;
+        if (!parse_track_size(C, comma + 1, close, fs, &t->kind, &t->px, &t->pct, &t->fr)) return false;
+        return true;
+    }
+    if (!parse_track_size(C, p, e, fs, &t->kind, &t->px, &t->pct, &t->fr)) return false;
+    t->min_kind = t->kind == TK_FIXED ? TK_FIXED : TK_AUTO;
+    t->min_px = t->px;
+    t->min_pct = t->pct;
+    if (t->kind == TK_FR) { t->min_kind = TK_AUTO; }
+    return true;
+}
+
+static void parse_tracks(const Ctx *C, CssStyle *s, const char *v, int fs)
+{
+    CssGrid *g = grid_of(C, s);
+    if (!g) return;
+    g->n = 0;
+    g->auto_repeat = 0;
+    const char *p = v, *end = v + strlen(v);
+    while (p < end && g->n < GRID_MAX_TRACKS) {
+        p = skip_ws(p, end);
+        if (p >= end) break;
+        if (*p == '[') { p = skip_group(p, end); continue; }          /* line names */
+        const char *t = p;
+        while (p < end && !ws(*p)) { if (*p == '(') { p = skip_group(p, end); continue; } if (*p == '[') break; p++; }
+        if (istarts(t, "repeat(")) {
+            const char *a = t + 7, *close = p - 1, *comma = a;
+            while (comma < close && *comma != ',') comma++;
+            if (comma >= close) continue;
+            const char *body = comma + 1;
+            if (istarts(skip_ws(a, comma), "auto-fill") || istarts(skip_ws(a, comma), "auto-fit")) {
+                g->auto_repeat = istarts(skip_ws(a, comma), "auto-fill") ? 1 : 2;
+                g->rep_at = g->n;
+                /* the first track of the repeat body */
+                const char *b = skip_ws(body, close);
+                const char *be = b;
+                while (be < close && !ws(*be)) { if (*be == '(') { be = skip_group(be, close); continue; } be++; }
+                if (!parse_track(C, b, be, fs, &g->rep)) g->auto_repeat = 0;
+                continue;
+            }
+            const char *q = a;
+            int32_t count;
+            if (!parse_num(&q, comma, &count)) continue;
+            count /= 100;
+            if (count < 1) count = 1;
+            if (count > GRID_MAX_TRACKS) count = GRID_MAX_TRACKS;
+            /* the repeat body may hold several tracks */
+            CssTrack body_tracks[8];
+            int nb = 0;
+            const char *b = body;
+            while (b < close && nb < 8) {
+                b = skip_ws(b, close);
+                if (b >= close) break;
+                if (*b == '[') { b = skip_group(b, close); continue; }
+                const char *be = b;
+                while (be < close && !ws(*be)) { if (*be == '(') { be = skip_group(be, close); continue; } if (*be == '[') break; be++; }
+                if (parse_track(C, b, be, fs, &body_tracks[nb])) nb++;
+                b = be;
+            }
+            for (int r = 0; r < count && g->n < GRID_MAX_TRACKS; r++)
+                for (int k = 0; k < nb && g->n < GRID_MAX_TRACKS; k++) g->t[g->n++] = body_tracks[k];
+            continue;
+        }
+        if (parse_track(C, t, p, fs, &g->t[g->n])) g->n++;
+    }
+    s->grid_cols = g->n ? (uint8_t)(g->n > 255 ? 255 : g->n) : (g->auto_repeat ? 255 : 0);
+}
+
+/* grid-template-areas: "a a b" "c c b" */
+static void parse_areas(const Ctx *C, CssStyle *s, const char *v)
+{
+    CssGrid *g = grid_of(C, s);
+    if (!g) return;
+    g->narea = 0;
+    g->area_cols = 0;
+    int row = 0;
+    for (const char *p = v; *p && row < 64; p++) {
+        if (*p != '"' && *p != '\'') continue;
+        char q = *p++;
+        int col = 0;
+        while (*p && *p != q) {
+            while (*p == ' ' || *p == '\t') p++;
+            if (!*p || *p == q) break;
+            const char *ns = p;
+            while (*p && *p != q && *p != ' ' && *p != '\t') p++;
+            size_t nl = (size_t)(p - ns);
+            bool dot = true;
+            for (size_t i = 0; i < nl; i++) if (ns[i] != '.') dot = false;
+            if (!dot) {
+                int found = -1;
+                for (int i = 0; i < g->narea; i++) if (strlen(g->areas[i].name) == nl && strncmp(g->areas[i].name, ns, nl) == 0) found = i;
+                if (found < 0 && g->narea < GRID_MAX_AREAS) {
+                    found = g->narea++;
+                    g->areas[found].name = dup_ident(C->S->a, ns, nl, false);
+                    g->areas[found].r0 = (uint8_t)row;
+                    g->areas[found].c0 = (uint8_t)col;
+                    g->areas[found].r1 = (uint8_t)(row + 1);
+                    g->areas[found].c1 = (uint8_t)(col + 1);
+                } else if (found >= 0) {
+                    CssArea *a = &g->areas[found];
+                    if (col < a->c0) a->c0 = (uint8_t)col;
+                    if (col + 1 > a->c1) a->c1 = (uint8_t)(col + 1);
+                    if (row + 1 > a->r1) a->r1 = (uint8_t)(row + 1);
+                }
+            }
+            col++;
+        }
+        if (col > g->area_cols) g->area_cols = (uint8_t)(col > 255 ? 255 : col);
+        row++;
+        if (!*p) break;
+    }
+}
+
+/* "3", "-1", "span 2", "auto", "name" -> line (1-based, negative from end, 0 auto) and span. */
+static void grid_line(const char *p, const char *e, int16_t *line, int16_t *span)
+{
+    p = skip_ws(p, e);
+    *line = 0;
+    if (istarts(p, "span")) {
+        const char *q = skip_ws(p + 4, e);
+        int32_t n;
+        if (parse_num(&q, e, &n) && n >= 100) *span = (int16_t)(n / 100 > 64 ? 64 : n / 100);
+        return;
+    }
+    const char *q = p;
+    int32_t n;
+    if (parse_num(&q, e, &n)) {
+        int v = n / 100;
+        if (v > 64) v = 64;
+        if (v < -64) v = -64;
+        *line = (int16_t)v;
+        q = skip_ws(q, e);
+        if (istarts(q, "span")) { const char *r = skip_ws(q + 4, e); if (parse_num(&r, e, &n)) *span = (int16_t)(n / 100); }
+    }
+}
+
 static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
 {
     const CssStyle *P = C->parent;
@@ -2000,9 +2200,27 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
     case P_CLIP_PATH:
         if (istarts(v, "inset(50%") || istarts(v, "inset(100%") || istarts(v, "circle(0")) s->invisible = 1;
         break;
-    case P_TRANSFORM:
-        if (istarts(v, "scale(0)") || istarts(v, "translatex(-100%)") || istarts(v, "translatey(-100%)")) {}
+    case P_TRANSFORM: {
+        /* Off-canvas drawers and collapsed popups: translate by a whole box
+         * (+-100%) or scale to zero. The box is not drawn (its space stays). */
+        bool hide = false;
+        for (const char *q = v; *q && !hide; q++) {
+            if (istarts(q, "scale(0") || istarts(q, "scalex(0") || istarts(q, "scaley(0")) {
+                const char *r = q;
+                while (*r && *r != '(') r++;
+                r++;
+                while (ws(*r)) r++;
+                if (*r == '0' && (r[1] == ')' || r[1] == ',' || ws(r[1]))) hide = true;
+            }
+            if (istarts(q, "translate")) {
+                const char *r = q;
+                while (*r && *r != '(') r++;
+                for (; *r && *r != ')'; r++) if (istarts(r, "100%") && (r == q || r[-1] == '-' || r[-1] == '(' || ws(r[-1]) || r[-1] == ',')) hide = true;
+            }
+        }
+        if (hide) s->invisible = 1;
         break;
+    }
     case P_VERTICAL_ALIGN:
         s->valign = istarts(v, "middle") ? VA_MIDDLE : istarts(v, "top") || istarts(v, "text-top") ? VA_TOP :
                     istarts(v, "bottom") || istarts(v, "text-bottom") ? VA_BOTTOM : istarts(v, "sub") ? VA_SUB :
@@ -2021,28 +2239,49 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
                    istarts(v, "right") || istarts(v, "inline-end") ? 2 : 0;
         break;
     case P_BORDER_SPACING: { CssLen l; if (parse_len(C, v, end, fs, &l) && l.kind == LEN_SET) s->border_spacing = (int16_t)l.px; break; }
-    case P_GRID_TEMPLATE_COLUMNS: {
-        int n = 0;
-        if (istarts(v, "repeat(")) {
-            const char *q = v + 7;
-            int32_t num;
-            if (parse_num(&q, end, &num)) n = num / 100;
-            else n = 0;     /* auto-fill/auto-fit: decided at layout */
-            if (!n) n = 255;
-            for (const char *m = v; *m; m++) {
-                if (!istarts(m, "minmax(")) continue;
-                CssLen l;
-                const char *a = m + 7, *b = a;
-                while (*b && *b != ',' && *b != ')') b++;
-                if (parse_len(C, a, b, fs, &l) && l.kind == LEN_SET) s->grid_min = (int16_t)(l.px > 0 ? l.px : 0);
-                break;
-            }
-        } else {
-            const char *ts[12], *te[12];
-            n = split_tokens(v, end, ts, te, 12);
-            if (istarts(v, "none")) n = 0;
-        }
-        s->grid_cols = (uint8_t)(n > 255 ? 255 : n);
+    case P_GRID_TEMPLATE_COLUMNS:
+        if (istarts(v, "none") || istarts(v, "subgrid") || istarts(v, "masonry")) { if (s->grid) s->grid->n = 0; s->grid_cols = 0; break; }
+        parse_tracks(C, s, v, fs);
+        break;
+    case P_GRID_TEMPLATE: {
+        /* "areas.../ columns" or "rows / columns": take the part after '/' */
+        const char *slash = NULL;
+        int depth = 0;
+        for (const char *q = v; *q; q++) { if (*q == '(') depth++; else if (*q == ')') depth--; else if (*q == '/' && !depth) slash = q; }
+        if (slash) parse_tracks(C, s, slash + 1, fs);
+        if (strchr_local(v, '"')) parse_areas(C, s, v);
+        break;
+    }
+    case P_GRID_TEMPLATE_AREAS:
+        if (istarts(v, "none")) { if (s->grid) s->grid->narea = 0; break; }
+        parse_areas(C, s, v);
+        break;
+    case P_GRID_COLUMN: {
+        const char *slash = strchr_local(v, '/');
+        grid_line(v, slash ? slash : end, &s->gc_start, &s->gc_span);
+        if (slash) { int16_t sp = 0; grid_line(slash + 1, end, &s->gc_end, &sp); if (sp) { s->gc_span = sp; s->gc_end = 0; } }
+        else s->gc_end = 0;
+        break;
+    }
+    case P_GRID_COLUMN_START: grid_line(v, end, &s->gc_start, &s->gc_span); break;
+    case P_GRID_COLUMN_END: { int16_t sp = 0; grid_line(v, end, &s->gc_end, &sp); if (sp) { s->gc_span = sp; s->gc_end = 0; } break; }
+    case P_GRID_ROW: case P_GRID_ROW_START: {
+        const char *slash = strchr_local(v, '/');
+        grid_line(v, slash ? slash : end, &s->gr_start, &s->gr_span);
+        break;
+    }
+    case P_GRID_AREA: {
+        const char *q = v;
+        while (*q && *q != '/' && *q != ' ') q++;
+        bool numeric = (*v >= '0' && *v <= '9') || *v == '-' || istarts(v, "span");
+        if (!numeric && !istarts(v, "auto")) { s->grid_area = dup_ident(C->S->a, v, (size_t)(q - v), false); break; }
+        /* row-start / column-start / row-end / column-end */
+        const char *parts[4] = {v, NULL, NULL, NULL};
+        int np = 1;
+        for (const char *c = v; *c && np < 4; c++) if (*c == '/') parts[np++] = c + 1;
+        grid_line(parts[0], np > 1 ? parts[1] - 1 : end, &s->gr_start, &s->gr_span);
+        if (np > 1) grid_line(parts[1], np > 2 ? parts[2] - 1 : end, &s->gc_start, &s->gc_span);
+        if (np > 3) { int16_t sp = 0; grid_line(parts[3], end, &s->gc_end, &sp); if (sp) { s->gc_span = sp; s->gc_end = 0; } }
         break;
     }
     default:

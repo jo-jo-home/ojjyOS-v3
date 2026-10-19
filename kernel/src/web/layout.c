@@ -39,6 +39,7 @@ static struct {
     const WebFontMetrics *fm;
     WebArena *a;
     int16_t link;               /* current link index (-1) */
+    int32_t viewport_h;
     int depth;
     int text_chars;             /* visible text emitted (JS detection) */
     /* pending list marker for the next line box */
@@ -144,8 +145,21 @@ static bool is_replaced(const DomNode *n)
     }
 }
 
+static bool closed_details_content(const DomNode *n)
+{
+    /* like Chrome, only the first <summary> of a closed <details> renders, whatever the CSS says */
+    const DomNode *p = n->parent;
+    if (!p || p->tag != TAG_DETAILS || dom_attr(p, "open")) return false;
+    if (n->type == DOM_ELEMENT && n->tag == TAG_SUMMARY) {
+        for (const DomNode *s = p->first; s && s != n; s = s->next) if (s->type == DOM_ELEMENT && s->tag == TAG_SUMMARY) return true;
+        return false;
+    }
+    return true;
+}
+
 static bool skip_node(const DomNode *n)
 {
+    if (closed_details_content(n)) return true;
     if (n->type == DOM_TEXT) return false;
     if (n->type != DOM_ELEMENT) return true;
     const CssStyle *s = st(n);
@@ -1804,16 +1818,50 @@ static int32_t layout_flex(DomNode *n, const CssStyle *s, DomNode **kids, int co
 /* Grid (equal columns) and tables                                     */
 /* ------------------------------------------------------------------ */
 
+#define GRID_COLS 64
+#define GRID_ROWS 256
+
+typedef struct {
+    DomNode *n;
+    int c0, span, r0, rspan;
+    int item0, anchor0, item_end, anchor_end;
+    BoxOut bo;
+    int32_t mh;                 /* margin-box height */
+} GridItem;
+
+static int32_t track_fixed(const CssTrack *t, int32_t w) { return t->px + (int32_t)((int64_t)t->pct * w / 10000); }
+
 static int32_t layout_grid(DomNode *n, const CssStyle *s, DomNode **kids, int count, int32_t x, int32_t y, int32_t w)
 {
-    int cols = s->grid_cols;
-    if (cols == 255) {
-        int minw = s->grid_min > 0 ? s->grid_min : 220;
-        cols = (int)((w + s->gap_col) / (minw + s->gap_col));
-        if (cols < 1) cols = 1;
+    const CssGrid *g = s->grid;
+    int ncols = 0;
+    static CssTrack tracks_buf[LAYOUT_DEPTH + 2][GRID_COLS];
+    CssTrack *tracks = tracks_buf[L.depth < LAYOUT_DEPTH ? L.depth : LAYOUT_DEPTH];
+    int items_n = 0;
+    for (int i = 0; i < count; i++) if (!whitespace_only(kids[i])) items_n++;
+    if (g && (g->n || g->auto_repeat)) {
+        int rep = 0;
+        if (g->auto_repeat) {
+            int32_t other = 0;
+            for (int i = 0; i < g->n; i++) other += g->t[i].kind == TK_FIXED ? track_fixed(&g->t[i], w) : 0;
+            int32_t minw = g->rep.min_kind == TK_FIXED ? g->rep.min_px + (int32_t)((int64_t)g->rep.min_pct * w / 10000)
+                                                       : g->rep.kind == TK_FIXED ? track_fixed(&g->rep, w) : 200;
+            if (minw < 1) minw = 1;
+            rep = (int)((w - other + s->gap_col) / (minw + s->gap_col));
+            if (rep < 1) rep = 1;
+            if (g->auto_repeat == 2 && rep > items_n && items_n > 0) rep = items_n;
+        }
+        for (int i = 0; i <= g->n && ncols < GRID_COLS; i++) {
+            if (g->auto_repeat && i == g->rep_at) for (int r = 0; r < rep && ncols < GRID_COLS; r++) tracks[ncols++] = g->rep;
+            if (i < g->n && ncols < GRID_COLS) tracks[ncols++] = g->t[i];
+        }
     }
-    if (cols <= 1) {
-        /* single column: block flow with row gaps */
+    if (g && g->area_cols > ncols) {
+        for (int i = ncols; i < g->area_cols && i < GRID_COLS; i++) { memset(&tracks[i], 0, sizeof(CssTrack)); tracks[i].kind = TK_FR; tracks[i].fr = 100; tracks[i].min_kind = TK_AUTO; }
+        ncols = g->area_cols < GRID_COLS ? g->area_cols : GRID_COLS;
+    }
+    if (ncols <= 0) {
+        /* no column template: one column, row gaps between items */
         int32_t cy = y;
         int placed = 0;
         for (int i = 0; i < count; i++) {
@@ -1824,37 +1872,209 @@ static int32_t layout_grid(DomNode *n, const CssStyle *s, DomNode **kids, int co
             Edges e;
             edges(st(c), w, &e);
             BoxOut bo;
-            layout_box(c, x + e.m[3], cy + e.m[0], w, -1, -1, false, &bo);
+            layout_box(c, x, cy + e.m[0], w, -1, -1, false, &bo);
             cy += bo.h + e.m[0] + e.m[2];
         }
         return cy - y;
     }
-    int32_t col_w = (w - s->gap_col * (cols - 1)) / cols;
-    if (col_w < 1) col_w = 1;
-    int32_t cy = y, row_h = 0;
-    int col = 0;
-    int row_start_item = L.d->item_count;
-    (void)row_start_item;
-    for (int i = 0; i < count; i++) {
-        DomNode *c = kids[i];
+    GridItem *it = (GridItem *)arena_alloc(L.a, sizeof(GridItem) * (size_t)(items_n ? items_n : 1));
+    uint64_t *occ = (uint64_t *)arena_alloc(L.a, sizeof(uint64_t) * GRID_ROWS);
+    if (!it || !occ) return 0;
+    /* placement */
+    int ni = 0, cur_r = 0, cur_c = 0, nrows = 0;
+    for (int k = 0; k < count; k++) {
+        DomNode *c = kids[k];
         if (whitespace_only(c)) continue;
-        int32_t cx = x + col * (col_w + s->gap_col);
-        int32_t h;
-        if (c->type == DOM_TEXT) {
-            DomNode *one[1] = {c};
-            h = layout_inline_run(n, one, 1, cx, cy, col_w);
-        } else {
-            Edges e;
-            edges(st(c), col_w, &e);
-            BoxOut bo;
-            layout_box(c, cx + e.m[3], cy + e.m[0], col_w, col_w - e.m[1] - e.m[3], -1, false, &bo);
-            h = bo.h + e.m[0] + e.m[2];
+        GridItem *gi = &it[ni++];
+        memset(gi, 0, sizeof(*gi));
+        gi->n = c;
+        const CssStyle *cs = c->type == DOM_ELEMENT ? st(c) : NULL;
+        int c0 = -1, span = 1, r0 = -1, rspan = 1;
+        if (cs && cs->grid_area && g) {
+            for (int a = 0; a < g->narea; a++) {
+                if (strcmp(g->areas[a].name, cs->grid_area) != 0) continue;
+                c0 = g->areas[a].c0; span = g->areas[a].c1 - g->areas[a].c0;
+                r0 = g->areas[a].r0; rspan = g->areas[a].r1 - g->areas[a].r0;
+            }
         }
-        if (h > row_h) row_h = h;
-        if (++col == cols) { cy += row_h + s->gap_row; row_h = 0; col = 0; }
+        if (cs && c0 < 0) {
+            if (cs->gc_start > 0) c0 = cs->gc_start - 1;
+            else if (cs->gc_start < 0) c0 = ncols + 1 + cs->gc_start;
+            if (cs->gc_end) {
+                int end_line = cs->gc_end > 0 ? cs->gc_end : ncols + 2 + cs->gc_end;
+                if (c0 < 0) c0 = end_line - 1 - (cs->gc_span ? cs->gc_span : 1);
+                span = end_line - 1 - c0;
+            } else if (cs->gc_span) span = cs->gc_span;
+            if (cs->gr_start > 0) r0 = cs->gr_start - 1;
+            if (cs->gr_span) rspan = cs->gr_span;
+        }
+        if (span < 1) span = 1;
+        if (span > ncols) span = ncols;
+        if (c0 >= ncols) c0 = ncols - 1;
+        if (c0 >= 0 && c0 + span > ncols) span = ncols - c0;
+        if (rspan < 1) rspan = 1;
+        if (rspan > 16) rspan = 16;
+        uint64_t mask_cols;
+        if (r0 < 0) {
+            /* auto placement from the cursor, row-major */
+            int r = cur_r, col = c0 >= 0 ? c0 : cur_c;
+            for (int guard = 0; guard < GRID_ROWS * 2; guard++) {
+                if (c0 < 0 && col + span > ncols) { r++; col = 0; continue; }
+                if (r >= GRID_ROWS - rspan) break;
+                mask_cols = (span >= 64 ? ~0ull : ((1ull << span) - 1)) << col;
+                bool free = true;
+                for (int rr = r; rr < r + rspan; rr++) if (occ[rr] & mask_cols) { free = false; break; }
+                if (free) break;
+                if (c0 >= 0) r++;
+                else { col++; if (col + span > ncols) { r++; col = 0; } }
+            }
+            r0 = r;
+            if (c0 < 0) c0 = col;
+            if (c0 < 0) c0 = 0;
+            cur_r = r0;
+            cur_c = c0 + span;
+        }
+        if (r0 >= GRID_ROWS - rspan) r0 = GRID_ROWS - rspan - 1;
+        if (c0 < 0) c0 = 0;
+        mask_cols = (span >= 64 ? ~0ull : ((1ull << span) - 1)) << c0;
+        for (int rr = r0; rr < r0 + rspan; rr++) occ[rr] |= mask_cols;
+        gi->c0 = c0; gi->span = span; gi->r0 = r0; gi->rspan = rspan;
+        if (r0 + rspan > nrows) nrows = r0 + rspan;
     }
-    if (col) cy += row_h;
-    else if (cy > y) cy -= s->gap_row;
+    /* column widths */
+    int32_t cw[GRID_COLS], cmin[GRID_COLS];
+    int32_t avail = w - s->gap_col * (ncols - 1);
+    int32_t used = 0;
+    int64_t fr_sum = 0;
+    for (int c = 0; c < ncols; c++) {
+        CssTrack *t = &tracks[c];
+        cmin[c] = 0;
+        int32_t content_min = 0, content_max = 0;
+        if (t->kind != TK_FIXED || t->min_kind != TK_FIXED) {
+            for (int i = 0; i < ni; i++) {
+                if (it[i].c0 != c || it[i].span != 1) continue;
+                int32_t a, b;
+                if (it[i].n->type == DOM_TEXT) measure_text(it[i].n, s, &a, &b);
+                else measure(it[i].n, &a, &b, L.depth + 1);
+                if (a > content_min) content_min = a;
+                if (b > content_max) content_max = b;
+            }
+        }
+        if (t->min_kind == TK_FIXED) cmin[c] = t->min_px + (int32_t)((int64_t)t->min_pct * w / 10000);
+        else cmin[c] = t->kind == TK_FR ? content_min : content_min;
+        switch (t->kind) {
+            case TK_FIXED: cw[c] = track_fixed(t, w); if (cw[c] < cmin[c]) cw[c] = cmin[c]; break;
+            case TK_MINC: cw[c] = content_min; break;
+            case TK_MAXC: case TK_AUTO: cw[c] = content_max; break;
+            default: cw[c] = cmin[c]; fr_sum += t->fr; break;
+        }
+        if (cmin[c] < 0) cmin[c] = 0;
+        if (cw[c] < 0) cw[c] = 0;
+        used += cw[c];
+    }
+    int32_t free_space = avail - used;
+    if (fr_sum > 0 && free_space > 0) {
+        /* fr tracks share the space left; a track whose minimum is larger keeps it */
+        int32_t share_space = avail;
+        int64_t frs = fr_sum;
+        for (int c = 0; c < ncols; c++) if (tracks[c].kind != TK_FR) share_space -= cw[c];
+        for (int pass = 0; pass < 3; pass++) {
+            int64_t per = frs > 0 ? (int64_t)share_space * 100 / (frs < 100 ? 100 : frs) : 0;
+            bool changed = false;
+            for (int c = 0; c < ncols; c++) {
+                if (tracks[c].kind != TK_FR || tracks[c].fr < 0) continue;
+                int32_t want = (int32_t)(per * tracks[c].fr / 100);
+                if (want < cmin[c] && tracks[c].fr > 0) {
+                    cw[c] = cmin[c];
+                    share_space -= cmin[c];
+                    frs -= tracks[c].fr;
+                    tracks[c].fr = -1;          /* frozen */
+                    changed = true;
+                }
+            }
+            if (!changed) {
+                for (int c = 0; c < ncols; c++) if (tracks[c].kind == TK_FR && tracks[c].fr > 0) cw[c] = (int32_t)(per * tracks[c].fr / 100);
+                break;
+            }
+        }
+    } else if (free_space > 0) {
+        /* no fr: auto tracks stretch to fill (justify-content: normal) */
+        int autos = 0;
+        for (int c = 0; c < ncols; c++) if (tracks[c].kind == TK_AUTO) autos++;
+        if (autos) for (int c = 0; c < ncols; c++) if (tracks[c].kind == TK_AUTO) cw[c] += free_space / autos;
+    } else if (free_space < 0) {
+        /* shrink flexible/auto tracks towards their minimum */
+        int32_t room = 0;
+        for (int c = 0; c < ncols; c++) if (tracks[c].kind != TK_FIXED) room += cw[c] - cmin[c];
+        int32_t need = -free_space;
+        for (int c = 0; c < ncols && room > 0; c++) {
+            if (tracks[c].kind == TK_FIXED) continue;
+            int32_t cut = (int32_t)((int64_t)need * (cw[c] - cmin[c]) / room);
+            cw[c] -= cut;
+        }
+    }
+    int32_t cx[GRID_COLS + 1];
+    cx[0] = x;
+    for (int c = 0; c < ncols; c++) cx[c + 1] = cx[c] + cw[c] + s->gap_col;
+    /* rows, in order */
+    int32_t *rh = (int32_t *)arena_alloc(L.a, sizeof(int32_t) * (size_t)(nrows + 1));
+    int32_t *ry = (int32_t *)arena_alloc(L.a, sizeof(int32_t) * (size_t)(nrows + 2));
+    if (!rh || !ry) return 0;
+    int32_t cy = y;
+    for (int r = 0; r < nrows; r++) {
+        ry[r] = cy;
+        rh[r] = 0;
+        for (int i = 0; i < ni; i++) {
+            GridItem *gi = &it[i];
+            if (gi->r0 != r) continue;
+            int32_t width = cx[gi->c0 + gi->span] - cx[gi->c0] - s->gap_col;
+            gi->item0 = L.d->item_count;
+            gi->anchor0 = L.d->anchor_count;
+            if (gi->n->type == DOM_TEXT) {
+                DomNode *one[1] = {gi->n};
+                gi->mh = layout_inline_run(n, one, 1, cx[gi->c0], cy, width);
+                gi->bo.bg_item = -1;
+            } else {
+                Edges e;
+                edges(st(gi->n), width, &e);
+                layout_box(gi->n, cx[gi->c0] + e.m[3], cy + e.m[0], width, width - e.m[1] - e.m[3], -1, false, &gi->bo);
+                gi->mh = gi->bo.h + e.m[0] + e.m[2];
+            }
+            gi->item_end = L.d->item_count;
+            gi->anchor_end = L.d->anchor_count;
+            if (gi->rspan == 1 && gi->mh > rh[r]) rh[r] = gi->mh;
+        }
+        /* items ending in this row may need more room */
+        for (int i = 0; i < ni; i++) {
+            GridItem *gi = &it[i];
+            if (gi->rspan <= 1 || gi->r0 + gi->rspan - 1 != r) continue;
+            int32_t have = cy + rh[r] - ry[gi->r0];
+            if (gi->mh > have) rh[r] += gi->mh - have;
+        }
+        cy += rh[r] + (r + 1 < nrows ? s->gap_row : 0);
+    }
+    ry[nrows] = cy + s->gap_row;
+    /* stretch / align items in their areas */
+    for (int i = 0; i < ni; i++) {
+        GridItem *gi = &it[i];
+        if (gi->n->type != DOM_ELEMENT) continue;
+        const CssStyle *cs = st(gi->n);
+        int32_t area_h = ry[gi->r0 + gi->rspan] - ry[gi->r0] - s->gap_row;
+        if (gi->r0 + gi->rspan >= nrows) area_h = cy - ry[gi->r0];
+        uint8_t al = cs->align_self != 255 ? cs->align_self : s->align_items;
+        if (al == FLEX_CENTER && gi->mh < area_h) translate_range(gi->item0, gi->item_end, gi->anchor0, gi->anchor_end, 0, (area_h - gi->mh) / 2);
+        else if (al == FLEX_END && gi->mh < area_h) translate_range(gi->item0, gi->item_end, gi->anchor0, gi->anchor_end, 0, area_h - gi->mh);
+        else if ((al == FLEX_STRETCH || al == FLEX_START) && al == FLEX_STRETCH && cs->height.kind != LEN_SET && gi->bo.bg_item >= 0 && gi->mh < area_h) {
+            Edges e;
+            edges(cs, w, &e);
+            WebDoc *d = L.d;
+            int32_t top = d->items[gi->bo.bg_item].y, old = d->items[gi->bo.bg_item].h, nh = area_h - e.m[0] - e.m[2];
+            for (int k = gi->item0; k < gi->item_end; k++) {
+                WebItem *wi = &d->items[k];
+                if ((wi->kind == WI_RECT || wi->kind == WI_STROKE) && wi->y == top && wi->h == old) wi->h = nh;
+            }
+        }
+    }
     return cy - y;
 }
 
@@ -2141,6 +2361,64 @@ static int32_t layout_children(DomNode *n, const CssStyle *s, int32_t x, int32_t
     }
 }
 
+static bool is_positioned(const CssStyle *s) { return s->position != POS_STATIC; }
+
+/* Absolutely positioned descendants whose containing block is `cb` (the
+ * nearest positioned ancestor): laid out after cb's content, painted on top.
+ * Fixed boxes use the page's initial containing block; bottom-anchored fixed
+ * bars (cookie banners, chat widgets) are skipped: there is no way to close
+ * them without scripts. */
+static void layout_abs_descendants(DomNode *cb, int32_t cbx, int32_t cby, int32_t cbw, int32_t cbh, bool root)
+{
+    if (L.depth > LAYOUT_DEPTH) return;
+    for (DomNode *c = cb->first; c; ) {
+        bool skip_children = false;
+        if (c->type == DOM_ELEMENT) {
+            const CssStyle *s = c->style;
+            if (!s || s->display == DISP_NONE || c->tag == TAG_SCRIPT || c->tag == TAG_STYLE || c->tag == TAG_TEMPLATE ||
+                c->tag == TAG_HEAD || is_replaced(c)) {
+                skip_children = true;
+                if (s && out_of_flow(s) && is_replaced(c) && s->display != DISP_NONE) goto place;
+            } else if (closed_details_content(c)) {
+                skip_children = true;
+            } else if (out_of_flow(s)) {
+            place:
+                skip_children = true;
+                if (s->invisible) { c = dom_next(c, cb, true); continue; }
+                if (s->position == POS_FIXED && !root) { c = dom_next(c, cb, true); continue; }
+                if (s->position == POS_FIXED && s->inset[2].kind == LEN_SET && s->inset[0].kind != LEN_SET) {
+                    c = dom_next(c, cb, true);
+                    continue;
+                }
+                Edges e;
+                edges(s, cbw, &e);
+                bool l = s->inset[3].kind == LEN_SET, r = s->inset[1].kind == LEN_SET;
+                bool t = s->inset[0].kind == LEN_SET, b = s->inset[2].kind == LEN_SET;
+                int32_t left = l ? css_len(&s->inset[3], cbw) : 0, right = r ? css_len(&s->inset[1], cbw) : 0;
+                int32_t top = t ? css_len(&s->inset[0], cbh) : 0, bottom = b ? css_len(&s->inset[2], cbh) : 0;
+                /* far off-screen tricks (left:-9999px) stay hidden */
+                if (left < -2000 || top < -2000 || left > 20000 || top > 50000) { c = dom_next(c, cb, true); continue; }
+                int32_t forced_w = -1;
+                if (l && r && s->width.kind != LEN_SET) forced_w = cbw - left - right - e.m[1] - e.m[3];
+                int item0 = L.d->item_count, anchor0 = L.d->anchor_count;
+                int16_t saved_link = L.link;
+                BoxOut bo;
+                L.depth++;
+                layout_box(c, 0, 0, cbw, forced_w >= 0 ? forced_w : -1, -1, forced_w < 0, &bo);
+                L.depth--;
+                L.link = saved_link;
+                int32_t mw = bo.w + e.m[1] + e.m[3], mh = bo.h + e.m[0] + e.m[2];
+                int32_t px = l ? cbx + left : r ? cbx + cbw - right - mw : cbx;
+                int32_t py = t ? cby + top : b ? cby + cbh - bottom - mh : cby;
+                translate(item0, anchor0, px + e.m[3], py + e.m[0]);
+            } else if (is_positioned(s) && c != cb) {
+                skip_children = true;           /* has its own containing block */
+            }
+        }
+        c = dom_next(c, cb, skip_children);
+    }
+}
+
 static void layout_box(DomNode *n, int32_t x, int32_t y, int32_t cw, int32_t forced_w, int32_t forced_h, bool shrink,
                        BoxOut *out)
 {
@@ -2263,6 +2541,13 @@ static void layout_box(DomNode *n, int32_t x, int32_t y, int32_t cw, int32_t for
     if (clip) {
         if (clip_item >= 0) L.d->items[clip_item].h = bh;
         emit(WI_UNCLIP, 0, 0, 0, 0, 0);
+    }
+    /* absolutely positioned descendants (containing block = padding box) */
+    if (is_positioned(s) || is_html) {
+        int32_t pbx = bx + e.b[3], pby = y + e.b[0];
+        int32_t pbw = bw - e.b[1] - e.b[3], pbh = bh - e.b[0] - e.b[2];
+        if (is_html) { pbx = 0; pby = 0; pbw = L.d->width; pbh = L.viewport_h; }
+        layout_abs_descendants(n, pbx, pby, pbw, pbh, is_html);
     }
     /* finalize decoration heights */
     WebDoc *d = L.d;
@@ -2491,12 +2776,11 @@ void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool lat
             }
             case TAG_STYLE: {
                 const char *media = dom_attr(n, "media");
-                bool ok = !media || !media[0];
-                for (const char *m = media; m && *m && !ok; m++) if (strncmp(m, "screen", 6) == 0 || strncmp(m, "all", 3) == 0) ok = true;
-                if (ok && n->first && n->first->type == DOM_TEXT && d->sheet_count < WEB_MAX_SHEETS) {
+                if (n->first && n->first->type == DOM_TEXT && d->sheet_count < WEB_MAX_SHEETS) {
                     d->sheets[d->sheet_count].text = n->first->text;
                     d->sheets[d->sheet_count].len = n->first->text_len;
                     d->sheets[d->sheet_count].external = false;
+                    d->sheets[d->sheet_count].media = media && media[0] ? media : NULL;
                     d->sheet_count++;
                 }
                 skip = true;
@@ -2513,15 +2797,17 @@ void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool lat
                 }
                 const char *media = dom_attr(n, "media");
                 if (sheet && media && media[0]) {
-                    bool ok = false;
-                    for (const char *m = media; *m; m++) if (strncmp(m, "screen", 6) == 0 || strncmp(m, "all", 3) == 0 || *m == '(') ok = true;
-                    if (!ok) sheet = false;
+                    /* print-only sheets are never fetched; others are checked per layout */
+                    bool comma = false;
+                    for (const char *m = media; *m; m++) if (*m == ',') comma = true;
+                    if (strncmp(media, "print", 5) == 0 && !comma) sheet = false;
                 }
                 if (sheet && d->sheet_count < WEB_MAX_SHEETS && d->sheet_url_count < WEB_MAX_SHEETS && strlen(href) < WEB_URL_MAX) {
                     strcpy(d->sheet_urls[d->sheet_url_count], href);
                     d->sheets[d->sheet_count].text = NULL;
                     d->sheets[d->sheet_count].len = (size_t)d->sheet_url_count;   /* slot -> url index until loaded */
                     d->sheets[d->sheet_count].external = true;
+                    d->sheets[d->sheet_count].media = media && media[0] ? media : NULL;
                     d->sheet_count++;
                     d->sheet_url_count++;
                 }
@@ -2605,7 +2891,7 @@ void web_doc_layout(WebDoc *d, int width, int viewport_h, int zoom, bool dark)
         d->css = css_new(d->css_arena, &m);
         int imports_seen = 0;
         for (int i = 0; i < d->sheet_count; i++) {
-            if (d->sheets[i].text) css_add_sheet(d->css, d->sheets[i].text, d->sheets[i].len);
+            if (d->sheets[i].text && css_media_matches(d->css, d->sheets[i].media)) css_add_sheet(d->css, d->sheets[i].text, d->sheets[i].len);
             /* new @import URLs become requests */
             int ic = css_import_count(d->css);
             for (; imports_seen < ic; imports_seen++) {
@@ -2617,6 +2903,7 @@ void web_doc_layout(WebDoc *d, int width, int viewport_h, int zoom, bool dark)
                     d->sheets[d->sheet_count].text = NULL;
                     d->sheets[d->sheet_count].len = (size_t)d->sheet_url_count;
                     d->sheets[d->sheet_count].external = true;
+                    d->sheets[d->sheet_count].media = NULL;
                     d->sheet_count++;
                     d->sheet_url_count++;
                 }
@@ -2638,6 +2925,7 @@ void web_doc_layout(WebDoc *d, int width, int viewport_h, int zoom, bool dark)
     ifc_depth = flex_depth = 0;
     float_count = float_base = 0;
     L.d = d;
+    L.viewport_h = viewport_h > 0 ? viewport_h : 800;
     L.fm = d->fm;
     L.a = d->layout_arena;
     L.link = -1;

@@ -105,6 +105,7 @@ typedef struct {
     const char *text;           /* inline <style> or external sheet text */
     size_t len;
     bool external;
+    const char *media;          /* media attribute (NULL = all) */
 } WebSheetSrc;
 
 typedef struct WebDoc {

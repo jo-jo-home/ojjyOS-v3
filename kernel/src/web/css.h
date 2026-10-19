@@ -41,6 +41,31 @@ enum { TT_NONE = 0, TT_UPPER, TT_LOWER, TT_CAPITALIZE };
 enum { FLOAT_NONE = 0, FLOAT_LEFT, FLOAT_RIGHT };
 enum { VA_BASELINE = 0, VA_MIDDLE, VA_TOP, VA_BOTTOM, VA_SUB, VA_SUPER };
 
+/* Grid tracks (grid-template-columns) and areas (grid-template-areas). */
+enum { TK_FIXED = 0, TK_FR, TK_AUTO, TK_MINC, TK_MAXC };
+typedef struct {
+    uint8_t kind;               /* max sizing function */
+    uint8_t min_kind;           /* min sizing (TK_FIXED or TK_AUTO) */
+    int32_t px, pct;            /* TK_FIXED */
+    int32_t fr;                 /* hundredths */
+    int32_t min_px, min_pct;    /* minmax() minimum when min_kind == TK_FIXED */
+} CssTrack;
+#define GRID_MAX_TRACKS 32
+#define GRID_MAX_AREAS  24
+typedef struct {
+    const char *name;
+    uint8_t r0, c0, r1, c1;     /* half-open */
+} CssArea;
+typedef struct CssGrid {
+    CssTrack t[GRID_MAX_TRACKS];
+    uint8_t n;
+    uint8_t auto_repeat;        /* 0 none, 1 auto-fill, 2 auto-fit */
+    uint8_t rep_at;             /* index where the auto repeat goes */
+    CssTrack rep;
+    CssArea areas[GRID_MAX_AREAS];
+    uint8_t narea, area_cols;
+} CssGrid;
+
 typedef struct CssVar {
     const char *name;           /* "--x" */
     const char *value;
@@ -73,6 +98,10 @@ typedef struct CssStyle {
     CssLen inset[4];            /* top right bottom left (relative/absolute) */
     const char *bg_image;       /* url(...) */
     const char *content;        /* 'content' (pseudo-elements) */
+    CssGrid *grid;              /* grid container template */
+    int16_t gc_start, gc_end, gc_span;  /* grid item column placement (0 = auto) */
+    int16_t gr_start, gr_span;
+    const char *grid_area;      /* named area */
     CssVar *vars;
 } CssStyle;
 
@@ -97,6 +126,8 @@ const char *css_import_url(const CssSheetSet *set, int i);
 void css_style_tree(CssSheetSet *set, DomTree *tree);
 /* Parse one colour ("#fff", "rgb()", named). false if not a colour. */
 bool css_parse_color(const char *s, uint32_t *argb);
+/* Does a media query list ("screen and (min-width: 600px)") match? */
+bool css_media_matches(const CssSheetSet *set, const char *media);
 /* Statistics for tests/logs. */
 int css_rule_count(const CssSheetSet *set);
 

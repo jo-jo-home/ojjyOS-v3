@@ -22,7 +22,9 @@ make
 
 # Create sysroot directories
 echo "Creating directory structure..."
-mkdir -p "$SYSROOT/System/Wallpapers"
+# Desktop pictures come from the disk pack (tools/import_wallpapers.py) and
+# the procedural waves; the old 640x480 .raw wallpapers are gone.
+rm -rf "$SYSROOT/System/Wallpapers"
 mkdir -p "$SYSROOT/System/Fonts"
 mkdir -p "$SYSROOT/System/Library"
 mkdir -p "$SYSROOT/System/Library/Icons"
@@ -59,12 +61,6 @@ echo "Generating icons..."
 ./mkicon monitor "$SYSROOT/Applications/Monitor.app/icon.raw"
 ./mkicon folder "$SYSROOT/System/Library/Icons/Folder.raw"
 ./mkicon file "$SYSROOT/System/Library/Icons/File.raw"
-
-# Generate wallpapers (smaller for testing - 640x480)
-echo "Generating wallpapers..."
-./mkwallpaper 640 480 tahoe_light "$SYSROOT/System/Wallpapers/Tahoe Light.raw"
-./mkwallpaper 640 480 tahoe_dark "$SYSROOT/System/Wallpapers/Tahoe Dark.raw"
-./mkwallpaper 640 480 gradient_blue "$SYSROOT/System/Wallpapers/Blue.raw"
 
 # Create manifest for About.app
 cat > "$SYSROOT/Applications/About.app/manifest.json" << 'EOF'

@@ -129,8 +129,25 @@ def run(args):
             time.sleep(.3)
             picked = re.search(r"\[UI\] Desktop picture '([^']+)'", vm.text()[mark:])
         assert picked and picked[1] == names[names.index('Tahoe Dark') + 1], picked
-        chosen = picked[1]
         snap('08-preview-set', 2.5)
+
+        # Spotlight lists desktop pictures; Enter applies one.
+        mark = len(vm.text())
+        vm.key('meta_l', True); vm.press('spc'); vm.key('meta_l', False); time.sleep(.3)
+        vm.type('goa sh'); snap('08b-spotlight-picture', .6); vm.press('ret')
+        vm.wait("[UI] Desktop picture 'Goa Shore'", after=mark, timeout=60)
+        # Desktop menu > Change Wallpaper... opens Settings on the Wallpaper page.
+        mark = len(vm.text())
+        rx, ry = width - 260, height - 330               # empty desktop, clear of windows and Dock
+        move(rx, ry); time.sleep(.15)
+        for down in (True, False):
+            vm.qmp('input-send-event', {'events': [{'type': 'btn', 'data': {'down': down, 'button': 'right'}}]})
+            time.sleep(.1)
+        time.sleep(.5)
+        snap('08c-desktop-menu', .3)
+        click(rx + 40, ry + 6 + 5 * 22 + 11)            # item 5: Change Wallpaper...
+        snap('08d-settings-from-menu', 2.5)
+        chosen = 'Goa Shore'
 
         vm.console()
         mark = len(vm.text())

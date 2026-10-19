@@ -124,6 +124,16 @@ static int add_entry(const char *name, uint32_t parent, uint32_t type,
     return idx;
 }
 
+/* "name N.ext" or "name N": a sync-conflict copy made by iCloud Drive. */
+static int is_sync_duplicate(const char *name)
+{
+    const char *dot = strrchr(name, '.');
+    const char *end = dot && dot != name ? dot : name + strlen(name);
+    const char *p = end;
+    while (p > name && p[-1] >= '0' && p[-1] <= '9') p--;
+    return p < end && p - name >= 2 && p[-1] == ' ';
+}
+
 /* Recursively scan directory */
 static void scan_directory(const char *path, uint32_t parent_idx)
 {
@@ -137,6 +147,11 @@ static void scan_directory(const char *path, uint32_t parent_idx)
     while ((ent = readdir(dir)) != NULL) {
         /* Skip . and .. */
         if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0) {
+            continue;
+        }
+        /* iCloud Drive conflict copies ("guard 2.elf") must never ship. */
+        if (is_sync_duplicate(ent->d_name)) {
+            fprintf(stderr, "  SKIP %s/%s (iCloud duplicate)\n", path, ent->d_name);
             continue;
         }
 

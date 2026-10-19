@@ -27,6 +27,7 @@ typedef struct {
 typedef enum {
     SEARCH_RESULT_APP = 0,
     SEARCH_RESULT_FILE,
+    SEARCH_RESULT_PICTURE,      /* desktop picture; app_index = choice */
 } SearchResultType;
 
 typedef struct {

@@ -379,6 +379,7 @@ static void textedit_load_file(TextEditState *edit, const char *path);
 static size_t str_append(char *dest, size_t size, const char *src);
 static const char *str_find(const char *haystack, const char *needle);
 static void terminal_make_prompt(const TerminalState *term, char *out, size_t size);
+static void open_path(const char *path);
 static bool str_contains_ci(const char *haystack, const char *needle);
 static void normalize_path(char *path, size_t size);
 static bool calendar_load(CalendarState *cal);
@@ -2928,20 +2929,22 @@ static void draw_menu_dropdown(void)
     draw_menu_panel(x, MENU_BAR_HEIGHT + 4, items, count, menu_panel_width(items, count), active_menu);
 }
 
-static const char *const ctx_items[7] = {
+#define CTX_ITEMS 8
+static const char *const ctx_items[CTX_ITEMS] = {
     "New Folder on Desktop",
     "New Text Note",
     "Open Home in Finder",
     "Open Terminal Here",
     "Open Calculator",
+    "Change Wallpaper\xE2\x80\xA6",
     "Toggle Dark / Light Mode",
     "Lock Screen"
 };
 
 static void ctx_menu_rect(int *x, int *y, int *w, int *h)
 {
-    *w = menu_panel_width((const char **)ctx_items, 7);
-    *h = 7 * MENU_ROW_H + 12;
+    *w = menu_panel_width((const char **)ctx_items, CTX_ITEMS);
+    *h = CTX_ITEMS * MENU_ROW_H + 12;
     *x = ctx_menu_x;
     *y = ctx_menu_y;
     if (*x + *w > (int)comp_width - 8) *x = (int)comp_width - *w - 8;
@@ -2953,7 +2956,7 @@ static void draw_context_menu(void)
     if (!ctx_menu_open) return;
     int x, y, w, h;
     ctx_menu_rect(&x, &y, &w, &h);
-    draw_menu_panel(x, y, (const char **)ctx_items, 7, w, 100 + ctx_menu_x * 7 + ctx_menu_y);
+    draw_menu_panel(x, y, (const char **)ctx_items, CTX_ITEMS, w, 100 + ctx_menu_x * 7 + ctx_menu_y);
 }
 
 static bool login_screen_visible(void)
@@ -3572,6 +3575,12 @@ static void draw_spotlight(int anim)
             if (res->type == SEARCH_RESULT_APP && res->app_index >= 0) {
                 AppInfo *app = app_registry_get(res->app_index);
                 if (app) draw_app_icon(app, x + 14, row_y + 3, 22);
+            } else if (res->type == SEARCH_RESULT_PICTURE) {
+                int c = res->app_index;
+                if (!wp_thumbs[c] && !wp_thumb_failed[c]) wallpaper_thumb_load(c);
+                if (wp_thumbs[c])
+                    gfx_blit_scaled(gs, wp_thumbs[c], wp_thumb_px[c][0], 0, 0, wp_thumb_px[c][0], wp_thumb_px[c][1],
+                                    x + 10, row_y + 5, 30, 19, 4, fade);
             } else {
                 draw_icon_id(ICON_FILE, x + 14, row_y + 3, 22, fade);
             }
@@ -3867,9 +3876,27 @@ static void draw_app_switcher(int anim)
 static void spotlight_refresh(void)
 {
     spotlight_count = search_index_query(spotlight_query, spotlight_results, SEARCH_RESULTS_MAX);
+    /* Desktop pictures (the compositor owns the list): choosing one sets it. */
+    for (int i = 0; i < wallpaper_choice_count() && spotlight_count < SEARCH_RESULTS_MAX; i++) {
+        const char *name = wallpaper_choice_name(i);
+        if (!spotlight_query[0] || !str_contains_ci(name, spotlight_query)) continue;
+        SearchResult *r = &spotlight_results[spotlight_count++];
+        memset(r, 0, sizeof(*r));
+        r->type = SEARCH_RESULT_PICTURE;
+        strncpy(r->title, name, sizeof(r->title) - 1);
+        strncpy(r->subtitle, "Desktop Picture", sizeof(r->subtitle) - 1);
+        r->app_index = i;
+    }
     if (spotlight_selected >= spotlight_count) {
         spotlight_selected = spotlight_count > 0 ? 0 : 0;
     }
+}
+
+static void spotlight_activate(const SearchResult *res)
+{
+    if (res->type == SEARCH_RESULT_APP) launch_app_index(res->app_index, timer_get_ticks());
+    else if (res->type == SEARCH_RESULT_PICTURE) wallpaper_choose(res->app_index);
+    else if (res->type == SEARCH_RESULT_FILE) open_path(res->path);
 }
 
 static void overlay_set(OverlayMode mode)
@@ -5455,35 +5482,42 @@ static void terminal_exec(TerminalState *term, const char *raw)
             }
         }
 
-        if (vfs_isdir(path) && vfs_is_bundle(path)) {
-            Bundle bundle;
-            if (bundle_load(path, &bundle) == 0) {
-                int app_idx = app_registry_find_by_bundle_id(bundle.manifest.bundle_id);
-                if (app_idx >= 0) {
-                    launch_app_index(app_idx, timer_get_ticks());
-                }
-            }
-        } else if (vfs_isdir(path)) {
-            app_open_window(APP_FINDER, "Finder");
-            if (app_window_index[APP_FINDER] >= 0) {
-                FinderState *finder = &app_states[app_window_index[APP_FINDER]].finder;
-                finder_set_path(finder, path);
-            }
-        } else if (vfs_isfile(path)) {
-            strncpy(last_opened_path, path, sizeof(last_opened_path) - 1);
-            int textedit_idx = app_registry_find_by_bundle_id("com.ojjyos.textedit");
-            if (textedit_idx >= 0) {
-                launch_app_index(textedit_idx, timer_get_ticks());
-                if (app_window_index[APP_TEXTEDIT] >= 0) {
-                    TextEditState *edit = &app_states[app_window_index[APP_TEXTEDIT]].textedit;
-                    textedit_load_file(edit, path);
-                }
-            }
-        }
+        open_path(path);
         return;
     }
 
     terminal_append_line(term, "Unknown command");
+}
+
+/* Open a path like Finder would: app bundle -> launch, folder -> Finder,
+ * file -> TextEdit. Used by Terminal "open" and Spotlight. */
+static void open_path(const char *path)
+{
+    if (vfs_isdir(path) && vfs_is_bundle(path)) {
+        Bundle bundle;
+        if (bundle_load(path, &bundle) == 0) {
+            int app_idx = app_registry_find_by_bundle_id(bundle.manifest.bundle_id);
+            if (app_idx >= 0) {
+                launch_app_index(app_idx, timer_get_ticks());
+            }
+        }
+    } else if (vfs_isdir(path)) {
+        app_open_window(APP_FINDER, "Finder");
+        if (app_window_index[APP_FINDER] >= 0) {
+            FinderState *finder = &app_states[app_window_index[APP_FINDER]].finder;
+            finder_set_path(finder, path);
+        }
+    } else if (vfs_isfile(path)) {
+        strncpy(last_opened_path, path, sizeof(last_opened_path) - 1);
+        int textedit_idx = app_registry_find_by_bundle_id("com.ojjyos.textedit");
+        if (textedit_idx >= 0) {
+            launch_app_index(textedit_idx, timer_get_ticks());
+            if (app_window_index[APP_TEXTEDIT] >= 0) {
+                TextEditState *edit = &app_states[app_window_index[APP_TEXTEDIT]].textedit;
+                textedit_load_file(edit, path);
+            }
+        }
+    }
 }
 
 static void textedit_clear(TextEditState *edit)
@@ -6679,11 +6713,9 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
         }
         if (keycode == KEY_ENTER) {
             if (spotlight_count > 0) {
-                SearchResult *res = &spotlight_results[spotlight_selected];
-                if (res->type == SEARCH_RESULT_APP) {
-                    launch_app_index(res->app_index, timer_get_ticks());
-                }
+                SearchResult res = spotlight_results[spotlight_selected];
                 overlay_set(OVERLAY_NONE);
+                spotlight_activate(&res);
             }
             return;
         }
@@ -7196,7 +7228,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
         }
 
         if (ctx_menu_open) {
-            int count = 7;
+            int count = CTX_ITEMS;
             int mx, my, w, h;
             ctx_menu_rect(&mx, &my, &w, &h);
             ctx_menu_open = false;
@@ -7236,8 +7268,12 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 } else if (item == 4) {
                     app_open_window(APP_CALCULATOR, "Calculator");
                 } else if (item == 5) {
-                    toggle_appearance();
+                    app_open_window(APP_SETTINGS, "Settings");
+                    if (app_window_index[APP_SETTINGS] >= 0)
+                        app_states[app_window_index[APP_SETTINGS]].settings.page = SETTINGS_PAGE_WALLPAPER;
                 } else if (item == 6) {
+                    toggle_appearance();
+                } else if (item == 7) {
                     users_lock_session();
                     login_password[0] = '\0';
                     login_status[0] = '\0';
@@ -7388,10 +7424,9 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                 int idx = (y - list_y - 8) / 28;
                 if (idx >= 0 && idx < spotlight_count) {
                     spotlight_selected = idx;
-                    if (spotlight_results[idx].type == SEARCH_RESULT_APP) {
-                        launch_app_index(spotlight_results[idx].app_index, timer_get_ticks());
-                    }
+                    SearchResult res = spotlight_results[idx];
                     overlay_set(OVERLAY_NONE);
+                    spotlight_activate(&res);
                 }
             } else if (!(x >= x0 && x <= x0 + SPOTLIGHT_WIDTH && y >= y0 && y <= y0 + SPOTLIGHT_HEIGHT)) {
                 overlay_set(OVERLAY_NONE);

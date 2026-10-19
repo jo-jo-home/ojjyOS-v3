@@ -226,21 +226,8 @@ void search_index_init(void)
     file_count = 0;
     memset(file_index, 0, sizeof(file_index));
 
-    VfsDir *dir = vfs_opendir("/System/Wallpapers");
-    if (!dir) return;
-
+    /* (Desktop pictures are added by the compositor, which owns them.) */
     VfsDirEntry entry;
-    while (vfs_readdir(dir, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
-        if (entry.type == VFS_TYPE_FILE) {
-            char full[256];
-            if (vfs_join_path(full, sizeof(full), "/System/Wallpapers", entry.name) == 0) {
-                strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
-                file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
-            }
-        }
-    }
-    vfs_closedir(dir);
-
     char docs_dir[128];
     users_make_home_path(docs_dir, sizeof(docs_dir), "Documents");
     VfsDir *docs = vfs_opendir(docs_dir);
@@ -326,10 +313,10 @@ int search_index_query(const char *query, SearchResult *results, int max_results
         const char *name = vfs_basename(path);
         if (str_prefix_ci(name, query)) {
             add_result(results, &count, max_results, SEARCH_RESULT_FILE,
-                       name, "System file", path, -1, 1);
+                       name, "Document", path, -1, 1);
         } else if (str_contains_ci(name, query)) {
             add_result(results, &count, max_results, SEARCH_RESULT_FILE,
-                       name, "System file", path, -1, 3);
+                       name, "Document", path, -1, 3);
         }
     }
 

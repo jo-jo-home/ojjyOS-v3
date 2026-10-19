@@ -110,7 +110,7 @@ int main(int argc, char **argv)
     CHECK(ops->isdir(inst, "/") != 0, "isdir /");
     CHECK(ops->isdir(inst, "/Applications") != 0, "isdir /Applications (root-child lookup)");
     CHECK(ops->isdir(inst, "/System") != 0, "isdir /System");
-    CHECK(ops->isdir(inst, "/System/Wallpapers") != 0, "isdir /System/Wallpapers (nested)");
+    CHECK(ops->isdir(inst, "/System/Library/Icons") != 0, "isdir /System/Library/Icons (nested)");
     CHECK(ops->isdir(inst, "/Applications/About.app") != 0, "isdir About.app bundle");
     CHECK(ops->isfile(inst, "/System/version.txt") != 0, "isfile /System/version.txt");
     CHECK(ops->isfile(inst, "/Applications/About.app/manifest.json") != 0, "isfile deep manifest.json");

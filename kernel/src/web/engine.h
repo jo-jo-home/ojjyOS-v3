@@ -45,6 +45,7 @@ typedef enum {
     WI_CLIP,            /* push clip rect */
     WI_UNCLIP,          /* pop clip */
     WI_MARKER,          /* list bullet: ref = list style */
+    WI_BGIMAGE,         /* CSS background image: ref = image, see bg_* */
 } WebItemKind;
 
 typedef struct {
@@ -58,6 +59,9 @@ typedef struct {
     uint32_t color;             /* 0xAARRGGBB */
     const char *text;
     uint32_t len;
+    /* WI_BGIMAGE: size mode/repeat (css.h BG_*), explicit size, position */
+    uint8_t bg_size, bg_repeat;
+    int16_t bg_w, bg_h, bg_px[2], bg_pct[2];
 } WebItem;
 
 typedef enum { FIELD_TEXT, FIELD_PASSWORD, FIELD_HIDDEN, FIELD_SUBMIT, FIELD_BUTTON, FIELD_CHECKBOX, FIELD_RADIO,
@@ -106,6 +110,7 @@ typedef struct {
     size_t len;
     bool external;
     const char *media;          /* media attribute (NULL = all) */
+    const char *base;           /* directory URL for relative url() (NULL = the page) */
 } WebSheetSrc;
 
 typedef struct WebDoc {
@@ -157,7 +162,7 @@ void web_doc_init(WebDoc *d, WebArena *dom, WebArena *css, WebArena *layout, Web
 void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool latin1);
 /* The stylesheet sheet_urls[url_index] arrived (css NULL = failed); the
  * text must stay valid while the document is in use. */
-void web_doc_set_sheet(WebDoc *d, int url_index, const char *css, size_t len);
+void web_doc_set_sheet(WebDoc *d, int url_index, const char *css, size_t len, const char *base_dir);
 /* True while a requested stylesheet has not arrived (or failed). */
 bool web_doc_sheets_pending(const WebDoc *d);
 /* Cascade if needed and lay out for `width` CSS px at `zoom` percent. */

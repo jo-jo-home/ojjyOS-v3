@@ -131,7 +131,8 @@ typedef enum {
     P_ORDER, P_OVERFLOW, P_OVERFLOW_X, P_OVERFLOW_Y, P_OPACITY, P_CLIP, P_CLIP_PATH, P_VERTICAL_ALIGN,
     P_TOP, P_RIGHT, P_BOTTOM, P_LEFT, P_INSET, P_TABLE_LAYOUT, P_BORDER_SPACING, P_GRID_TEMPLATE_COLUMNS,
     P_CONTENT_VISIBILITY, P_FONT_VARIANT, P_TRANSFORM, P_PLACE_ITEMS, P_PLACE_CONTENT, P_MASK, P_CLEAR, P_CONTENT, P_GRID_TEMPLATE_AREAS, P_GRID_COLUMN, P_GRID_COLUMN_START, P_GRID_COLUMN_END,
-    P_GRID_AREA, P_GRID_ROW, P_GRID_ROW_START, P_GRID_TEMPLATE,
+    P_GRID_AREA, P_GRID_ROW, P_GRID_ROW_START, P_GRID_TEMPLATE, P_BACKGROUND_SIZE, P_BACKGROUND_REPEAT,
+    P_BACKGROUND_POSITION,
     P_COUNT
 } PropId;
 
@@ -185,6 +186,8 @@ static const struct { const char *name; uint8_t id; } prop_names[] = {
     {"grid-template-areas", P_GRID_TEMPLATE_AREAS}, {"grid-column", P_GRID_COLUMN}, {"grid-column-start", P_GRID_COLUMN_START},
     {"grid-column-end", P_GRID_COLUMN_END}, {"grid-area", P_GRID_AREA}, {"grid-row", P_GRID_ROW},
     {"grid-row-start", P_GRID_ROW_START}, {"grid-template", P_GRID_TEMPLATE},
+    {"background-size", P_BACKGROUND_SIZE}, {"background-repeat", P_BACKGROUND_REPEAT},
+    {"background-position", P_BACKGROUND_POSITION},
 };
 
 static uint8_t prop_id(const char *s, size_t n)
@@ -200,6 +203,7 @@ typedef struct {
     uint8_t important;
     const char *name;           /* custom properties */
     const char *value;          /* trimmed, without !important */
+    const char *base;           /* directory URL of the stylesheet (relative url()) */
 } CssDecl;
 
 enum { ATTR_EXISTS, ATTR_EQ, ATTR_PREFIX, ATTR_SUFFIX, ATTR_SUBSTR, ATTR_WORD, ATTR_DASH };
@@ -275,6 +279,7 @@ struct CssSheetSet {
     int rule_count;
     uint32_t order;
     uint8_t origin;
+    const char *cur_base;       /* while parsing a sheet */
     char imports[MAX_IMPORTS][256];
     int import_count;
     /* index by rightmost compound */
@@ -954,6 +959,7 @@ static CssDecl *parse_decls(CssSheetSet *S, const char *p, const char *end, uint
         tmp[n].important = important;
         tmp[n].name = prop == P_CUSTOM ? dup_ident(S->a, ns, (size_t)(ne - ns), false) : NULL;
         tmp[n].value = arena_strndup(S->a, vs, (size_t)(ve - vs));      /* raw: escapes are decoded per property */
+        tmp[n].base = S->cur_base;
         if (!tmp[n].value) break;
         n++;
     }
@@ -1121,8 +1127,15 @@ CssSheetSet *css_new(WebArena *a, const CssMedia *media)
 
 void css_add_sheet(CssSheetSet *S, const char *css, size_t len)
 {
+    css_add_sheet_base(S, css, len, NULL);
+}
+
+void css_add_sheet_base(CssSheetSet *S, const char *css, size_t len, const char *base_dir)
+{
     if (!S) return;
+    S->cur_base = base_dir && base_dir[0] ? base_dir : NULL;
     parse_sheet(S, css, css + len, 0);
+    S->cur_base = NULL;
     S->indexed = false;
 }
 
@@ -1678,6 +1691,66 @@ static void initial_values(CssStyle *s)
     s->min_h.kind = LEN_SET;
 }
 
+/* url(...) at t -> arena string, made absolute against the sheet's directory. */
+static const char *bg_url(const Ctx *C, const CssDecl *d, const char *t, const char *end)
+{
+    const char *u = t + 4;
+    while (u < end && ws(*u)) u++;
+    char q = 0;
+    if (u < end && (*u == '"' || *u == '\'')) q = *u++;
+    const char *ue = u;
+    while (ue < end && (q ? *ue != q : (*ue != ')' && !ws(*ue)))) ue++;
+    size_t n = (size_t)(ue - u);
+    if (!n || istarts(u, "data:")) return NULL;
+    bool absolute = istarts(u, "http:") || istarts(u, "https:") || *u == '/';
+    if (absolute || !d->base) return dup_ident(C->S->a, u, n, false);
+    size_t bl = strlen(d->base);
+    char *o = (char *)arena_alloc(C->S->a, bl + n + 1);
+    if (!o) return NULL;
+    memcpy(o, d->base, bl);
+    memcpy(o + bl, u, n);
+    o[bl + n] = '\0';
+    return o;
+}
+
+static bool bg_position_token(const Ctx *C, CssStyle *s, const char *t, const char *te, int *axis, int fs)
+{
+    /* keywords pick an axis; lengths fill x then y */
+    if (istarts(t, "left")) { s->bg_px[0] = 0; s->bg_pct[0] = 0; *axis = 1; return true; }
+    if (istarts(t, "right")) { s->bg_px[0] = 0; s->bg_pct[0] = 10000; *axis = 1; return true; }
+    if (istarts(t, "top")) { s->bg_px[1] = 0; s->bg_pct[1] = 0; return true; }
+    if (istarts(t, "bottom")) { s->bg_px[1] = 0; s->bg_pct[1] = 10000; return true; }
+    if (istarts(t, "center")) { s->bg_px[*axis] = 0; s->bg_pct[*axis] = 5000; if (*axis == 0) *axis = 1; return true; }
+    CssLen l;
+    if (parse_len(C, t, te, fs, &l) && l.kind == LEN_SET) {
+        int a = *axis > 1 ? 1 : *axis;
+        s->bg_px[a] = (int16_t)(l.px > 30000 ? 30000 : l.px < -30000 ? -30000 : l.px);
+        s->bg_pct[a] = (int16_t)(l.pct > 30000 ? 30000 : l.pct < -30000 ? -30000 : l.pct);
+        *axis = a + 1;
+        return true;
+    }
+    return false;
+}
+
+static bool bg_size_value(const Ctx *C, CssStyle *s, const char *v, const char *end, int fs)
+{
+    v = skip_ws(v, end);
+    if (istarts(v, "cover")) { s->bg_size = BG_COVER; return true; }
+    if (istarts(v, "contain")) { s->bg_size = BG_CONTAIN; return true; }
+    const char *ts[2], *te[2];
+    int n = split_tokens(v, end, ts, te, 2);
+    if (!n) return false;
+    CssLen a, b;
+    if (!parse_len(C, ts[0], te[0], fs, &a)) return false;
+    bool hb = n > 1 && parse_len(C, ts[1], te[1], fs, &b);
+    if (a.kind == LEN_AUTO && (!hb || b.kind == LEN_AUTO)) { s->bg_size = BG_AUTO; return true; }
+    s->bg_size = BG_LEN;
+    /* percentages of the box are resolved at layout: store negative hundredths */
+    s->bg_w = a.kind == LEN_SET ? (int16_t)(a.pct ? -(a.pct / 100) - 2 : a.px) : -1;
+    s->bg_h = hb && b.kind == LEN_SET ? (int16_t)(b.pct ? -(b.pct / 100) - 2 : b.px) : -1;
+    return true;
+}
+
 static const char *strchr_local(const char *s, char c)
 {
     for (; *s; s++) if (*s == c) return s;
@@ -1927,19 +2000,33 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
     case P_BACKGROUND: {
         if (istarts(v, "none") || istarts(v, "transparent") || initial) { s->bg = 0; s->bg_image = NULL; break; }
         if (inherit) { s->bg = P->bg; break; }
-        /* the colour is any token that parses as one */
+        /* shorthand resets the longhands, then each token sets one of them */
+        s->bg = 0;
+        s->bg_image = NULL;
+        s->bg_size = BG_AUTO;
+        s->bg_repeat = BG_REPEAT;
+        s->bg_px[0] = s->bg_px[1] = s->bg_pct[0] = s->bg_pct[1] = 0;
+        int bg_axis = 0;
         const char *p = v;
         while (p < end) {
             p = skip_ws(p, end);
             const char *t = p;
-            while (p < end && !ws(*p) && *p != ',') { if (*p == '(') { p = skip_group(p, end); continue; } p++; }
+            while (p < end && !ws(*p) && *p != ',' && (*p != '/' || p == t)) { if (*p == '(') { p = skip_group(p, end); continue; } p++; }
+            if (*t == ',') { /* later layers: only their colour matters (the last layer's) */ p = t + 1; continue; }
             if (istarts(t, "url(")) {
-                const char *u = t + 4;
-                while (ws(*u)) u++;
-                if (*u == '"' || *u == '\'') u++;
-                const char *ue = u;
-                while (ue < p && *ue != ')' && *ue != '"' && *ue != '\'') ue++;
-                s->bg_image = dup_ident(C->S->a, u, (size_t)(ue - u), false);
+                if (!s->bg_image) s->bg_image = bg_url(C, d, t, p);
+            } else if (istarts(t, "no-repeat")) { s->bg_repeat = BG_NO_REPEAT;
+            } else if (istarts(t, "repeat-x")) { s->bg_repeat = BG_REPEAT_X;
+            } else if (istarts(t, "repeat-y")) { s->bg_repeat = BG_REPEAT_Y;
+            } else if (istarts(t, "repeat")) { s->bg_repeat = BG_REPEAT;
+            } else if (*t == '/') {
+                const char *z = skip_ws(t + 1, end);
+                const char *ze = z;
+                while (ze < end && *ze != ',' && !(istarts(ze, "no-repeat") || istarts(ze, "repeat"))) ze++;
+                if (z == t + 1 && p == t + 1) { /* "/" alone: size follows as the next token(s) */ }
+                bg_size_value(C, s, z, ze, fs);
+                p = ze;
+            } else if (bg_axis < 3 && bg_position_token(C, s, t, p, &bg_axis, fs)) {
             } else if (istarts(t, "linear-gradient") || istarts(t, "radial-gradient") ||
                        istarts(t, "-webkit-linear-gradient")) {
                 /* use the first colour stop as a flat colour */
@@ -1966,12 +2053,7 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
     }
     case P_BACKGROUND_IMAGE:
         if (istarts(v, "url(")) {
-            const char *u = v + 4;
-            while (ws(*u)) u++;
-            if (*u == '"' || *u == '\'') u++;
-            const char *ue = u;
-            while (ue < end && *ue != ')' && *ue != '"' && *ue != '\'') ue++;
-            s->bg_image = dup_ident(C->S->a, u, (size_t)(ue - u), false);
+            s->bg_image = bg_url(C, d, v, end);
         } else if (istarts(v, "none")) {
             s->bg_image = NULL;
         } else if (istarts(v, "linear-gradient") && !(s->bg >> 24)) {
@@ -2233,6 +2315,19 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
     case P_INSET: box4(C, v, s->inset, fs, true); break;
     case P_TABLE_LAYOUT: s->table_fixed = istarts(v, "fixed"); break;
     case P_MASK: s->masked = !istarts(v, "none"); break;
+    case P_BACKGROUND_SIZE: bg_size_value(C, s, v, end, fs); break;
+    case P_BACKGROUND_REPEAT:
+        s->bg_repeat = istarts(v, "no-repeat") ? BG_NO_REPEAT : istarts(v, "repeat-x") ? BG_REPEAT_X :
+                       istarts(v, "repeat-y") ? BG_REPEAT_Y : BG_REPEAT;
+        break;
+    case P_BACKGROUND_POSITION: {
+        const char *ts[4], *te[4];
+        int n = split_tokens(v, end, ts, te, 4);
+        int axis = 0;
+        s->bg_px[0] = s->bg_px[1] = s->bg_pct[0] = s->bg_pct[1] = 0;
+        for (int i = 0; i < n; i++) bg_position_token(C, s, ts[i], te[i], &axis, fs);
+        break;
+    }
     case P_CONTENT: s->content = dup_ident(C->S->a, v, strlen(v), false); break;
     case P_CLEAR:
         s->clear = istarts(v, "both") ? 3 : istarts(v, "left") || istarts(v, "inline-start") ? 1 :

@@ -73,6 +73,66 @@ void web_paint_image(GfxSurface *s, const uint32_t *px, int iw, int ih, int x, i
     }
 }
 
+/* CSS background image inside the item's box: size, position, repeat. */
+static void paint_bg(GfxSurface *s, const WebDoc *d, const WebItem *it, int x, int y)
+{
+    if (it->ref < 0 || it->ref >= d->image_count) return;
+    const WebImage *im = &d->images[it->ref];
+    if (im->state != IMG_READY || !im->pixels || im->w <= 0 || im->h <= 0 || it->w <= 0 || it->h <= 0) return;
+    int zoom = d->zoom > 0 ? d->zoom : 100;
+    int64_t iw = (int64_t)im->w * zoom / 100, ih = (int64_t)im->h * zoom / 100;
+    if (iw < 1) iw = 1;
+    if (ih < 1) ih = 1;
+    int64_t W = it->w, H = it->h, dw = iw, dh = ih;
+    switch (it->bg_size) {
+    case BG_COVER:
+    case BG_CONTAIN: {
+        /* compare W/iw with H/ih without floats */
+        bool wider = W * ih > H * iw;
+        bool by_w = it->bg_size == BG_COVER ? wider : !wider;
+        if (by_w) { dw = W; dh = ih * W / iw; } else { dh = H; dw = iw * H / ih; }
+        break;
+    }
+    case BG_LEN: {
+        int64_t bw = it->bg_w >= 0 ? it->bg_w : it->bg_w <= -2 ? W * (-it->bg_w - 2) / 100 : -1;
+        int64_t bh = it->bg_h >= 0 ? it->bg_h : it->bg_h <= -2 ? H * (-it->bg_h - 2) / 100 : -1;
+        if (bw > 0 && bh > 0) { dw = bw; dh = bh; }
+        else if (bw > 0) { dw = bw; dh = ih * bw / iw; }
+        else if (bh > 0) { dh = bh; dw = iw * bh / ih; }
+        break;
+    }
+    default: break;
+    }
+    if (dw < 1 || dh < 1 || dw > 20000 || dh > 20000) return;
+    int64_t ox = it->bg_px[0] + (W - dw) * it->bg_pct[0] / 10000;
+    int64_t oy = it->bg_px[1] + (H - dh) * it->bg_pct[1] / 10000;
+    /* clip to the box */
+    int k = sc(s);
+    int saved[4] = {s->clip_x1, s->clip_y1, s->clip_x2, s->clip_y2};
+    int bx1 = x * k, by1 = y * k, bx2 = (x + it->w) * k, by2 = (y + it->h) * k;
+    if (bx1 > s->clip_x1) s->clip_x1 = bx1;
+    if (by1 > s->clip_y1) s->clip_y1 = by1;
+    if (bx2 < s->clip_x2) s->clip_x2 = bx2;
+    if (by2 < s->clip_y2) s->clip_y2 = by2;
+    if (s->clip_x1 < s->clip_x2 && s->clip_y1 < s->clip_y2) {
+        bool rx = it->bg_repeat == BG_REPEAT || it->bg_repeat == BG_REPEAT_X;
+        bool ry = it->bg_repeat == BG_REPEAT || it->bg_repeat == BG_REPEAT_Y;
+        int64_t x0 = ox, y0 = oy;
+        if (rx) { x0 = ox % dw; if (x0 > 0) x0 -= dw; }
+        if (ry) { y0 = oy % dh; if (y0 > 0) y0 -= dh; }
+        int tiles = 0;
+        for (int64_t ty = y0; ty < H && tiles < 600; ty += dh) {
+            for (int64_t tx = x0; tx < W && tiles < 600; tx += dw) {
+                web_paint_image(s, im->pixels, im->w, im->h, x + (int)tx, y + (int)ty, (int)dw, (int)dh);
+                tiles++;
+                if (!rx) break;
+            }
+            if (!ry) break;
+        }
+    }
+    s->clip_x1 = saved[0]; s->clip_y1 = saved[1]; s->clip_x2 = saved[2]; s->clip_y2 = saved[3];
+}
+
 static void paint_marker(GfxSurface *s, const WebItem *it, int x, int y)
 {
     uint32_t c = it->color & 0xFFFFFF;
@@ -187,6 +247,9 @@ void web_paint(GfxSurface *s, const WebDoc *d, int ox, int oy, int scroll, int c
             break;
         case WI_MARKER:
             paint_marker(s, it, x, y);
+            break;
+        case WI_BGIMAGE:
+            paint_bg(s, d, it, x, y);
             break;
         default:
             break;

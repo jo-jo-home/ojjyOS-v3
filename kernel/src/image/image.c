@@ -36,9 +36,12 @@ bool image_decode(const uint8_t *data, size_t len, uint32_t *argb, size_t pixels
     if (is_png(data, len)) return scratch && png_decode(data, len, argb, pixels, scratch, scratch_size);
     if (is_gif(data, len)) return scratch && gif_decode(data, len, argb, pixels, scratch, scratch_size);
     if (is_jpeg(data, len)) {
-        if (!jpeg_decode(data, len, argb, pixels)) return false;
-        for (size_t i = 0; i < pixels; i++) argb[i] |= 0xFF000000u;     /* JPEG is opaque */
-        return true;
+        if (jpeg_decode(data, len, argb, pixels)) {
+            for (size_t i = 0; i < pixels; i++) argb[i] |= 0xFF000000u;     /* JPEG is opaque */
+            return true;
+        }
+        /* progressive / non-interleaved files */
+        return scratch && jpeg_decode_full(data, len, argb, pixels, scratch, scratch_size);
     }
     return false;
 }

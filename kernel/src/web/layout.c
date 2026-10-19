@@ -483,6 +483,18 @@ static void layout_box(DomNode *n, int32_t x, int32_t y, int32_t cw, int32_t for
                        BoxOut *out);
 static int32_t layout_flow(DomNode *n, DomNode **kids, int count, int32_t x, int32_t y, int32_t w);
 
+static int register_url(const char *url)
+{
+    WebDoc *d = L.d;
+    if (!url || !url[0] || strlen(url) >= WEB_URL_MAX) return -1;
+    for (int i = 0; i < d->image_count; i++) if (strcmp(d->images[i].url, url) == 0) return i;
+    if (d->image_count >= WEB_MAX_IMAGES) return -1;
+    WebImage *im = &d->images[d->image_count];
+    memset(im, 0, sizeof(*im));
+    strcpy(im->url, url);
+    return d->image_count++;
+}
+
 /* Background + border for a box; returns the background item (or -1). */
 static int decorate(const CssStyle *s, const Edges *e, int32_t x, int32_t y, int32_t w, int32_t h, bool skip_bg)
 {
@@ -494,6 +506,21 @@ static int decorate(const CssStyle *s, const Edges *e, int32_t x, int32_t y, int
     if ((s->bg >> 24) && !skip_bg && !s->masked) {
         bg = emit(WI_RECT, x, y, w, h, s->bg);
         if (bg >= 0) L.d->items[bg].radius = (uint8_t)(r < 0 ? 0 : r);
+    }
+    if (s->bg_image && !skip_bg && !s->masked) {
+        int img = register_url(s->bg_image);
+        int k = img >= 0 ? emit(WI_BGIMAGE, x, y, w, h, 0) : -1;
+        if (k >= 0) {
+            WebItem *it = &L.d->items[k];
+            it->ref = (int16_t)img;
+            it->bg_size = s->bg_size;
+            it->bg_repeat = s->bg_repeat;
+            it->bg_w = s->bg_w;
+            it->bg_h = s->bg_h;
+            it->bg_px[0] = s->bg_px[0]; it->bg_px[1] = s->bg_px[1];
+            it->bg_pct[0] = s->bg_pct[0]; it->bg_pct[1] = s->bg_pct[1];
+            if (bg < 0) bg = k;
+        }
     }
     bool uniform = e->b[0] == e->b[1] && e->b[1] == e->b[2] && e->b[2] == e->b[3] &&
                    s->border_c[0] == s->border_c[1] && s->border_c[1] == s->border_c[2] && s->border_c[2] == s->border_c[3];
@@ -2553,7 +2580,7 @@ static void layout_box(DomNode *n, int32_t x, int32_t y, int32_t cw, int32_t for
     WebDoc *d = L.d;
     for (int i = deco_from; i < deco_to && i < d->item_count; i++) {
         WebItem *it = &d->items[i];
-        if (it->kind == WI_RECT && it->h == 0) it->h = bh;
+        if ((it->kind == WI_RECT || it->kind == WI_BGIMAGE) && it->h == 0) it->h = bh;
         else if (it->kind == WI_STROKE) it->h = bh;
         else if (it->kind == WI_RECT && e.b[2] > 0 && it->y == y - e.b[2] && it->h == e.b[2]) it->y = y + bh - e.b[2];
         int r = s->radius > 255 ? 255 : s->radius;
@@ -2781,6 +2808,7 @@ void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool lat
                     d->sheets[d->sheet_count].len = n->first->text_len;
                     d->sheets[d->sheet_count].external = false;
                     d->sheets[d->sheet_count].media = media && media[0] ? media : NULL;
+                    d->sheets[d->sheet_count].base = NULL;
                     d->sheet_count++;
                 }
                 skip = true;
@@ -2808,6 +2836,7 @@ void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool lat
                     d->sheets[d->sheet_count].len = (size_t)d->sheet_url_count;   /* slot -> url index until loaded */
                     d->sheets[d->sheet_count].external = true;
                     d->sheets[d->sheet_count].media = media && media[0] ? media : NULL;
+                    d->sheets[d->sheet_count].base = NULL;
                     d->sheet_count++;
                     d->sheet_url_count++;
                 }
@@ -2850,12 +2879,13 @@ void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool lat
     scan_forms(d);
 }
 
-void web_doc_set_sheet(WebDoc *d, int url_index, const char *css, size_t len)
+void web_doc_set_sheet(WebDoc *d, int url_index, const char *css, size_t len, const char *base_dir)
 {
     for (int i = 0; i < d->sheet_count; i++) {
         if (d->sheets[i].external && !d->sheets[i].text && (int)d->sheets[i].len == url_index) {
             d->sheets[i].text = css ? css : "";
             d->sheets[i].len = css ? len : 0;
+            d->sheets[i].base = base_dir;
             d->css_dirty = true;
             return;
         }
@@ -2891,7 +2921,8 @@ void web_doc_layout(WebDoc *d, int width, int viewport_h, int zoom, bool dark)
         d->css = css_new(d->css_arena, &m);
         int imports_seen = 0;
         for (int i = 0; i < d->sheet_count; i++) {
-            if (d->sheets[i].text && css_media_matches(d->css, d->sheets[i].media)) css_add_sheet(d->css, d->sheets[i].text, d->sheets[i].len);
+            if (d->sheets[i].text && css_media_matches(d->css, d->sheets[i].media))
+                css_add_sheet_base(d->css, d->sheets[i].text, d->sheets[i].len, d->sheets[i].base);
             /* new @import URLs become requests */
             int ic = css_import_count(d->css);
             for (; imports_seen < ic; imports_seen++) {
@@ -2904,6 +2935,7 @@ void web_doc_layout(WebDoc *d, int width, int viewport_h, int zoom, bool dark)
                     d->sheets[d->sheet_count].len = (size_t)d->sheet_url_count;
                     d->sheets[d->sheet_count].external = true;
                     d->sheets[d->sheet_count].media = NULL;
+                    d->sheets[d->sheet_count].base = NULL;
                     d->sheet_count++;
                     d->sheet_url_count++;
                 }

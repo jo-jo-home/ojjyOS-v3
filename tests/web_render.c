@@ -88,7 +88,7 @@ int main(int argc, char **argv)
     for (int i = 5; i < argc; i++) {
         size_t cl;
         char *c = slurp(argv[i], &cl);
-        web_doc_set_sheet(&doc, i - 5, c, c ? cl : 0);
+        web_doc_set_sheet(&doc, i - 5, c, c ? cl : 0, NULL);
     }
     web_doc_layout(&doc, width, 900, 100, false);
     long t2 = clock();

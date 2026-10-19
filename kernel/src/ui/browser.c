@@ -165,8 +165,8 @@ static void doc_load(Tab *t)
     }
     /* stylesheets this tab already has (tab switch, back/forward) */
     for (int i = 0; i < BR->doc->sheet_url_count; i++)
-        if (t->sheet_state[i] == SHEET_DONE) web_doc_set_sheet(BR->doc, i, (const char *)t->sbuf + t->sheet_off[i], t->sheet_len[i]);
-        else if (t->sheet_state[i] == SHEET_FAILED) web_doc_set_sheet(BR->doc, i, NULL, 0);
+        if (t->sheet_state[i] == SHEET_DONE) web_doc_set_sheet(BR->doc, i, (const char *)t->sbuf + t->sheet_off[i], t->sheet_len[i], t->sheet_base[i]);
+        else if (t->sheet_state[i] == SHEET_FAILED) web_doc_set_sheet(BR->doc, i, NULL, 0, NULL);
     BR->doc_parsed = true;
     BR->layout_dirty = true;
     serial_printf("[WEB] parsed nodes=%d sheets=%d fields=%d js=%dB\n", BR->doc->tree.node_count,
@@ -237,7 +237,7 @@ static void start_res(int kind, int index)
     const char *ref = kind == RES_SHEET ? BR->doc->sheet_urls[index] : BR->doc->images[index].url;
     Url u;
     if (!resolve_res(ref, &u)) {
-        if (kind == RES_SHEET) { t->sheet_state[index] = SHEET_FAILED; web_doc_set_sheet(BR->doc, index, NULL, 0); BR->layout_dirty = true; }
+        if (kind == RES_SHEET) { t->sheet_state[index] = SHEET_FAILED; web_doc_set_sheet(BR->doc, index, NULL, 0, NULL); BR->layout_dirty = true; }
         else BR->doc->images[index].state = IMG_FAILED;
         return;
     }
@@ -303,10 +303,19 @@ static void poll_resources(void)
                 dt->sused += r->fetch.body_len + 1;
                 dt->sbuf[dt->sused - 1] = '\0';
                 dt->sheet_state[r->index] = SHEET_DONE;
-                web_doc_set_sheet(BR->doc, r->index, (const char *)dt->sbuf + dt->sheet_off[r->index], r->fetch.body_len);
+                /* the sheet's directory: relative url() inside it resolve there */
+                char *b = dt->sheet_base[r->index];
+                url_format(&r->fetch.url, b, sizeof(dt->sheet_base[0]), false);
+                char *q = b;
+                while (*q && *q != '?') q++;
+                *q = '\0';
+                char *last = b;
+                for (char *c = b; *c; c++) if (*c == '/') last = c;
+                if (last > b) last[1] = '\0';
+                web_doc_set_sheet(BR->doc, r->index, (const char *)dt->sbuf + dt->sheet_off[r->index], r->fetch.body_len, b);
             } else {
                 dt->sheet_state[r->index] = SHEET_FAILED;
-                web_doc_set_sheet(BR->doc, r->index, NULL, 0);
+                web_doc_set_sheet(BR->doc, r->index, NULL, 0, NULL);
             }
             BR->layout_dirty = true;
         } else {
@@ -331,7 +340,7 @@ static void poll_resources(void)
                 bool near = false;
                 for (int k = 0; k < BR->doc->item_count; k++) {
                     const WebItem *it = &BR->doc->items[k];
-                    if (it->kind == WI_IMAGE && it->ref == i && it->y < t->scroll + BR->ch * 2 && it->y + it->h > t->scroll - 200) { near = true; break; }
+                    if ((it->kind == WI_IMAGE || it->kind == WI_BGIMAGE) && it->ref == i && it->y < t->scroll + BR->ch * 2 && it->y + it->h > t->scroll - 200) { near = true; break; }
                 }
                 if (!near) continue;
             }

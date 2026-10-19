@@ -39,6 +39,8 @@ enum { FLEX_START = 0, FLEX_END, FLEX_CENTER, FLEX_BETWEEN, FLEX_AROUND, FLEX_EV
 #define DECO_OVERLINE     4
 enum { TT_NONE = 0, TT_UPPER, TT_LOWER, TT_CAPITALIZE };
 enum { FLOAT_NONE = 0, FLOAT_LEFT, FLOAT_RIGHT };
+enum { BG_AUTO = 0, BG_COVER, BG_CONTAIN, BG_LEN };
+enum { BG_REPEAT = 0, BG_NO_REPEAT, BG_REPEAT_X, BG_REPEAT_Y };
 enum { VA_BASELINE = 0, VA_MIDDLE, VA_TOP, VA_BOTTOM, VA_SUB, VA_SUPER };
 
 /* Grid tracks (grid-template-columns) and areas (grid-template-areas). */
@@ -96,7 +98,11 @@ typedef struct CssStyle {
     CssLen margin[4], padding[4];
     CssLen width, height, min_w, max_w, min_h, max_h, flex_basis;
     CssLen inset[4];            /* top right bottom left (relative/absolute) */
-    const char *bg_image;       /* url(...) */
+    const char *bg_image;       /* url(...), made absolute against its stylesheet */
+    uint8_t bg_size;            /* BG_AUTO / BG_COVER / BG_CONTAIN / BG_LEN */
+    uint8_t bg_repeat;          /* BG_REPEAT / BG_NO_REPEAT / BG_REPEAT_X / BG_REPEAT_Y */
+    int16_t bg_w, bg_h;         /* BG_LEN size (px, -1 = auto) */
+    int16_t bg_px[2], bg_pct[2];/* position: px + hundredths of % of the free space */
     const char *content;        /* 'content' (pseudo-elements) */
     CssGrid *grid;              /* grid container template */
     int16_t gc_start, gc_end, gc_span;  /* grid item column placement (0 = auto) */
@@ -119,6 +125,8 @@ CssSheetSet *css_new(WebArena *a, const CssMedia *media);
 /* Parse a stylesheet and append its rules (author origin). base_url is not
  * used for resolution here; @import is collected for the caller. */
 void css_add_sheet(CssSheetSet *set, const char *css, size_t len);
+/* Same, with the sheet's directory URL ("https://a.com/css/") for relative url(). */
+void css_add_sheet_base(CssSheetSet *set, const char *css, size_t len, const char *base_dir);
 /* Number of @import / <link> URLs requested by sheets added so far. */
 int css_import_count(const CssSheetSet *set);
 const char *css_import_url(const CssSheetSet *set, int i);

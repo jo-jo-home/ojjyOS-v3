@@ -316,13 +316,29 @@ static void image_tests(void)
           "png: 1-bit greyscale");
     CHECK(image_info(gif_small, gif_small_len, &w, &h) && w == 8 && h == 6 && image_decode(gif_small, gif_small_len, px, 256) &&
           memcmp(px, gif_small_px, sizeof(gif_small_px)) == 0, "gif: first frame with transparency");
+    /* progressive JPEG == baseline JPEG of the same picture */
+    static uint32_t a[45 * 29], b[45 * 29];
+    struct { const unsigned char *base; unsigned blen; const unsigned char *prog; unsigned plen; const char *what; } jp[] = {
+        {jpg_base, jpg_base_len, jpg_prog, jpg_prog_len, "4:2:0"},
+        {jpg_base444, jpg_base444_len, jpg_prog444, jpg_prog444_len, "4:4:4"},
+        {jpg_base_grey, jpg_base_grey_len, jpg_prog_grey, jpg_prog_grey_len, "grey"},
+    };
+    bool jok = true;
+    for (unsigned i = 0; i < 3; i++) {
+        int jw = 0, jh = 0;
+        memset(a, 0, sizeof(a)); memset(b, 0, sizeof(b));
+        if (!image_info(jp[i].prog, jp[i].plen, &jw, &jh) || jw != 45 || jh != 29) jok = false;
+        if (!image_decode(jp[i].base, jp[i].blen, a, 45 * 29) || !image_decode(jp[i].prog, jp[i].plen, b, 45 * 29)) jok = false;
+        if (memcmp(a, b, sizeof(a)) != 0) jok = false;
+    }
+    CHECK(jok, "jpeg: progressive decodes exactly like baseline (4:2:0, 4:4:4, grey)");
     /* fuzz the decoders */
-    static uint8_t buf[4096];
+    static uint8_t buf[8192];
     random_add_entropy("img", 3);
     bool ok = true;
     for (int i = 0; i < 4000; i++) {
-        const uint8_t *src = i % 3 == 0 ? png_rgba : i % 3 == 1 ? png_interlaced : gif_small;
-        unsigned len = i % 3 == 0 ? png_rgba_len : i % 3 == 1 ? png_interlaced_len : gif_small_len;
+        const uint8_t *src = i % 4 == 0 ? png_rgba : i % 4 == 1 ? png_interlaced : i % 4 == 2 ? gif_small : jpg_prog;
+        unsigned len = i % 4 == 0 ? png_rgba_len : i % 4 == 1 ? png_interlaced_len : i % 4 == 2 ? gif_small_len : jpg_prog_len;
         size_t take = random_u32() % (len + 1);
         memcpy(buf, src, take);
         for (int m = 0; m < 6 && take; m++) buf[random_u32() % take] = (uint8_t)random_u32();

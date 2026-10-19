@@ -56,6 +56,7 @@ typedef struct {
     size_t sused;
     uint32_t sheet_off[WEB_MAX_SHEETS], sheet_len[WEB_MAX_SHEETS];
     uint8_t sheet_state[WEB_MAX_SHEETS];
+    char sheet_base[WEB_MAX_SHEETS][256];       /* directory URL of each sheet */
     /* loading */
     bool loading;
     HttpFetch *fetch;

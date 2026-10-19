@@ -141,3 +141,11 @@ installed images rebuilt when no VM runs, plain-English summary.
 ## Log
 - W0 (study): baseline tour `build/web-before` (17/18 load; no CSS/images/JS),
   host TLS probe 31/32 sites OK.
+- W1/W2 done (bb1daa5, 15ac34d): new engine (DOM, CSS cascade, block/inline/flex/grid/table/float/absolute layout),
+  Chrome-style browser (tabs, omnibox, bookmarks, history, downloads, find, zoom, menus), PNG/GIF/inflate.
+  Real-site tour: build/web-v2..v5. Note: html.c/h deletion landed in hook commit 471fe88 by accident.
+- W3 partial (this commit): CSS background images (size/position/repeat, sheet-relative url()),
+  progressive + non-interleaved JPEG (test: progressive == baseline pixels).
+- NEXT: WebP decoder (VP8 lossy + VP8L + ALPH) — ~57% of BBC images are WebP. Tables already
+  extracted to kernel/src/image/webp_tables.h (uncommitted, unused). Then gzip Content-Encoding,
+  GitHub header menus, SVG, JavaScript info bar improvements, docs (APPS.md, What's New), installed images.

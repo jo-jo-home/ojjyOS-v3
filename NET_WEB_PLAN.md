@@ -14,7 +14,12 @@ Order: N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> N7 -> N8. Commit and publish to
 
 ---
 
-## Current state (verified 2026-10-18 by reading the code)
+## Current state (updated 2026-10-19 after N1; verify lines by reading)
+
+**Where the tracks stand:** `main` = `e6ad444` and contains BOTH tracks'
+latest work (Track D: D1 LG4 glass controls, mouse-lag fix, poll hooks;
+Track N: N1 crypto below). Track N branch `net-web` == `main`, tree clean.
+N2 (ASN.1/X.509) is the next step; nothing for N2 exists yet.
 
 - `kernel/src/net/tls.c` (520 lines): TLS 1.3 client. ClientHello offers
   suites AES-128-GCM-SHA256 and ChaCha20-Poly1305-SHA256, X25519 key share,
@@ -25,9 +30,17 @@ Order: N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> N7 -> N8. Commit and publish to
   (~383) `HS_CERT_VERIFY` just sets `c->stage = 4` — **the signature is
   never checked**. The Finished MAC is checked (that only proves the peer
   knows the handshake keys, which a man-in-the-middle also does).
-- `kernel/src/crypto/`: `sha256.c`, `x25519.c`, `aes_gcm.c`,
-  `chacha_poly.c`, `crypto.h`. No SHA-384/512, no big integers, no RSA, no
-  P-256/P-384, no ASN.1.
+- `kernel/src/crypto/` after N1: `sha256.c`, `sha512.c` (SHA-384+512),
+  `bignum.c` (BN_LIMBS=132 limbs, CIOS Montgomery `BnMont`, modexp,
+  Fermat inverse, reduce — static scratch, NOT reentrant),
+  `rsa.c` (`rsa_verify_pkcs1` / `rsa_verify_pss`, `RsaHashId`
+  {RSA_HASH_SHA256, _SHA384, _SHA512}, n as big-endian bytes + uint32 e,
+  PSS salt_len -1 = hash length), `ecdsa.c`
+  (`ecdsa_verify_raw(ECDSA_CURVE_P256|P384, pub=0x04||X||Y, r/s
+  fixed-length big-endian 32/48 bytes, any hash)`, field elements in the
+  Montgomery domain), `x25519.c`, `aes_gcm.c`, `chacha_poly.c`. **Still
+  missing: ASN.1/DER and X.509 — that is N2.** All of it is in the
+  kernel build and host-tested (see Log).
 - `kernel/src/web/http.c` (HTTP/1.1, chunked, redirects), `url.c`,
   `html.c` (one-pass layout; `<img>` renders `[alt]` text at ~691).
 - `kernel/src/ui/browser.c` (880 lines): toolbar, address bar, page view,
@@ -39,11 +52,30 @@ Order: N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> N7 -> N8. Commit and publish to
 - Network: `net/net.h` has UDP (`net_udp_bind/send`), DNS resolver, DHCP,
   ICMP; `net/tcp.c` TCP.
 - Tests: `tests/test_crypto.c` (+ `gen_crypto_vectors.py`,
-  `crypto_vectors.h`), `test_net.c`, `test_web.c`, `test_jpeg.c`,
-  `tls_probe.c`, `web_server.py`, live `qemu_net.py`, `qemu_browser.py`,
-  `qemu_network_ui.py`.
+  `crypto_vectors.h`), `test_pubkey.c` (+ `gen_pubkey_vectors.py`,
+  `pubkey_vectors.h` — **regenerate with
+  `python3 -I tests/gen_pubkey_vectors.py > tests/pubkey_vectors.h`**),
+  `test_net.c`, `test_web.c`, `test_jpeg.c`, `tls_probe.c`,
+  `web_server.py`, live `qemu_net.py`, `qemu_browser.py`,
+  `qemu_network_ui.py`. `bash scripts/mkfs.sh` must run once in a fresh
+  worktree before `scripts/test.sh` (test_fs needs `build/system.ojfs`).
 - The About/limits text and docs currently say HTTPS is "encrypted, identity
   not verified" — keep saying that until N3 lands, then update it.
+
+**N2 starting notes (carry-forward from N1):** the X.509 layer calls the
+verify functions above directly — parse SPKI to n/e (RSA) or the
+uncompressed point (EC), hash tbsCertificate with SHA-256/384/512, pick
+`RsaHashId` / EC curve by the signature-algorithm OID, and feed r/s
+left-padded to 32/48 bytes for `ecdsa_verify_raw`. Vectors: the OpenSSL
+CLI covers everything needed (`openssl req -x509`, `openssl x509 -text`,
+`openssl verify` to self-check generated chains); give every generated
+key/cert its own file name — a shared file name silently mismodded
+N1's RSA vectors. Curve constants and any spec constant must come from
+OpenSSL's explicit parameters or generated data, not memory (N1's
+from-memory P-384 Gy was wrong). Expected N2 test flow: generate a small
+RSA-root -> ECDSA-intermediate -> leaf chain in
+`tests/gen_x509_vectors.py`, embed DER as byte arrays, then fuzz
+truncation + 4000 corruptions under ASan/UBSan.
 
 ---
 

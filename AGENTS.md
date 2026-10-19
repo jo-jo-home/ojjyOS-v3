@@ -2,21 +2,24 @@
 
 ## LATEST (2026-10-19): Track N — N1 crypto primitives DONE and on main
 
-`net-web` `04419bb` (rebased over Track D's `790f048`, fast-forwarded to
-`main`): SHA-384/512, 4224-bit big integers with CIOS Montgomery,
-RSA PKCS#1 v1.5 + RSASSA-PSS, ECDSA P-256/P-384 — all written from the
+`main` = `e6ad444` and holds BOTH tracks' latest (D: D1 glass controls +
+mouse-lag fix; N: N1). Track N branch `net-web` == `main`, tree clean.
+N1 (`04419bb`): SHA-384/512, 4224-bit big integers with CIOS Montgomery,
+RSA PKCS#1 v1.5 + RSASSA-PSS, ECDSA P-256/P-384 — written from the
 specs, in the kernel build, host-tested (72 checks, OpenSSL-CLI and
 Python-hashlib vectors, 4000-corruption fuzz + truncation sweeps, green
 under ASan/UBSan; 16/16 suites; both dev builds 0 warnings). Four real
-implementation bugs were caught by the vectors and are documented in
+implementation bugs the vectors caught are documented in
 `NET_WEB_PLAN.md`'s Log (128-bit SHA-512 length field + UB shift; CIOS
-m_i 32-bit mask; PSS leftmost-bits must be cleared not rejected; EC
+m_i 32-bit mask; PSS leftmost-bits cleared not rejected; EC
 Montgomery-domain discipline, add-2007-bl factors, alias-safe double,
-P-384 Gy from OpenSSL). **N2 (ASN.1/X.509) is next** — full instructions
-in `NET_WEB_PLAN.md`; the debug probes in `ojjyOS-v3-net/build/dbg_*`
-can be deleted. Publishing note: `git fetch -q . net-web:main` failed
-once because Track D had moved main; the recovery is exactly
-`PARALLEL_PLAN.md` §4.5 (rebase onto main, rerun tests, fast-forward).
+P-384 Gy from OpenSSL). **N2 (ASN.1/X.509) is next** — step text, the
+exact crypto call signatures it should use, the vector-generation
+workflow and gotchas are in `NET_WEB_PLAN.md` §"Current state" +
+"N2 starting notes". The debug probes in `ojjyOS-v3-net/build/dbg_*`
+can be deleted. Publishing note: if `git fetch -q . net-web:main`
+fails, Track D moved main — follow `PARALLEL_PLAN.md` §4.5 (rebase
+onto main, rerun tests, fast-forward); NEVER `git branch -f main`.
 
 ## LATEST (2026-10-18, night): two AIs in parallel — read `PARALLEL_PLAN.md`
 

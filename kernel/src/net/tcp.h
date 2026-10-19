@@ -14,7 +14,7 @@
 
 #include "net/net.h"
 
-#define TCP_MAX_CONN   4
+#define TCP_MAX_CONN   8
 #define TCP_RX_BUF     (64 * 1024)
 #define TCP_TX_BUF     (16 * 1024)
 

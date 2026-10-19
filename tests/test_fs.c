@@ -63,6 +63,13 @@ void console_putc(char c) { (void)c; }
     else { emit("ok: " name); } \
 } while (0)
 
+/* VFS access-control hooks; users.c owns the real ones (an unauthenticated
+ * stub makes every path allowed, matching pre-gate behaviour for the
+ * filesystem tests). */
+bool users_is_authenticated(void) { return false; }
+bool users_current_is_admin(void) { return false; }
+const char *users_current_username(void) { return "guest"; }
+
 int main(int argc, char **argv)
 {
     (void)argc; (void)argv;

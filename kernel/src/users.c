@@ -13,6 +13,7 @@
 #include "timer.h"
 #include "serial.h"
 #include "system.h"
+#include "random.h"
 #include "fs/vfs.h"
 #include "drivers/rtc.h"
 
@@ -172,7 +173,7 @@ static void sha256_update(Sha256Ctx *ctx, const uint8_t *data, size_t len)
     }
 }
 
-static void sha256_final_hex(Sha256Ctx *ctx, char out_hex[65])
+static void sha256_final_bytes(Sha256Ctx *ctx, uint8_t out[32])
 {
     uint8_t pad[64];
     size_t idx = (size_t)((ctx->bitcount >> 3) & 0x3FU);
@@ -189,68 +190,203 @@ static void sha256_final_hex(Sha256Ctx *ctx, char out_hex[65])
     }
     sha256_update(ctx, len_be, 8);
 
-    static const char hex[] = "0123456789abcdef";
     for (int i = 0; i < 8; i++) {
-        uint32_t v = ctx->state[i];
-        out_hex[i * 8 + 0] = hex[(v >> 28) & 0xF];
-        out_hex[i * 8 + 1] = hex[(v >> 24) & 0xF];
-        out_hex[i * 8 + 2] = hex[(v >> 20) & 0xF];
-        out_hex[i * 8 + 3] = hex[(v >> 16) & 0xF];
-        out_hex[i * 8 + 4] = hex[(v >> 12) & 0xF];
-        out_hex[i * 8 + 5] = hex[(v >> 8)  & 0xF];
-        out_hex[i * 8 + 6] = hex[(v >> 4)  & 0xF];
-        out_hex[i * 8 + 7] = hex[(v >> 0)  & 0xF];
+        out[i * 4 + 0] = (uint8_t)(ctx->state[i] >> 24);
+        out[i * 4 + 1] = (uint8_t)(ctx->state[i] >> 16);
+        out[i * 4 + 2] = (uint8_t)(ctx->state[i] >> 8);
+        out[i * 4 + 3] = (uint8_t)(ctx->state[i]);
+    }
+}
+
+static void sha256_final_hex(Sha256Ctx *ctx, char out_hex[65])
+{
+    uint8_t d[32];
+    sha256_final_bytes(ctx, d);
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 32; i++) {
+        out_hex[i * 2 + 0] = hex[d[i] >> 4];
+        out_hex[i * 2 + 1] = hex[d[i] & 0xF];
     }
     out_hex[64] = '\0';
 }
 
-static void hash_password_salted(const char *salt_hex, const char *password, char out_hex[65])
+/* Burn secret intermediates; the compiler must not remove this. */
+static void burn(void *p, size_t n)
+{
+    volatile uint8_t *q = (volatile uint8_t *)p;
+    while (n--) *q++ = 0;
+}
+
+/* Legacy format (pre-PBKDF2 accounts): one fast domain-separated SHA-256.
+ * Still accepted on load so existing disks keep logging in; the next
+ * successful login transparently re-hashes the account with PBKDF2. */
+static void hash_password_legacy(const char *salt_hex, const char *password, char out_hex[65])
 {
     Sha256Ctx ctx;
     sha256_init(&ctx);
-    const char *domain = "ojjyOS-v3-auth:";
-    sha256_update(&ctx, (const uint8_t *)domain, strlen(domain));
-    if (salt_hex) {
-        sha256_update(&ctx, (const uint8_t *)salt_hex, strlen(salt_hex));
-    }
+    sha256_update(&ctx, (const uint8_t *)"ojjyOS-v3-auth:", 15);
+    if (salt_hex) sha256_update(&ctx, (const uint8_t *)salt_hex, strlen(salt_hex));
     sha256_update(&ctx, (const uint8_t *)":", 1);
-    if (password) {
-        sha256_update(&ctx, (const uint8_t *)password, strlen(password));
-    }
+    if (password) sha256_update(&ctx, (const uint8_t *)password, strlen(password));
     sha256_final_hex(&ctx, out_hex);
 }
 
-static void generate_salt_hex(const char *username, char out_salt[9])
+/* HMAC-SHA256 (RFC 2104) over the SHA-256 in this file. */
+static void hmac_sha256(const uint8_t *key, size_t key_len,
+                        const uint8_t *msg, size_t msg_len, uint8_t out[32])
 {
-    uint32_t seed = (uint32_t)timer_get_ticks() ^ 0xA5A5F00DU;
-    RtcTime now;
-    rtc_read_time(&now);
-    seed ^= ((uint32_t)now.second << 16) ^ ((uint32_t)now.minute << 8) ^ now.hour;
-    if (username) {
-        for (size_t i = 0; username[i]; i++) {
-            seed = (seed * 16777619U) ^ (uint8_t)username[i];
-        }
-    }
-    static uint32_t counter = 1;
-    seed ^= (counter++ * 0x9E3779B9U);
+    uint8_t k[64], blk[64], inner[32];
+    Sha256Ctx ctx;
 
-    static const char hex[] = "0123456789abcdef";
-    for (int i = 0; i < 8; i++) {
-        out_salt[i] = hex[(seed >> ((7 - i) * 4)) & 0xF];
+    memset(k, 0, sizeof(k));
+    if (key_len > sizeof(k)) {
+        sha256_init(&ctx);
+        sha256_update(&ctx, key, key_len);
+        sha256_final_bytes(&ctx, k);
+    } else {
+        memcpy(k, key, key_len);
     }
-    out_salt[8] = '\0';
+
+    for (int i = 0; i < 64; i++) blk[i] = k[i] ^ 0x36;
+    sha256_init(&ctx);
+    sha256_update(&ctx, blk, 64);
+    sha256_update(&ctx, msg, msg_len);
+    sha256_final_bytes(&ctx, inner);
+
+    for (int i = 0; i < 64; i++) blk[i] = k[i] ^ 0x5C;
+    sha256_init(&ctx);
+    sha256_update(&ctx, blk, 64);
+    sha256_update(&ctx, inner, 32);
+    sha256_final_bytes(&ctx, out);
+
+    burn(k, sizeof(k));
+    burn(blk, sizeof(blk));
+    burn(inner, sizeof(inner));
 }
 
-/* Constant-time string compare for password hashes */
-static bool hash_equal_ct(const char *a, const char *b)
+/* PBKDF2-HMAC-SHA256, one 32-byte block (DKLen = 32). Iterations are a
+ * deliberate compromise for a TCG-emulated guest (see BETTER_OS_PLAN.md);
+ * scale up when preemptive scheduling lands. */
+#define PBKDF2_ITERATIONS 10000
+
+static void pbkdf2_sha256_raw(const char *password, const char *salt_hex,
+                              uint32_t iterations, uint8_t out[32])
 {
-    if (!a || !b) return false;
-    uint8_t diff = 0;
-    for (int i = 0; i < 64; i++) {
-        if (a[i] == '\0' || b[i] == '\0') return false;
-        diff |= (uint8_t)(a[i] ^ b[i]);
+    uint8_t msg[USER_SALT_HEX_LEN + 4];
+    size_t mlen = strlen(salt_hex);
+    memcpy(msg, salt_hex, mlen);
+    msg[mlen++] = 0; msg[mlen++] = 0; msg[mlen++] = 0; msg[mlen++] = 1;  /* INT(1) */
+
+    uint8_t u[32], acc[32];
+    hmac_sha256((const uint8_t *)password, strlen(password), msg, mlen, acc);
+    memcpy(u, acc, 32);
+    for (uint32_t i = 1; i < iterations; i++) {
+        hmac_sha256((const uint8_t *)password, strlen(password), u, 32, u);
+        for (int j = 0; j < 32; j++) acc[j] ^= u[j];
     }
-    return diff == 0 && a[64] == '\0' && b[64] == '\0';
+    memcpy(out, acc, 32);
+    burn(u, sizeof(u));
+    burn(acc, sizeof(acc));
+}
+
+/* Stored hash format: "pbkdf2$<iterations>$<64 hex>" (legacy accounts keep
+ * a bare 64-hex field). Parse returns the iteration count, or 0 if the
+ * field is not a well-formed PBKDF2 record. */
+static uint32_t parse_pbkdf2_field(const char *hash_hex)
+{
+    if (strncmp(hash_hex, "pbkdf2$", 7) != 0) return 0;
+    uint32_t iters = 0;
+    const char *p = hash_hex + 7;
+    int digits = 0;
+    while (*p >= '0' && *p <= '9' && digits < 8) {
+        iters = iters * 10 + (uint32_t)(*p - '0');
+        p++;
+        digits++;
+    }
+    if (digits == 0 || *p != '$') return 0;
+    /* Cap iterations: anything beyond 1e6 is never something we wrote,
+     * and keeps the rebuilt comparison field inside USER_HASH_HEX_LEN. */
+    if (iters > 1000000) return 0;
+    p++;
+    size_t hex_len = strlen(p);
+    if (hex_len != 64) return 0;
+    for (size_t i = 0; i < hex_len; i++) {
+        char c = p[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return 0;
+    }
+    return iters;
+}
+
+static void hash_password_salted(const char *salt_hex, const char *password,
+                                 char out_hex[USER_HASH_HEX_LEN])
+{
+    uint8_t dk[32];
+    pbkdf2_sha256_raw(password, salt_hex, PBKDF2_ITERATIONS, dk);
+    static const char hex[] = "0123456789abcdef";
+    char *o = out_hex;
+    const char *tag = "pbkdf2$10000$";
+    while (*tag) *o++ = *tag++;
+    for (int i = 0; i < 32; i++) {
+        *o++ = hex[dk[i] >> 4];
+        *o++ = hex[dk[i] & 0xF];
+    }
+    *o = '\0';
+    burn(dk, sizeof(dk));
+}
+
+/* Verify `password` against a stored hash field (either format). The
+ * comparison is constant-time over the stored length; the length itself
+ * is public (format tag), not secret. */
+static bool verify_stored_hash(const char *stored, const char *salt_hex,
+                               const char *password)
+{
+    char computed[USER_HASH_HEX_LEN];
+    uint32_t iters = parse_pbkdf2_field(stored);
+    if (iters > 0) {
+        uint8_t dk[32];
+        pbkdf2_sha256_raw(password, salt_hex, iters, dk);
+        static const char hex[] = "0123456789abcdef";
+        char *o = computed;
+        const char *tag = "pbkdf2$";
+        while (*tag) *o++ = *tag++;
+        /* Append the stored iteration count, then the derived key. */
+        const char *digs = stored + 7;
+        while (*digs != '$') *o++ = *digs++;
+        *o++ = '$';
+        for (int i = 0; i < 32; i++) {
+            *o++ = hex[dk[i] >> 4];
+            *o++ = hex[dk[i] & 0xF];
+        }
+        *o = '\0';
+        burn(dk, sizeof(dk));
+    } else {
+        hash_password_legacy(salt_hex, password, computed);
+    }
+    size_t n = strlen(stored);
+    if (strlen(computed) != n) {
+        burn(computed, sizeof(computed));
+        return false;
+    }
+    uint8_t diff = 0;
+    for (size_t i = 0; i < n; i++) diff |= (uint8_t)(computed[i] ^ stored[i]);
+    burn(computed, sizeof(computed));
+    return diff == 0;
+}
+
+static void generate_salt_hex(const char *username, char out_salt[USER_SALT_HEX_LEN])
+{
+    /* 8 bytes from the kernel CSPRNG (ChaCha20 DRBG): salts must not be
+     * guessable, unlike the old time/username mix. */
+    (void)username;
+    uint8_t rb[8];
+    random_bytes(rb, sizeof(rb));
+    static const char hex[] = "0123456789abcdef";
+    for (int i = 0; i < 8; i++) {
+        out_salt[i * 2 + 0] = hex[rb[i] >> 4];
+        out_salt[i * 2 + 1] = hex[rb[i] & 0xF];
+    }
+    out_salt[16] = '\0';
+    burn(rb, sizeof(rb));
 }
 
 /* =========================================================
@@ -447,7 +583,9 @@ void users_init(void)
 
         while (*p && *p != '\n') p++;
 
-        if (u.username[0] && strlen(u.pass_hash) == 64) {
+        bool hash_ok = (strlen(u.pass_hash) == 64) ||
+                      (parse_pbkdf2_field(u.pass_hash) > 0);
+        if (u.username[0] && hash_ok) {
             u.is_admin = (admin_str[0] == '1');
             u.active = true;
             if (u.home_dir[0] == '\0') {
@@ -525,6 +663,12 @@ bool users_is_authenticated(void)
     return session_authenticated && (users_current() != NULL);
 }
 
+bool users_current_is_admin(void)
+{
+    const UserAccount *u = users_current();
+    return users_is_authenticated() && u && u->is_admin;
+}
+
 const char *users_current_username(void)
 {
     const UserAccount *u = users_current();
@@ -568,6 +712,14 @@ int users_create(const char *username, const char *full_name,
 {
     if (!username || username[0] == '\0' || !password || password[0] == '\0') {
         return -1;
+    }
+
+    /* Authorization: once any account exists, creating another one requires
+     * an authenticated administrator session. The first account is the
+     * bootstrap and stays open (S1, BETTER_OS_PLAN.md). */
+    if (users_count() > 0 && !users_current_is_admin()) {
+        serial_printf("[USERS] Account creation denied (admin session required)\n");
+        return -4;
     }
 
     /* Validate username characters (alphanumeric, '_', '-', '.'). It becomes
@@ -646,9 +798,7 @@ bool users_verify_credentials(const char *username, const char *password)
     const UserAccount *u = users_find(username);
     if (!u) return false;
 
-    char computed[65];
-    hash_password_salted(u->salt_hex, password, computed);
-    return hash_equal_ct(computed, u->pass_hash);
+    return verify_stored_hash(u->pass_hash, u->salt_hex, password);
 }
 
 int users_login(const char *username, const char *password)
@@ -656,10 +806,16 @@ int users_login(const char *username, const char *password)
     if (!username || !password) return -1;
     for (int i = 0; i < USERS_MAX; i++) {
         if (accounts[i].active && u_streq_ci(accounts[i].username, username)) {
-            char computed[65];
-            hash_password_salted(accounts[i].salt_hex, password, computed);
-            if (!hash_equal_ct(computed, accounts[i].pass_hash)) {
+            if (!verify_stored_hash(accounts[i].pass_hash, accounts[i].salt_hex, password)) {
                 return -1;
+            }
+            /* Transparent upgrade: legacy fast hashes are re-hashed with
+             * PBKDF2 + a fresh CSPRNG salt on the next successful login. */
+            if (parse_pbkdf2_field(accounts[i].pass_hash) == 0) {
+                generate_salt_hex(accounts[i].username, accounts[i].salt_hex);
+                hash_password_salted(accounts[i].salt_hex, password, accounts[i].pass_hash);
+                serial_printf("[USERS] Upgraded credentials to PBKDF2 for '%s'\n",
+                              accounts[i].username);
             }
             current_user_idx = i;
             session_authenticated = true;
@@ -681,9 +837,7 @@ int users_change_password(const char *username, const char *old_password,
     for (int i = 0; i < USERS_MAX; i++) {
         if (accounts[i].active && u_streq_ci(accounts[i].username, username)) {
             if (old_password != NULL) {
-                char computed[65];
-                hash_password_salted(accounts[i].salt_hex, old_password, computed);
-                if (!hash_equal_ct(computed, accounts[i].pass_hash)) {
+                if (!verify_stored_hash(accounts[i].pass_hash, accounts[i].salt_hex, old_password)) {
                     return -1;
                 }
             }
@@ -699,11 +853,19 @@ int users_change_password(const char *username, const char *old_password,
 
 int users_delete(const char *username)
 {
-    if (!username || users_count() <= 1) return -1;
+    if (!username || !users_current_is_admin()) return -1;   /* admin session required */
+    int admins = 0;
+    for (int i = 0; i < USERS_MAX; i++) {
+        if (accounts[i].active && accounts[i].is_admin) admins++;
+    }
     for (int i = 0; i < USERS_MAX; i++) {
         if (accounts[i].active && u_streq_ci(accounts[i].username, username)) {
+            if (users_count() <= 1) return -1;
             if (i == current_user_idx && session_authenticated) {
                 return -1; /* Cannot delete currently logged-in user */
+            }
+            if (accounts[i].is_admin && admins <= 1) {
+                return -1; /* Cannot delete the last administrator */
             }
             memset(&accounts[i], 0, sizeof(accounts[i]));
             users_save();

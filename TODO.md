@@ -9,6 +9,11 @@ committing, never touch a disk image a running VM uses).
 
 Status markers: [ ] not started, [~] started, [x] done.
 
+**`BETTER_OS_PLAN.md` is the detailed improvement list** (security pass,
+kernel, storage, networking, desktop) compiled from the 2026-10-18
+"make the OS better + routine bug/security check" request; work its
+section 0 fixes before anything else here.
+
 ---
 
 ## 0. Before you start (5 minutes)

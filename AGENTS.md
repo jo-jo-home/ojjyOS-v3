@@ -1,5 +1,40 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-18, evening): security pass — 6 credential/VFS holes fixed
+
+Jonas asked for a detailed improvement list + a routine bug/security
+check. `BETTER_OS_PLAN.md` is that list (section 0 = the audit, sections
+1-5 = the ordered roadmap). The audit found and FIXED:
+
+- **S1 CRITICAL**: the lock screen "+ New Account" (and Settings
+  "+ Add Account" / Terminal `adduser`) minted **admin** accounts with
+  no authorization — anyone could walk up and create one. Creation now
+  requires an authenticated admin session once any account exists
+  (`users_create` returns -4; UIs explain).
+- **S2/S3 HIGH**: password salts came from a guessable time/username
+  mix and hashes were a single fast SHA-256. Now: 16-hex CSPRNG salts
+  and **PBKDF2-HMAC-SHA256 (10k iterations)**; legacy accounts still
+  log in and transparently upgrade on next login
+  (`[USERS] Upgraded credentials…`). The DB loader previously accepted
+  only 64-char hashes — relaxed or PBKDF2 accounts would vanish.
+- **S4/S5 MEDIUM**: no per-user file isolation and users.db readable by
+  anyone. VFS entry points now deny non-admins other users' homes and
+  `/Library/Accounts/` (except the exact write-open password
+  self-service uses).
+- **S6**: `users_delete` now requires an admin, blocks self-delete and
+  last-admin-delete.
+
+Audited clean: ChaCha20 DRBG (key erasure), DHCP/DNS parsing bounds,
+HTTP body clamping, HTML engine copies, constant-time compares,
+persist validation, EL0 isolation, fuzz suites, host-app control
+channel. New/updated host tests cover all six fixes incl. a planted
+legacy-hash vector. Receipts: `build/sec-*` (host+ASan/UBSan 15/15,
+builds 0 warnings, TCG+HVF+Intel protected smokes and the appearance
+cold-login test PASS). Known accepted gap: PBKDF2 at 10k iterations is
+below OWASP's modern floor (deliberate for TCG; scale with the
+scheduler) and non-admins can still create|truncate-open users.db
+(ACLs arrive with the journaled FS) — both documented in the plan.
+
 ## LATEST (2026-10-18, later): UI job resumed — C (Appearance) + LG3 (window rims) DONE
 
 Work continues on branch `ui-polish-3` (off integrated `main`), ff'd to

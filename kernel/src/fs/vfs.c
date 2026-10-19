@@ -7,6 +7,61 @@
 #include "vfs.h"
 #include "../serial.h"
 #include "../string.h"
+#include "../users.h"
+
+/* =========================================================
+ * Access control (S4/S5, BETTER_OS_PLAN.md)
+ *
+ * Authenticated non-admins are denied other users' home directories and
+ * every access to the account database except the exact write-open the
+ * password self-service uses. Unauthenticated (boot, provisioning,
+ * first-boot setup) and admin sessions are unrestricted. Everything in
+ * the system goes through these VFS entry points, so the Finder,
+ * Terminal, Preview and the apps inherit the policy.
+ * ========================================================= */
+
+static bool vfs_path_allowed(const char *path, bool write_open)
+{
+    if (!users_is_authenticated() || users_current_is_admin()) return true;
+
+    const char *me = users_current_username();
+
+    /* S5: salts+hashes are admin-only. The one exception is the exact
+     * write-open users_save() performs for password self-service. */
+    if (strncmp(path, "/Library/Accounts/", 18) == 0) {
+        if (!write_open) return false;
+        if (strcmp(path, "/Library/Accounts/users.db") != 0) return false;
+        return true;
+    }
+
+    /* S4: /Users/<other>/ is private to that user. "/Users" itself stays
+     * listable (the login screen shows account pills). */
+    if (strncmp(path, "/Users/", 7) == 0) {
+        const char *rest = path + 7;
+        if (rest[0] == '\0' || rest[0] == '/') return true;
+        char other[USER_NAME_MAX];
+        size_t i = 0;
+        while (rest[i] && rest[i] != '/' && i + 1 < sizeof(other)) {
+            char c = rest[i];
+            if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+            other[i] = c;
+            i++;
+        }
+        other[i] = '\0';
+        if (other[0] != '\0' && other[0] != '.' &&
+            strncmp(other, me, sizeof(other)) != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool vfs_denied(const char *norm, bool write_open)
+{
+    if (vfs_path_allowed(norm, write_open)) return false;
+    serial_printf("[VFS] Access denied for '%s': %s\n", users_current_username(), norm);
+    return true;
+}
 
 /*
  * Maximum number of mount points
@@ -231,6 +286,9 @@ VfsFile *vfs_open(const char *path, uint32_t mode)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return NULL;
+    bool write_open = (mode & (VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC)) != 0 &&
+                      (mode & VFS_O_READ) == 0;
+    if (vfs_denied(norm, write_open)) return NULL;
 
     VfsMount *mount = find_mount(norm);
     if (!mount) {
@@ -357,6 +415,7 @@ int vfs_stat(const char *path, VfsStat *stat)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return -1;
+    if (vfs_denied(norm, false)) return -1;
 
     VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->stat) {
@@ -374,6 +433,7 @@ int vfs_exists(const char *path)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return 0;
+    if (vfs_denied(norm, false)) return 0;
 
     VfsMount *mount = find_mount(norm);
     if (!mount) return 0;
@@ -395,6 +455,7 @@ int vfs_isdir(const char *path)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return 0;
+    if (vfs_denied(norm, false)) return 0;
 
     VfsMount *mount = find_mount(norm);
     if (!mount) return 0;
@@ -416,6 +477,7 @@ int vfs_isfile(const char *path)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return 0;
+    if (vfs_denied(norm, false)) return 0;
 
     VfsMount *mount = find_mount(norm);
     if (!mount) return 0;
@@ -437,6 +499,7 @@ VfsDir *vfs_opendir(const char *path)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return NULL;
+    if (vfs_denied(norm, false)) return NULL;
 
     VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->opendir) {
@@ -507,6 +570,7 @@ int vfs_mkdir(const char *path)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return -1;
+    if (vfs_denied(norm, false)) return -1;
 
     VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->mkdir) {
@@ -525,6 +589,7 @@ int vfs_unlink(const char *path)
 {
     char norm[VFS_PATH_MAX];
     if (vfs_normalize_path(path, norm, sizeof(norm)) != 0) return -1;
+    if (vfs_denied(norm, false)) return -1;
 
     VfsMount *mount = find_mount(norm);
     if (!mount || !mount->ops->unlink) {
@@ -545,6 +610,7 @@ int vfs_rename(const char *from, const char *to)
     char norm_to[VFS_PATH_MAX];
     if (vfs_normalize_path(from, norm_from, sizeof(norm_from)) != 0) return -1;
     if (vfs_normalize_path(to, norm_to, sizeof(norm_to)) != 0) return -1;
+    if (vfs_denied(norm_from, false) || vfs_denied(norm_to, false)) return -1;
 
     VfsMount *mount = find_mount(norm_from);
     if (!mount || !mount->ops->rename) {

@@ -55,14 +55,15 @@ void console_putc(char c) { (void)c; }
 uint64_t timer_get_ticks(void) { return 424242; }
 void rtc_read_time(RtcTime *time)
 {
-    if (!time) return;
-    time->year = 2026;
-    time->month = 10;
-    time->day = 17;
-    time->hour = 12;
-    time->minute = 30;
-    time->second = 0;
-    time->weekday = 6;
+    time->year = 2026; time->month = 10; time->day = 18;
+    time->hour = 12; time->minute = 34; time->second = 56; time->weekday = 7;
+}
+/* users.c draws salts from the kernel CSPRNG; deterministic for tests. */
+void random_bytes(void *out, size_t len)
+{
+    static uint8_t b = 1;
+    uint8_t *p = (uint8_t *)out;
+    for (size_t i = 0; i < len; i++) { p[i] = (uint8_t)(0x5A ^ b) + (uint8_t)i; b++; }
 }
 void system_request_sync(void) {}
 
@@ -184,6 +185,7 @@ int main(void)
 
     CHECK(users_create("jonas", "Jonas Lee", "tahoe2026", true) == 0, "create admin account jonas");
     CHECK(users_count() == 1, "users_count is 1 after create");
+    CHECK(users_login("jonas", "tahoe2026") == 0, "admin logs in before further account creation");
     CHECK(users_create("jonas", "Duplicate", "pass", false) != 0, "duplicate username rejected");
     CHECK(users_create("bad user!", "Bad", "pass", false) != 0, "invalid username chars rejected");
     CHECK(users_create("..", "Dots", "pass", false) != 0, "'..' username rejected (home would be /)");
@@ -203,9 +205,11 @@ int main(void)
     CHECK(vfs_isfile("/Users/jonas/Desktop/Welcome.txt") != 0, "seeded Welcome.txt in user Desktop");
     CHECK(vfs_isfile("/Library/Accounts/users.db") != 0, "persisted /Library/Accounts/users.db");
 
-    /* Verify salted SHA-256 password authentication */
+    /* Verify salted PBKDF2 password authentication */
     CHECK(!users_verify_credentials("jonas", "wrongpass"), "wrong password rejected");
-    CHECK(users_verify_credentials("jonas", "tahoe2026"), "correct password verified via SHA-256");
+    CHECK(users_verify_credentials("jonas", "tahoe2026"), "correct password verified via PBKDF2");
+    CHECK(strncmp(users_find("jonas")->pass_hash, "pbkdf2$10000$", 13) == 0, "hash stored in PBKDF2 format");
+    CHECK(strlen(users_find("jonas")->salt_hex) == 16, "salt is 16 hex chars from the CSPRNG");
     CHECK(users_login("jonas", "wrongpass") != 0, "users_login rejects wrong password");
     CHECK(users_login("jonas", "tahoe2026") == 0, "users_login succeeds with valid password");
     CHECK(users_is_authenticated(), "session is authenticated after login");
@@ -221,8 +225,55 @@ int main(void)
     /* Verify reload from /Library/Accounts/users.db */
     users_init();
     CHECK(users_count() == 1, "users_init reloads account from users.db");
-    CHECK(users_verify_credentials("jonas", "newsecret"), "reloaded account preserves salted SHA-256 hash");
+    CHECK(users_verify_credentials("jonas", "newsecret"), "reloaded account preserves PBKDF2 hash");
     CHECK(users_login("jonas", "newsecret") == 0, "re-authenticate jonas after reload");
+
+    /* --- Security pass (BETTER_OS_PLAN.md S1-S5) --- */
+    CHECK(users_create("visitor", "Visitor", "visitorpw", false) == 0,
+          "admin session can create a non-admin account");
+    CHECK(users_login("visitor", "visitorpw") == 0, "log in as the non-admin visitor");
+    CHECK(users_create("sneaky", "Sneaky", "pw12345", true) == -4,
+          "non-admin cannot create accounts (S1)");
+    CHECK(users_delete("jonas") != 0, "non-admin cannot delete accounts (S1)");
+    CHECK(vfs_open("/Users/jonas/Desktop/Welcome.txt", VFS_O_READ) == NULL,
+          "non-admin cannot read another user's files (S4)");
+    CHECK(vfs_isdir("/Users/jonas") == 0, "non-admin cannot stat another user's home (S4)");
+    CHECK(vfs_exists("/Users/jonas/Documents") == 0,
+          "non-admin cannot probe another user's tree (S4)");
+    CHECK(vfs_open("/Library/Accounts/users.db", VFS_O_READ) == NULL,
+          "non-admin cannot read the credential database (S5)");
+    VfsFile *own = vfs_open("/Users/visitor/Desktop/Welcome.txt", VFS_O_READ);
+    CHECK(own != NULL, "own home stays fully readable (S4)");
+    if (own) vfs_close(own);
+    CHECK(users_login("jonas", "newsecret") == 0, "log back in as the administrator");
+    VfsFile *other = vfs_open("/Users/visitor/Desktop/Welcome.txt", VFS_O_READ);
+    CHECK(other != NULL, "admin can read any user's home");
+    if (other) vfs_close(other);
+    VfsFile *dbf = vfs_open("/Library/Accounts/users.db", VFS_O_READ);
+    CHECK(dbf != NULL, "admin can read the credential database");
+    if (dbf) vfs_close(dbf);
+    CHECK(users_delete("jonas") != 0, "admin cannot delete their own logged-in account");
+    CHECK(users_delete("visitor") == 0, "admin can delete another account");
+
+    /* Legacy single-SHA-256 accounts (pre-PBKDF2 disks) still log in and
+     * are transparently upgraded (S3 migration). Vector:
+     * sha256("ojjyOS-v3-auth:deadbeef:legacy-pass"). */
+    VfsFile *db = vfs_open("/Library/Accounts/users.db", VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
+    CHECK(db != NULL, "open users.db to plant a legacy-format record");
+    const char *legacy_line =
+        "legacy|Legacy User|deadbeef|c044c85b8233c1cf215d3da891b47e61fd4dc2c18e3f7b97bed5c95e943e6697|1|/Users/legacy\n";
+    vfs_write(db, legacy_line, strlen(legacy_line));
+    vfs_close(db);
+    users_init();
+    CHECK(users_count() == 1, "legacy-format account loads from users.db");
+    CHECK(!users_is_authenticated(), "reload clears the session");
+    CHECK(users_verify_credentials("legacy", "legacy-pass"), "legacy fast hash still verifies");
+    CHECK(!users_verify_credentials("legacy", "wrong"), "legacy account rejects wrong password");
+    CHECK(users_login("legacy", "legacy-pass") == 0, "legacy account logs in");
+    CHECK(strncmp(users_find("legacy")->pass_hash, "pbkdf2$", 7) == 0,
+          "login transparently upgrades the hash to PBKDF2");
+    CHECK(users_verify_credentials("legacy", "legacy-pass"), "upgraded credentials still verify");
+    CHECK(users_current_is_admin(), "legacy vector account is an admin");
 
     /* --- Kernel Heap Allocator (kmalloc/kcalloc/krealloc/kfree + coalescing) --- */
     kheap_init();
@@ -255,7 +306,8 @@ int main(void)
     CHECK(calc_pid >= 5, "proc_ensure_app spawns Calculator process");
     CHECK(proc_count() == 5, "proc_count is 5 after app spawn");
     const ProcEntry *cpe = proc_get_by_pid((uint32_t)calc_pid);
-    CHECK(cpe != NULL && strcmp(cpe->owner, "jonas") == 0, "spawned app process is owned by active user jonas");
+    CHECK(cpe != NULL && strcmp(cpe->owner, users_current_username()) == 0,
+          "spawned app process is owned by the active user");
 
     proc_tick(50, 10);
     CHECK(cpe->cpu_ticks > 1 && cpe->state == PROC_RUNNING, "proc_tick accounts CPU ticks to focused app");

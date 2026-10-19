@@ -5152,8 +5152,11 @@ static void terminal_exec(TerminalState *term, const char *raw)
             strncpy(fname, uname, sizeof(fname) - 1);
             fname[sizeof(fname) - 1] = '\0';
         }
-        if (users_create(uname, fname, upass, true) == 0) {
-            terminal_append_line(term, "Account created & SHA-256 credentials saved.");
+        int created = users_create(uname, fname, upass, true);
+        if (created == 0) {
+            terminal_append_line(term, "Account created & PBKDF2 credentials saved.");
+        } else if (created == -4) {
+            terminal_append_line(term, "adduser: only an administrator can add accounts");
         } else {
             terminal_append_line(term, "adduser: failed (invalid or duplicate username)");
         }
@@ -6461,7 +6464,8 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                     return;
                 }
                 const char *fn = login_full_name[0] ? login_full_name : login_username;
-                if (users_create(login_username, fn, login_password, true) == 0) {
+                int created = users_create(login_username, fn, login_password, true);
+                if (created == 0) {
                     users_login(login_username, login_password);
                     login_password[0] = '\0';
                     login_confirm[0] = '\0';
@@ -6469,6 +6473,9 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                     login_create_mode = false;
                     login_selected_user = users_current_index();
                     compositor_on_user_switched();
+                } else if (created == -4) {
+                    strcpy(login_status, "Only an administrator can add accounts. Log in first.");
+                    login_status_ok = false;
                 } else {
                     strcpy(login_status, "Invalid or duplicate username (use a-z, 0-9).");
                     login_status_ok = false;

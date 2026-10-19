@@ -54,6 +54,12 @@ static bool has(void *fs, const char *text)
 }
 static void reset_faults(void) { writes = flushes = 0; fail_write = fail_flush = -1; }
 
+/* VFS access-control hooks; users.c owns the real ones. Unauthenticated
+ * stubs make every path allowed, matching pre-gate behaviour here. */
+bool users_is_authenticated(void) { return false; }
+bool users_current_is_admin(void) { return false; }
+const char *users_current_username(void) { return "guest"; }
+
 int main(void)
 {
     ops = ramfs_get_ops();

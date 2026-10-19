@@ -19,8 +19,8 @@
 #define USER_FULLNAME_MAX   48
 #define USER_PASS_MAX       48
 #define USER_HOME_MAX       64
-#define USER_SALT_HEX_LEN   9
-#define USER_HASH_HEX_LEN   65
+#define USER_SALT_HEX_LEN   17   /* 8 CSPRNG bytes as 16 hex chars + NUL */
+#define USER_HASH_HEX_LEN   80   /* "pbkdf2$<iters>$" + 64 hex + NUL */
 
 typedef struct {
     char username[USER_NAME_MAX];
@@ -49,6 +49,10 @@ const UserAccount *users_find(const char *username);
 const UserAccount *users_current(void);
 int users_current_index(void);
 bool users_is_authenticated(void);
+
+/* True only when an authenticated administrator session is active. Gates
+ * account creation/deletion and the VFS access checks. */
+bool users_current_is_admin(void);
 
 /* Convenience getters (always return non-NULL strings; fallback to "guest") */
 const char *users_current_username(void);

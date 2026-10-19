@@ -152,5 +152,43 @@ int main(void)
     gfx_round_rect_stroke(&surf, 4, 4, 40, 30, 8, 0xFFFFFF, 255);
     CHECK(at(20, 4) == 0xFFFFFF && at(20, 5) == 0 && at(4, 20) == 0xFFFFFF && at(20, 20) == 0, "hairline border");
     CHECK(guard_intact(), "stroke stays inside");
+
+    /* Sprites: a cached drawing blended later must match drawing directly. */
+    {
+        enum { SW = 40, SH = 30 };
+        static uint32_t blk[SW * SH], wht[SW * SH], spr[SW * SH], direct[W * H];
+        GfxSurface t = { blk, SW, SH, SW, 0, 0, SW, SH, 1 };
+        for (int i = 0; i < SW * SH; i++) blk[i] = 0, wht[i] = 0xFFFFFF;
+        gfx_shadow(&t, 6, 6, 26, 14, 7, 4, 1, 0x000000, 70);
+        gfx_round_rect(&t, 6, 6, 26, 14, 7, 0x3091D8, 150);
+        gfx_round_rect_rim(&t, 6, 6, 26, 14, 7, 150);
+        t.pixels = wht;
+        gfx_shadow(&t, 6, 6, 26, 14, 7, 4, 1, 0x000000, 70);
+        gfx_round_rect(&t, 6, 6, 26, 14, 7, 0x3091D8, 150);
+        gfx_round_rect_rim(&t, 6, 6, 26, 14, 7, 150);
+        gfx_sprite_extract(blk, wht, spr, SW * SH);
+        CHECK(spr[0] >> 24 == 0 && (spr[20 + 13 * SW] >> 24) > 140, "sprite alpha: clear outside, solid inside");
+        reset(0x7A5C3E);
+        GfxSurface d = surf;
+        d.clip_x1 = 0; d.clip_y1 = 0; d.clip_x2 = W; d.clip_y2 = H;
+        gfx_shadow(&d, 13, 11, 26, 14, 7, 4, 1, 0x000000, 70);
+        gfx_round_rect(&d, 13, 11, 26, 14, 7, 0x3091D8, 150);
+        gfx_round_rect_rim(&d, 13, 11, 26, 14, 7, 150);
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) direct[y * W + x] = at(x, y);
+        reset(0x7A5C3E);
+        gfx_blit_argb(&surf, spr, SW, SH, 7, 5);
+        int worst = 0;
+        for (int y = 0; y < H; y++) for (int x = 0; x < W; x++)
+            for (int sh = 0; sh < 24; sh += 8) {
+                int dd = (int)((direct[y * W + x] >> sh) & 255) - (int)((at(x, y) >> sh) & 255);
+                if (dd < 0) dd = -dd;
+                if (dd > worst) worst = dd;
+            }
+        CHECK(worst <= 3, "cached sprite blends like drawing directly (<= 3 levels)");
+        reset(0x000000);
+        surf.clip_x1 = 10; surf.clip_x2 = 20;
+        gfx_blit_argb(&surf, spr, SW, SH, -5, -5);
+        CHECK(guard_intact() && at(5, 5) == 0 && at(25, 10) == 0, "sprite blit honours the clip box");
+    }
     return finish();
 }

@@ -74,6 +74,14 @@ void gfx_liquid_glass(GfxSurface *s, int x, int y, int w, int h, int r, const Gf
  * cached-glass fill. */
 void gfx_round_rect_rim(GfxSurface *s, int x, int y, int w, int h, int r, uint8_t strength);
 
+/* Cached drawings ("sprites"): draw something once on black and once on
+ * white, then gfx_sprite_extract() recovers straight-alpha 0xAARRGGBB
+ * pixels exactly (alpha = 255 - (white - black)). gfx_blit_argb() blends
+ * such a sprite 1:1 at PHYSICAL (px, py), honouring the clip box - a few
+ * cycles per pixel, so repeated controls cost ~their area once cached. */
+void gfx_sprite_extract(const uint32_t *on_black, const uint32_t *on_white, uint32_t *argb, size_t n);
+void gfx_blit_argb(GfxSurface *s, const uint32_t *argb, int sw, int sh, int px, int py);
+
 /* Anti-aliased ring segment centred at (cx, cy): radii [r_in, r_out],
  * limited to directions within `half_angle_deg` of straight up (90 = a
  * semicircle, 180 = full ring). Used for Wi-Fi fans, spinners, gauges. */

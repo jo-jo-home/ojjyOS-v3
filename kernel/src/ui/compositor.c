@@ -814,12 +814,154 @@ static int termtheme_index(void)
     }
     return 0;
 }
+/* ---- Liquid Glass controls (LG4) ----------------------------------
+ * Small controls don't sample the backdrop (too slow per control); they
+ * are a translucent fill + the specular rim of the glass material + a
+ * hairline edge, optionally raised with a soft shadow. With Reduce
+ * Transparency they become solid. */
+typedef enum { CTL_GLASS, CTL_PRIMARY, CTL_KNOB, CTL_TRACK_ON } CtlKind;
+typedef struct {
+    uint8_t kind, alpha, raised, dark, solid, scale, pad[2];
+    int16_t w, h, r, pad2;
+    Color color;
+} CtlSpec;
+
+/* Draw one control at logical (m, m) of surface t (or at (x, y) of the screen). */
+static void ctl_render(GfxSurface *t, const CtlSpec *c, int x, int y)
+{
+    int w = c->w, h = c->h, r = c->r;
+    switch (c->kind) {
+    case CTL_GLASS:
+        if (c->raised) gfx_shadow(t, x, y, w, h, r, 4, 1, COLOR_BLACK, c->dark ? 70 : 40);
+        gfx_round_rect(t, x, y, w, h, r, c->color, c->solid ? 255 : c->alpha);
+        if (!c->solid) gfx_round_rect_rim(t, x, y, w, h, r, c->dark ? 70 : 150);
+        gfx_round_rect_stroke(t, x, y, w, h, r, c->dark ? COLOR_WHITE : COLOR_BLACK, c->dark ? 34 : 22);
+        break;
+    case CTL_PRIMARY:
+        gfx_shadow(t, x, y, w, h, r, 5, 2, c->color, 70);
+        gfx_round_rect_vgradient(t, x, y, w, h, r, fb_blend(c->color, COLOR_WHITE, 46), c->color, 255);
+        if (!c->solid) gfx_round_rect_rim(t, x, y, w, h, r, 140);
+        break;
+    case CTL_KNOB:
+        gfx_shadow(t, x, y, w, h, r, 3, 1, COLOR_BLACK, 70);
+        gfx_round_rect(t, x, y, w, h, r, COLOR_WHITE, 255);
+        if (!c->solid) gfx_round_rect_rim(t, x, y, w, h, r, 90);
+        break;
+    case CTL_TRACK_ON:
+        gfx_round_rect(t, x, y, w, h, r, c->color, 255);
+        if (!c->solid) gfx_round_rect_rim(t, x, y, w, h, r, 110);
+        break;
+    }
+}
+
+/* Controls barely change, so each distinct one is drawn once (on black and
+ * on white -> exact straight-alpha sprite, gfx_sprite_extract) and blended
+ * from the cache afterwards: ~0.5 ms -> ~0.02 ms per control. Pool memory
+ * is PMM (never freed); when it fills up the whole cache starts over. */
+#define CTL_MARGIN      8           /* logical px around the shape for shadows */
+#define CTL_SPRITES     64
+#define CTL_POOL_PX     (2u * 1024 * 1024)
+#define CTL_MAX_PX      (160u * 1024)
+typedef struct { CtlSpec spec; uint32_t *argb; int pw, ph; } CtlSprite;
+static CtlSprite ctl_cache[CTL_SPRITES];
+static int ctl_cache_count;
+static uint32_t *ctl_pool, *ctl_black, *ctl_white;
+static size_t ctl_pool_used;
+
+static void ctl_draw(CtlSpec c, int x, int y)
+{
+    int k = fb_ui_scale();
+    c.scale = (uint8_t)k;
+    c.dark = settings_get()->dark_mode;
+    c.solid = settings_get()->reduced_transparency;
+    int pw = (c.w + 2 * CTL_MARGIN) * k, ph = (c.h + 2 * CTL_MARGIN) * k;
+    size_t px = (size_t)pw * ph;
+    if (!ctl_pool) {
+        ctl_pool = (uint32_t *)pmm_alloc_bytes(CTL_POOL_PX * sizeof(uint32_t));
+        ctl_black = (uint32_t *)pmm_alloc_bytes(CTL_MAX_PX * sizeof(uint32_t));
+        ctl_white = (uint32_t *)pmm_alloc_bytes(CTL_MAX_PX * sizeof(uint32_t));
+    }
+    if (!ctl_pool || !ctl_black || !ctl_white || px > CTL_MAX_PX || c.w <= 0 || c.h <= 0) {
+        ctl_render(surface(), &c, x, y);            /* uncacheable: draw directly */
+        return;
+    }
+    for (int i = 0; i < ctl_cache_count; i++) {
+        if (memcmp(&ctl_cache[i].spec, &c, sizeof(c)) == 0) {
+            gfx_blit_argb(surface(), ctl_cache[i].argb, pw, ph, (x - CTL_MARGIN) * k, (y - CTL_MARGIN) * k);
+            return;
+        }
+    }
+    if (ctl_cache_count == CTL_SPRITES || ctl_pool_used + px > CTL_POOL_PX) {
+        ctl_cache_count = 0;
+        ctl_pool_used = 0;
+    }
+    for (size_t i = 0; i < px; i++) { ctl_black[i] = 0; ctl_white[i] = 0xFFFFFF; }
+    GfxSurface t = { ctl_black, pw, ph, pw, 0, 0, pw, ph, k };
+    ctl_render(&t, &c, CTL_MARGIN, CTL_MARGIN);
+    t.pixels = ctl_white;
+    ctl_render(&t, &c, CTL_MARGIN, CTL_MARGIN);
+    CtlSprite *sp = &ctl_cache[ctl_cache_count++];
+    sp->spec = c;
+    sp->argb = ctl_pool + ctl_pool_used;
+    sp->pw = pw;
+    sp->ph = ph;
+    ctl_pool_used += px;
+    gfx_sprite_extract(ctl_black, ctl_white, sp->argb, px);
+    gfx_blit_argb(surface(), sp->argb, pw, ph, (x - CTL_MARGIN) * k, (y - CTL_MARGIN) * k);
+}
+
+static CtlSpec ctl_spec(CtlKind kind, int w, int h, int r, Color color, uint8_t alpha, bool raised)
+{
+    CtlSpec c;
+    memset(&c, 0, sizeof(c));
+    c.kind = (uint8_t)kind;
+    c.w = (int16_t)w; c.h = (int16_t)h; c.r = (int16_t)(r * 2 > h ? h / 2 : r);
+    c.color = color;
+    c.alpha = alpha;
+    c.raised = raised;
+    return c;
+}
+
+static void draw_glass_control(int x, int y, int w, int h, int r, Color fill, uint8_t fill_a, bool raised)
+{
+    ctl_draw(ctl_spec(CTL_GLASS, w, h, r, fill, fill_a, raised), x, y);
+}
+
+/* Neutral glass fill for buttons/fields on any background. */
+static Color glass_fill(uint8_t *alpha)
+{
+    bool dark = settings_get()->dark_mode;
+    *alpha = dark ? 46 : 150;
+    return dark ? RGB(200, 214, 236) : COLOR_WHITE;
+}
+
+/* Capsule push button with centred label: primary = accent glass. */
+static void draw_push_button(int x, int y, int w, int h, const char *label, bool primary)
+{
+    int r = h / 2;
+    if (primary) {
+        ctl_draw(ctl_spec(CTL_PRIMARY, w, h, r, theme->accent, 255, true), x, y);
+    } else {
+        uint8_t a;
+        Color f = glass_fill(&a);
+        draw_glass_control(x, y, w, h, r, f, a, true);
+    }
+    TextStyle st = primary ? TEXT_BODY_BOLD : TEXT_BODY_MEDIUM;
+    int tw = text_width(label, st);
+    ui_text_mid(x + (w - tw) / 2, y, h, label, st, primary ? COLOR_WHITE : theme->text);
+}
+
+/* Tahoe switch: glass track (accent when on) and a wide glass knob. */
 static void draw_switch(int x, int y, bool on)
 {
-    draw_rounded_rect_blend(x, y, 38, 20, 10, on ? theme->accent : (settings_get()->dark_mode ? RGB(70, 78, 92) : RGB(208, 214, 222)), 255);
-    int kx = on ? x + 20 : x + 2;
-    gfx_shadow(surface(), kx, y + 2, 16, 16, 8, 3, 1, COLOR_BLACK, 60);
-    draw_rounded_rect_blend(kx, y + 2, 16, 16, 8, COLOR_WHITE, 255);
+    bool dark = settings_get()->dark_mode;
+    if (on) {
+        ctl_draw(ctl_spec(CTL_TRACK_ON, 38, 20, 10, theme->accent, 255, false), x, y);
+    } else {
+        draw_glass_control(x, y, 38, 20, 10, dark ? RGB(90, 100, 118) : RGB(200, 207, 218), dark ? 200 : 230, false);
+    }
+    int kx = on ? x + 15 : x + 2;
+    ctl_draw(ctl_spec(CTL_KNOB, 21, 16, 8, COLOR_WHITE, 255, true), kx, y + 2);
 }
 
 /* "512 bytes", "4 KB", "1.2 MB" */
@@ -1032,12 +1174,14 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
     int tb_x = finder_toolbar_x(win, content_x - 12);
     bool can_back = state->history_pos > 0;
     bool can_fwd = state->history_pos + 1 < state->history_count;
-    Color btn = dark ? COLOR_WHITE : theme->midnight;
-    draw_rounded_rect_blend(tb_x, toolbar_y - 28, 22, 20, 6, btn, can_back ? 24 : 10);
-    draw_rounded_rect_blend(tb_x + 24, toolbar_y - 28, 22, 20, 6, btn, can_fwd ? 24 : 10);
+    uint8_t ga;
+    Color gf = glass_fill(&ga);
+    /* Back/forward share one glass capsule (hit boxes unchanged). */
+    draw_glass_control(tb_x, toolbar_y - 29, 46, 22, 11, gf, ga, true);
+    draw_rounded_rect_blend(tb_x + 23, toolbar_y - 25, 1, 14, 0, theme->text_muted, 60);
     draw_chevron(tb_x + 11, toolbar_y - 18, -1, can_back ? theme->text : theme->text_muted, can_back ? 255 : 120);
     draw_chevron(tb_x + 35, toolbar_y - 18, 1, can_fwd ? theme->text : theme->text_muted, can_fwd ? 255 : 120);
-    draw_rounded_rect_blend(tb_x + 52, toolbar_y - 28, 52, 20, 6, btn, 24);
+    draw_glass_control(tb_x + 52, toolbar_y - 29, 52, 22, 11, gf, ga, true);
     {
         const char *mode = state->view_mode == FINDER_VIEW_LIST ? "List" : "Icons";
         int mw = text_width(mode, TEXT_SMALL_BOLD);
@@ -1046,7 +1190,7 @@ static void draw_finder_window(const CompositorWindow *win, FinderState *state, 
 
     int search_x = main_x + main_w - 150;
     if (search_x < tb_x + 112) search_x = tb_x + 112;
-    draw_rounded_rect_blend(search_x, toolbar_y - 28, 140, 20, 6, btn, 18);
+    draw_glass_control(search_x, toolbar_y - 29, 140, 22, 11, gf, ga, false);
     if (state->rename_mode) {
         ui_text_mid(search_x + 8, toolbar_y - 28, 20, state->rename_buffer, TEXT_BODY, theme->text);
         int rw = text_width("Rename:", TEXT_SMALL_BOLD);
@@ -1122,14 +1266,14 @@ static int seg_x(int main_x, int main_w) { return main_x + main_w - 16 - SEG_W; 
 static void draw_segmented(int x, int y, const char *const *labels, int n, int selected)
 {
     bool dark = settings_get()->dark_mode;
-    draw_rounded_rect_blend(x, y, SEG_W, SEG_H, 7, dark ? COLOR_WHITE : theme->midnight, dark ? 26 : 18);
+    /* Glass capsule track; the selected segment is a raised glass pill. */
+    draw_glass_control(x, y, SEG_W, SEG_H, SEG_H / 2, dark ? COLOR_WHITE : theme->midnight, dark ? 22 : 16, false);
     int cw = SEG_W / n;
     for (int i = 0; i < n; i++) {
         int cx = x + i * cw;
-        if (i == selected) {
-            gfx_shadow(surface(), cx + 2, y + 2, cw - 4, SEG_H - 4, 6, 3, 1, COLOR_BLACK, 50);
-            draw_rounded_rect_blend(cx + 2, y + 2, cw - 4, SEG_H - 4, 6, dark ? RGB(96, 106, 124) : COLOR_WHITE, 255);
-        }
+        if (i == selected)
+            draw_glass_control(cx + 2, y + 2, cw - 4, SEG_H - 4, (SEG_H - 4) / 2,
+                               COLOR_WHITE, dark ? 62 : 245, true);
         int tw = text_width(labels[i], i == selected ? TEXT_BODY_MEDIUM : TEXT_BODY);
         ui_text_mid(cx + (cw - tw) / 2, y, SEG_H, labels[i], i == selected ? TEXT_BODY_MEDIUM : TEXT_BODY,
                     i == selected ? theme->text : theme->text_muted);
@@ -1460,8 +1604,7 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
         mask_password_str(state->new_pw, masked, sizeof(masked));
         ui_text(main_x + 98, content_y + 148, masked[0] ? masked : (state->user_field == 2 ? "|" : "click to type"), TEXT_BODY, masked[0] ? theme->text : theme->text_muted);
 
-        draw_rounded_rect_blend(main_x + 250, content_y + 130, 86, 24, 8, theme->accent, 210);
-        ui_text(main_x + 260, content_y + 136, "Save PW", TEXT_BODY, COLOR_WHITE);
+        draw_push_button(main_x + 250, content_y + 130, 86, 24, "Save PW", true);
 
         if (state->msg[0]) {
             ui_text(main_x + 16, content_y + 172, state->msg, TEXT_BODY, state->msg_ok ? theme->accent : RGB(220, 72, 68));
@@ -1484,14 +1627,9 @@ static void draw_settings_window(SettingsStateUi *state, int content_x, int cont
 
         /* Bottom action buttons: Add Account, Lock Screen, Switch User */
         int by = content_y + content_h - 36;
-        draw_rounded_rect_blend(main_x + 16, by, 112, 24, 8, theme->accent, 210);
-        ui_text(main_x + 24, by + 6, "+ Add Account", TEXT_BODY, COLOR_WHITE);
-
-        draw_rounded_rect_blend(main_x + 136, by, 96, 24, 8, theme->accent_soft, 180);
-        ui_text(main_x + 144, by + 6, "Lock Screen", TEXT_BODY, theme->text);
-
-        draw_rounded_rect_blend(main_x + 240, by, 98, 24, 8, theme->accent_soft, 180);
-        ui_text(main_x + 248, by + 6, "Switch User", TEXT_BODY, theme->text);
+        draw_push_button(main_x + 16, by, 112, 24, "+ Add Account", true);
+        draw_push_button(main_x + 136, by, 96, 24, "Lock Screen", false);
+        draw_push_button(main_x + 240, by, 98, 24, "Switch User", false);
     } else if (state->page == SETTINGS_PAGE_WALLPAPER) {
         draw_wallpaper_page(state, main_x, main_w, content_y, content_h);
     } else if (state->page == SETTINGS_PAGE_DOCK) {
@@ -1781,12 +1919,14 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
     /* Navigation on the right; view tabs under the title (they used to
      * collide in the ~300px header). Click geometry mirrors this. */
     int nav_y = content_y + 10;
-    draw_rounded_rect_blend(header_x + header_w - 98, nav_y, 20, 20, 6, theme->accent_soft, 200);
-    ui_text(header_x + header_w - 92, nav_y + 2, "<", TEXT_BODY, theme->text);
-    draw_rounded_rect_blend(header_x + header_w - 74, nav_y, 20, 20, 6, theme->accent_soft, 200);
-    ui_text(header_x + header_w - 68, nav_y + 2, ">", TEXT_BODY, theme->text);
-    draw_rounded_rect_blend(header_x + header_w - 50, nav_y, 46, 20, 8, theme->accent, 220);
-    ui_text(header_x + header_w - 47, nav_y + 2, "Today", TEXT_BODY, COLOR_WHITE);
+    {
+        uint8_t ga;
+        Color gf = glass_fill(&ga);
+        draw_glass_control(header_x + header_w - 98, nav_y, 44, 20, 10, gf, ga, true);
+        draw_chevron(header_x + header_w - 87, nav_y + 10, -1, theme->text, 255);
+        draw_chevron(header_x + header_w - 65, nav_y + 10, 1, theme->text, 255);
+    }
+    draw_push_button(header_x + header_w - 50, nav_y, 46, 20, "Today", true);
 
     int view_x = header_x + 6;
     const char *views[] = { "Month", "Week", "Day", "Agenda" };
@@ -2008,18 +2148,17 @@ static void draw_preview_window(PreviewState *preview, int content_x, int conten
     else
         draw_rounded_rect_blend(l.ix, l.iy, l.iw, l.ih, 10, theme->text_muted, 60);
 
-    Color btn = dark ? RGB(60, 70, 90) : RGB(230, 234, 242);
-    draw_rounded_rect_blend(l.prev_x, l.bar_y, 30, 26, 8, btn, 230);
-    draw_rounded_rect_blend(l.next_x, l.bar_y, 30, 26, 8, btn, 230);
-    ui_text_mid(l.prev_x + 10, l.bar_y, 26, "\xE2\x80\xB9", TEXT_BODY_MEDIUM, theme->text);
-    ui_text_mid(l.next_x + 11, l.bar_y, 26, "\xE2\x80\xBA", TEXT_BODY_MEDIUM, theme->text);
+    uint8_t ga;
+    Color gf = glass_fill(&ga);
+    draw_glass_control(l.prev_x, l.bar_y, 30, 26, 13, gf, ga, true);
+    draw_glass_control(l.next_x, l.bar_y, 30, 26, 13, gf, ga, true);
+    draw_chevron(l.prev_x + 15, l.bar_y + 13, -1, theme->text, 255);
+    draw_chevron(l.next_x + 15, l.bar_y + 13, 1, theme->text, 255);
     const char *name = wallpaper_choice_name(preview->index);
     ui_text_mid(l.next_x + 44, l.bar_y, 26, name, TEXT_BODY_MEDIUM, theme->text);
     bool current = preview->index == wp_choice;
-    draw_rounded_rect_blend(l.set_x, l.bar_y, l.set_w, 26, 8, current ? btn : theme->accent, 240);
-    const char *label = current ? "Desktop Picture \xE2\x9C\x93" : "Set as Desktop Picture";
-    int lw = text_width(label, TEXT_BODY_MEDIUM);
-    ui_text_mid(l.set_x + (l.set_w - lw) / 2, l.bar_y, 26, label, TEXT_BODY_MEDIUM, current ? theme->text : COLOR_WHITE);
+    draw_push_button(l.set_x, l.bar_y, l.set_w, 26,
+                     current ? "Desktop Picture \xE2\x9C\x93" : "Set as Desktop Picture", !current);
 }
 
 static void preview_click(PreviewState *preview, int cx, int cy, int cw, int ch, int x, int y)
@@ -2041,6 +2180,16 @@ void ui_rounded_rect(int x, int y, int w, int h, int r, Color color, uint8_t alp
 }
 Color ui_blend(Color bg, Color fg, uint8_t alpha) { return blend(bg, fg, alpha); }
 void ui_mark_dirty(void) { mark_dirty(); }
+void ui_glass_control(int x, int y, int w, int h, int r, bool raised)
+{
+    uint8_t a;
+    Color f = glass_fill(&a);
+    draw_glass_control(x, y, w, h, r, f, a, raised);
+}
+void ui_push_button(int x, int y, int w, int h, const char *label, bool primary)
+{
+    draw_push_button(x, y, w, h, label, primary);
+}
 
 /* ================================================================== */
 /* About window                                                        */
@@ -2981,20 +3130,6 @@ static void draw_text_field(int x, int y, int w, int h, const char *value, const
     if (value && value[0]) tw = text_draw_fit(surface(), x + 10, ty, value, st, theme->text, w - 24);
     else if (placeholder && !focused) text_draw_fit(surface(), x + 10, ty, placeholder, st, theme->text_muted, w - 20);
     if (focused) draw_rounded_rect_blend(x + 10 + tw + 1, y + (h - 16) / 2, 2, 16, 1, theme->accent, 255);
-}
-
-/* Filled push button with centred label. */
-static void draw_push_button(int x, int y, int w, int h, const char *label, bool primary)
-{
-    if (primary) {
-        gfx_round_rect_vgradient(surface(), x, y, w, h, 8, blend(theme->accent, COLOR_WHITE, 40), theme->accent, 255);
-    } else {
-        draw_rounded_rect_blend(x, y, w, h, 8, settings_get()->dark_mode ? COLOR_WHITE : theme->midnight,
-                                settings_get()->dark_mode ? 40 : 22);
-    }
-    TextStyle st = primary ? TEXT_BODY_BOLD : TEXT_BODY_MEDIUM;
-    int tw = text_width(label, st);
-    ui_text_mid(x + (w - tw) / 2, y, h, label, st, primary ? COLOR_WHITE : theme->text);
 }
 
 static void draw_login_screen(void)

@@ -572,3 +572,41 @@ void gfx_round_rect_rim(GfxSurface *s, int x, int y, int w, int h, int r, uint8_
         }
     }
 }
+
+void gfx_sprite_extract(const uint32_t *on_black, const uint32_t *on_white, uint32_t *argb, size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        uint32_t b = on_black[i], w = on_white[i];
+        /* Each channel: black = a*c, white = a*c + (1-a)*255. Use the
+         * channel with the clearest signal (largest white-black gap is the
+         * same for all channels in exact arithmetic; average for rounding). */
+        int gap = (int)((w >> 16) & 255) - (int)((b >> 16) & 255)
+                + (int)((w >> 8) & 255) - (int)((b >> 8) & 255)
+                + (int)(w & 255) - (int)(b & 255);
+        int a = 255 - (gap + 1) / 3;
+        if (a <= 0) { argb[i] = 0; continue; }
+        if (a > 255) a = 255;
+        uint32_t out = (uint32_t)a << 24;
+        for (int sh = 16; sh >= 0; sh -= 8) {
+            int c = (int)((b >> sh) & 255) * 255 / a;   /* un-premultiply */
+            if (c > 255) c = 255;
+            out |= (uint32_t)c << sh;
+        }
+        argb[i] = out;
+    }
+}
+
+void gfx_blit_argb(GfxSurface *s, const uint32_t *argb, int sw, int sh, int px, int py)
+{
+    int x1 = px < s->clip_x1 ? s->clip_x1 : px, x2 = px + sw > s->clip_x2 ? s->clip_x2 : px + sw;
+    int y1 = py < s->clip_y1 ? s->clip_y1 : py, y2 = py + sh > s->clip_y2 ? s->clip_y2 : py + sh;
+    for (int y = y1; y < y2; y++) {
+        uint32_t *row = s->pixels + (size_t)y * s->pitch;
+        const uint32_t *src = argb + (size_t)(y - py) * sw - px;
+        for (int x = x1; x < x2; x++) {
+            uint32_t c = src[x], a = c >> 24;
+            if (a == 255) row[x] = c & 0xFFFFFF;
+            else if (a) row[x] = gfx_blend(row[x], c & 0xFFFFFF, a);
+        }
+    }
+}

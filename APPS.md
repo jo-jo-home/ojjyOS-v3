@@ -192,3 +192,41 @@ This document defines core app layouts, data models, and implementation details 
 - Physical Memory usage bar (`used MB / total MB (free MB)`).
 - Live kernel drivers table (`Driver`, `Class`, `State`, `IRQs`, `I/O B`) queried via `driver_for_each()`.
 - Open windows count and active app indicator.
+
+---
+
+## Web (`Web.app`, "ojjyOS Web")
+
+A Chrome-style browser written from scratch for this kernel (it cannot run
+real Chrome: see `BROWSER_CHROME_PLAN.md` section 0).
+
+### Layout
+- Tab strip in the title row next to the traffic lights (up to 12 tabs,
+  favicon letter, title, close button, `+`).
+- Toolbar: back, forward, reload/stop, home, omnibox (lock or "Not secure",
+  suggestions from history/bookmarks/search), bookmark star, menu.
+- Optional bookmarks bar; find bar; status bubble for hovered links;
+  JavaScript info bar offering lighter versions of script-only sites.
+- Built-in pages: `ojjy:newtab`, `ojjy:history`, `ojjy:bookmarks`,
+  `ojjy:downloads`, `ojjy:settings`, `view-source:`.
+
+### Data model
+- Per user under `~/Library/Web/`: bookmarks, history, cookies, settings
+  (search engine, home page, bookmarks bar).
+- Downloads are saved to `~/Downloads`.
+
+### Implementation
+- `ui/browser.c` (tabs, fetching, images, input), `ui/browser_ui.c`
+  (drawing), `ui/browser_profile.c` (stored data), `ui/browser_pages.c`
+  (built-in pages).
+- Engine in `kernel/src/web/`: `dom.c` (tolerant HTML parser), `css.c`
+  (selectors, cascade incl. `@layer`, `var()`, `calc()`, media queries),
+  `layout.c` (block/inline/flex/grid/table/float/absolute layout to a
+  display list), `paint.c` (shared painter), `http.c` (HTTP/1.1 with
+  gzip/deflate, cookies, redirects, POST).
+- Images in `kernel/src/image/`: PNG, GIF, JPEG (baseline + progressive),
+  WebP (lossy, lossless, alpha) and SVG (`svg.c`, integer-only rasterizer).
+- Tests: `tests/test_web.c` (host, incl. fuzzing), `tests/web_render.c`
+  (renders saved pages to images), `tests/qemu_web_tour.py` (live sites).
+- No JavaScript engine yet; TLS 1.2-only sites need Track N's work.
+

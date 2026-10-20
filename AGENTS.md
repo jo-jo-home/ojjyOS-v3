@@ -1,5 +1,19 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-19, later): Track D — Chrome-like browser ("ojjyOS Web")
+
+Jonas asked for a browser that feels like Chrome. Real Chrome cannot run
+on this kernel (why: `BROWSER_CHROME_PLAN.md` §0), so a new engine and
+shell were written; the plan file's Log section lists every step with
+receipts. Ownership: Track D owns `ui/browser*`, `web/**`, `image/**`,
+`http.c`; Track N keeps X.509/cert checks, `clock.c` and TLS 1.2 (craigslist).
+Done: DOM/CSS/layout engine (flex, grid, floats, absolute/fixed, @layer,
+var(), media queries), tabs/omnibox/bookmarks/history/downloads/find/zoom,
+cookies, POST, gzip, PNG/GIF/JPEG/WebP/SVG. Not done: JavaScript (info bar
+offers lighter sites). Tools: `tests/web_render.c` renders saved pages on the
+host (`WEB_DUMP`, `WEB_REPEAT`, `WEB_BENCH`, `WEB_BASE`), `tests/qemu_web_tour.py`
+visits live sites (use `OJJY_ACCEL=hvf` for real timings; TCG is ~8x slower).
+
 ## LATEST (2026-10-19): Track N — N1 crypto primitives DONE and on main
 
 `main` = `e6ad444` and holds BOTH tracks' latest (D: D1 glass controls +

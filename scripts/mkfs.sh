@@ -297,9 +297,19 @@ cat > "$SYSROOT/System/Web/shortcuts.html" << 'PAGE'
 </table>
 <h3>Web</h3>
 <table>
+<tr><td><b>Cmd+T / Cmd+W</b></td><td>New tab / close tab</td></tr>
+<tr><td><b>Cmd+Shift+T</b></td><td>Reopen the last closed tab</td></tr>
+<tr><td><b>Ctrl+Tab / Cmd+Shift+[ ]</b></td><td>Next / previous tab</td></tr>
 <tr><td><b>Cmd+L</b></td><td>Edit the address</td></tr>
-<tr><td><b>Cmd+R</b></td><td>Reload</td></tr>
+<tr><td><b>Cmd+R / Cmd+.</b></td><td>Reload / stop</td></tr>
 <tr><td><b>Cmd+[ / Cmd+]</b></td><td>Back / Forward</td></tr>
+<tr><td><b>Cmd+F, Cmd+G</b></td><td>Find in page, next match</td></tr>
+<tr><td><b>Cmd+D</b></td><td>Bookmark this page</td></tr>
+<tr><td><b>Cmd+Shift+B</b></td><td>Show or hide the bookmarks bar</td></tr>
+<tr><td><b>Cmd+Y / Cmd+Shift+J</b></td><td>History / Downloads</td></tr>
+<tr><td><b>Cmd+U</b></td><td>View page source</td></tr>
+<tr><td><b>Cmd+= / Cmd+- / Cmd+0</b></td><td>Zoom in / out / reset</td></tr>
+<tr><td><b>Cmd+,</b></td><td>Web settings</td></tr>
 <tr><td><b>Space / Shift+Space</b></td><td>Page down / up</td></tr>
 <tr><td><b>Tab</b></td><td>Next text field</td></tr>
 </table>
@@ -312,7 +322,17 @@ PAGE
 cat > "$SYSROOT/System/Web/release.html" << 'PAGE'
 <html><head><title>What's New</title></head><body>
 <h1>ojjyOS 3.1</h1>
-<h3>New</h3>
+<h3>New: ojjyOS Web</h3>
+<ul>
+<li><b>A new browser engine</b> &mdash; real CSS (selectors, cascade layers, variables, flexbox, grid, floats,
+positioning, media queries), so sites look like their real selves.</li>
+<li><b>Pictures</b> &mdash; PNG, JPEG (incl. progressive), GIF, WebP and SVG logos and icons.</li>
+<li><b>Tabs, bookmarks and history</b> &mdash; a Chrome-style tab strip, smart address bar with
+suggestions, bookmarks bar, history, downloads, find in page, zoom and view source.</li>
+<li><b>Faster pages</b> &mdash; gzip-compressed downloads (often 6x less data) and cookies.</li>
+<li>Searches go to DuckDuckGo; pages that need JavaScript say so and offer lighter versions.</li>
+</ul>
+<h3>Also new</h3>
 <ul>
 <li><b>Networking</b> &mdash; a from-scratch network stack with DHCP, DNS and TCP.</li>
 <li><b>A real web browser</b> &mdash; open websites, follow links, search and fill in forms.</li>

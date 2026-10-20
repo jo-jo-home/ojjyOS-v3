@@ -154,5 +154,9 @@ installed images rebuilt when no VM runs, plain-English summary.
   kept raw and decoded once (Wikipedia's "\a0 · " separators showed as "?"); identifier escapes
   >= U+0080 become UTF-8; no-break/typographic spaces draw as spaces, zero-width chars as nothing.
   Live: build/web-v7 (BBC, Wikipedia, Apple, GitHub).
-- NEXT: gzip Content-Encoding, GitHub header menus, SVG, JavaScript info bar improvements,
+- W3 gzip (this commit): requests send `Accept-Encoding: gzip, deflate` once the browser registers a
+  shared 4 MB decode buffer (`http_set_inflate_buffer`); `http_decode_body` decodes gzip, zlib and raw
+  deflate in place, keeping the decoded prefix of a cut-off stream. Load log now prints the wire size:
+  Wikipedia 675 KB -> 107 KB, GitHub 573 -> 118 KB, BBC 682 -> 98 KB (build/web-v9). 6 new host checks.
+- NEXT: GitHub header menus, SVG, JavaScript info bar improvements,
   docs (APPS.md, What's New), installed images.

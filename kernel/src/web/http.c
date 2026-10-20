@@ -9,6 +9,7 @@
 #include "net/tls.h"
 #include "memory.h"
 #include "string.h"
+#include "image/inflate.h"
 
 #define HTTP_IDLE_TIMEOUT_MS 20000
 #define HTTP_MAX_REDIRECTS   10
@@ -21,6 +22,30 @@ void http_set_cookie_hooks(void (*get)(const Url *url, char *out, size_t size),
 {
     cookie_get = get;
     cookie_set = set;
+}
+
+/* Content-Encoding: one shared output buffer (fetches finish one at a time
+ * inside http_poll). Without it requests ask for identity encoding. */
+static uint8_t *inflate_buf;
+static size_t inflate_cap;
+
+void http_set_inflate_buffer(uint8_t *buf, size_t cap)
+{
+    inflate_buf = buf;
+    inflate_cap = cap;
+}
+
+long http_decode_body(const HttpResponseHead *h, uint8_t *body, size_t len, size_t room,
+                      uint8_t *scratch, size_t scratch_cap, bool *truncated)
+{
+    if (!(h->gzip || h->deflate) || len == 0) return (long)len;
+    bool complete;
+    size_t cap = scratch_cap < room ? scratch_cap : room;
+    long n = inflate_lenient(body, len, h->gzip ? INFLATE_GZIP : INFLATE_ZLIB_OR_RAW, scratch, cap, &complete);
+    if (n < 0) return -1;
+    if (!complete) *truncated = true;
+    memcpy(body, scratch, (size_t)n);
+    return n;
 }
 
 /* ------------------------------------------------------------------ */
@@ -283,8 +308,9 @@ static void begin(HttpFetch *f)
         f->post ? "POST " : "GET ", f->url.path, " HTTP/1.1\r\nHost: ", host,
         "\r\nUser-Agent: " HTTP_USER_AGENT "\r\n"
         "Accept: text/html,application/xhtml+xml,text/plain;q=0.9,image/png,image/jpeg,image/gif,*/*;q=0.5\r\n"
-        "Accept-Language: en-US,en;q=0.9\r\n"
-        "Accept-Encoding: identity\r\nConnection: close\r\n",
+        "Accept-Language: en-US,en;q=0.9\r\n",
+        inflate_buf ? "Accept-Encoding: gzip, deflate\r\nConnection: close\r\n"
+                    : "Accept-Encoding: identity\r\nConnection: close\r\n",
         cookie[0] ? "Cookie: " : "", cookie, cookie[0] ? "\r\n" : "",
         f->referer[0] ? "Referer: " : "", f->referer, f->referer[0] ? "\r\n" : "",
         f->post ? "Content-Type: " : "", f->post ? f->body_type : "", f->post ? "\r\nContent-Length: " : "",
@@ -397,6 +423,12 @@ static void finish(HttpFetch *f)
         blen = (size_t)h->content_length;
     } else if (h->content_length >= 0 && (size_t)h->content_length > blen) {
         f->truncated = true;
+    }
+    f->wire_len = blen;
+    if ((h->gzip || h->deflate) && inflate_buf) {
+        long n = http_decode_body(h, body, blen, f->cap - h->header_len, inflate_buf, inflate_cap, &f->truncated);
+        if (n < 0) { set_error(f, "could not decompress the response"); return; }
+        blen = (size_t)n;
     }
     f->body = body;
     f->body_len = blen;

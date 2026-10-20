@@ -16,4 +16,10 @@ long inflate_raw(const uint8_t *in, size_t len, uint8_t *out, size_t cap, size_t
 long zlib_inflate(const uint8_t *in, size_t len, uint8_t *out, size_t cap);
 long gzip_inflate(const uint8_t *in, size_t len, uint8_t *out, size_t cap);
 
+/* For HTTP bodies: decodes as much as possible. Returns the bytes produced
+ * (with *complete=false when the stream was cut short, corrupt later on or
+ * larger than cap), or -1 when nothing could be decoded. */
+typedef enum { INFLATE_GZIP, INFLATE_ZLIB_OR_RAW } InflateWrap;
+long inflate_lenient(const uint8_t *in, size_t len, InflateWrap wrap, uint8_t *out, size_t cap, bool *complete);
+
 #endif /* _OJJY_IMAGE_INFLATE_H */

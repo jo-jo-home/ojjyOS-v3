@@ -805,7 +805,9 @@ static void fetch_done(Tab *t)
     t->loading = false;
     const char *type = f->head.content_type;
     uint64_t ms = net_now() - t->started;
-    serial_printf("[WEB] loaded status=%d type=%s bytes=%u ms=%u\n", f->head.status, type, (unsigned)f->body_len, (unsigned)ms);
+    serial_printf("[WEB] loaded status=%d type=%s bytes=%u ms=%u%s%u\n", f->head.status, type, (unsigned)f->body_len,
+                  (unsigned)ms, f->head.gzip ? " gzip wire=" : f->head.deflate ? " deflate wire=" : " wire=",
+                  (unsigned)f->wire_len);
     bool html = !type[0] || starts_ci(type, "text/html") || starts_ci(type, "application/xhtml");
     bool text = starts_ci(type, "text/") || starts_ci(type, "application/json") || starts_ci(type, "application/javascript") ||
                 starts_ci(type, "application/xml");
@@ -1142,6 +1144,9 @@ void browser_open(void)
         b->menu_link = -1;
         void *scratch = pmm_alloc_bytes(48u << 20);
         if (scratch) image_set_scratch(scratch, 48u << 20);
+        /* gzip/deflate pages and stylesheets decode through this buffer */
+        uint8_t *zbuf = (uint8_t *)pmm_alloc_bytes(PAGE_CAP);
+        if (zbuf) http_set_inflate_buffer(zbuf, PAGE_CAP - 1);
         BR = b;
     }
     profile_load();

@@ -36,6 +36,8 @@ arr("zlib_text", zlib.compress(text, 9))
 arr("zlib_fixed", zlib.compress(b"hello hello hello hello", 1))
 arr("gzip_text", gzip.compress(text, 6, mtime=0))
 arr("plain_text", text)
+_raw = zlib.compressobj(6, zlib.DEFLATED, -15)
+arr("raw_deflate_text", _raw.compress(text) + _raw.flush())
 
 # RGBA with partial alpha, 7x5
 rgba = Image.new("RGBA", (7, 5))

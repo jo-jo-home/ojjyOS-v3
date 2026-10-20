@@ -48,6 +48,7 @@ typedef struct {
     size_t cap, len;            /* raw bytes received */
     const uint8_t *body;        /* valid when DONE */
     size_t body_len;
+    size_t wire_len;            /* body bytes as sent (before Content-Encoding) */
     bool truncated;
     bool secure;                /* https: encrypted with TLS 1.3 */
     char tls_suite[40];         /* negotiated cipher suite */
@@ -75,6 +76,9 @@ void http_start_request(HttpFetch *f, const Url *url, bool post, const char *bod
  * value for a request URL ("" for none); set() receives each Set-Cookie value. */
 void http_set_cookie_hooks(void (*get)(const Url *url, char *out, size_t size),
                            void (*set)(const Url *url, const char *value));
+/* Enables Accept-Encoding: gzip, deflate; bodies are decoded into buf and
+ * copied back in place (at most min(cap, room after the headers)). */
+void http_set_inflate_buffer(uint8_t *buf, size_t cap);
 #define HTTP_USER_AGENT "Mozilla/5.0 (ojjyOS 3.1) ojjyOSWeb/3.1 (custom kernel by Jonas Lee)"
 void http_start_url(HttpFetch *f, const Url *url, uint8_t *buf, size_t cap);
 HttpPhase http_poll(HttpFetch *f);
@@ -87,5 +91,9 @@ int http_parse_head(const uint8_t *data, size_t len, HttpResponseHead *head);
 /* Decode a chunked body in place. Returns decoded length, or -1 if the
  * terminating 0-chunk has not arrived (*complete=false) / malformed (-2). */
 long http_dechunk(uint8_t *data, size_t len, bool *complete);
+/* Undo Content-Encoding in place (room = space available at body). Returns
+ * the new length (sets *truncated when cut short), or -1 if undecodable. */
+long http_decode_body(const HttpResponseHead *h, uint8_t *body, size_t len, size_t room,
+                      uint8_t *scratch, size_t scratch_cap, bool *truncated);
 
 #endif /* _OJJY_HTTP_H */

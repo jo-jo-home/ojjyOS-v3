@@ -192,6 +192,19 @@ static int dynamic(State *s)
     return codes(s, &lencode, &distcode);
 }
 
+static int run(State *s)
+{
+    int last, err;
+    do {
+        last = bits(s, 1);
+        int type = bits(s, 2);
+        if (s->err) return -1;
+        err = type == 0 ? stored(s) : type == 1 ? fixed(s) : type == 2 ? dynamic(s) : -1;
+        if (err) return err == -2 ? -2 : -1;
+    } while (!last);
+    return 0;
+}
+
 long inflate_raw(const uint8_t *in, size_t len, uint8_t *out, size_t cap, size_t *consumed)
 {
     State s;
@@ -200,38 +213,64 @@ long inflate_raw(const uint8_t *in, size_t len, uint8_t *out, size_t cap, size_t
     s.inlen = len;
     s.out = out;
     s.outcap = cap;
-    int last, err;
-    do {
-        last = bits(&s, 1);
-        int type = bits(&s, 2);
-        if (s.err) return -1;
-        err = type == 0 ? stored(&s) : type == 1 ? fixed(&s) : type == 2 ? dynamic(&s) : -1;
-        if (err) return err == -2 ? -2 : -1;
-    } while (!last);
+    int err = run(&s);
+    if (err) return err;
     if (consumed) *consumed = s.incnt;
     return (long)s.outcnt;
 }
 
-long zlib_inflate(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
+static bool zlib_header_ok(const uint8_t *in, size_t len)
 {
-    if (len < 6) return -1;
-    if ((in[0] & 0x0F) != 8 || ((in[0] << 8) | in[1]) % 31 != 0 || (in[1] & 0x20)) return -1;
-    return inflate_raw(in + 2, len - 2, out, cap, NULL);
+    return len >= 2 && (in[0] & 0x0F) == 8 && ((in[0] << 8) | in[1]) % 31 == 0 && !(in[1] & 0x20);
 }
 
-long gzip_inflate(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
+/* Length of a gzip member header, or 0 if malformed. */
+static size_t gzip_header_len(const uint8_t *in, size_t len)
 {
-    if (len < 18 || in[0] != 0x1F || in[1] != 0x8B || in[2] != 8) return -1;
+    if (len < 18 || in[0] != 0x1F || in[1] != 0x8B || in[2] != 8) return 0;
     uint8_t flags = in[3];
     size_t p = 10;
     if (flags & 4) {                        /* FEXTRA */
-        if (p + 2 > len) return -1;
+        if (p + 2 > len) return 0;
         size_t x = in[p] | (in[p + 1] << 8);
         p += 2 + x;
     }
     if (flags & 8) { while (p < len && in[p]) p++; p++; }     /* FNAME */
     if (flags & 16) { while (p < len && in[p]) p++; p++; }    /* FCOMMENT */
     if (flags & 2) p += 2;                  /* FHCRC */
-    if (p >= len) return -1;
+    return p < len ? p : 0;
+}
+
+long zlib_inflate(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
+{
+    if (len < 6 || !zlib_header_ok(in, len)) return -1;
+    return inflate_raw(in + 2, len - 2, out, cap, NULL);
+}
+
+long gzip_inflate(const uint8_t *in, size_t len, uint8_t *out, size_t cap)
+{
+    size_t p = gzip_header_len(in, len);
+    if (!p) return -1;
     return inflate_raw(in + p, len - p, out, cap, NULL);
+}
+
+long inflate_lenient(const uint8_t *in, size_t len, InflateWrap wrap, uint8_t *out, size_t cap, bool *complete)
+{
+    *complete = false;
+    size_t p = 0;
+    if (wrap == INFLATE_GZIP) {
+        if (!(p = gzip_header_len(in, len))) return -1;
+    } else if (wrap == INFLATE_ZLIB_OR_RAW) {
+        /* HTTP "deflate" is meant to be zlib, but some servers send raw DEFLATE */
+        if (zlib_header_ok(in, len)) p = 2;
+    }
+    State s;
+    memset(&s, 0, sizeof(s));
+    s.in = in + p;
+    s.inlen = len - p;
+    s.out = out;
+    s.outcap = cap;
+    int err = run(&s);
+    if (err == 0) { *complete = true; return (long)s.outcnt; }
+    return s.outcnt ? (long)s.outcnt : -1;
 }

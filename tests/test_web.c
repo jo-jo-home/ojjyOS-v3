@@ -303,6 +303,38 @@ static void image_tests(void)
     n = gzip_inflate(gzip_text, gzip_text_len, out, sizeof(out));
     CHECK(n == (long)plain_text_len && memcmp(out, plain_text, plain_text_len) == 0, "inflate: gzip wrapper");
     CHECK(zlib_inflate(zlib_text, zlib_text_len, out, 100) == -2, "inflate: output limit reported");
+
+    /* HTTP Content-Encoding decoding in place */
+    static uint8_t body[16384], zscratch[16384];
+    HttpResponseHead hh;
+    bool trunc = false;
+    memset(&hh, 0, sizeof(hh));
+    hh.gzip = true;
+    memcpy(body, gzip_text, gzip_text_len);
+    n = http_decode_body(&hh, body, gzip_text_len, sizeof(body), zscratch, sizeof(zscratch), &trunc);
+    CHECK(n == (long)plain_text_len && !trunc && memcmp(body, plain_text, plain_text_len) == 0, "http: gzip body decoded in place");
+    memset(&hh, 0, sizeof(hh));
+    hh.deflate = true;
+    memcpy(body, zlib_text, zlib_text_len);
+    n = http_decode_body(&hh, body, zlib_text_len, sizeof(body), zscratch, sizeof(zscratch), &trunc);
+    memcpy(body + 4096, raw_deflate_text, raw_deflate_text_len);
+    long n2 = http_decode_body(&hh, body + 4096, raw_deflate_text_len, sizeof(body) - 4096, zscratch, sizeof(zscratch), &trunc);
+    CHECK(n == (long)plain_text_len && n2 == (long)plain_text_len && !trunc && memcmp(body + 4096, plain_text, plain_text_len) == 0,
+          "http: deflate as zlib and as raw DEFLATE");
+    memset(&hh, 0, sizeof(hh));
+    hh.gzip = true;
+    memcpy(body, gzip_text, gzip_text_len);
+    n = http_decode_body(&hh, body, gzip_text_len / 2, sizeof(body), zscratch, sizeof(zscratch), &trunc);
+    CHECK(n > 0 && trunc && memcmp(body, plain_text, (size_t)n) == 0, "http: cut-off gzip keeps the decoded prefix");
+    trunc = false;
+    memcpy(body, gzip_text, gzip_text_len);
+    n = http_decode_body(&hh, body, gzip_text_len, 100, zscratch, sizeof(zscratch), &trunc);
+    CHECK(n > 0 && n <= 100 && trunc && memcmp(body, plain_text, (size_t)n) == 0, "http: decoded body limited to room");
+    trunc = false;
+    memset(body, 0x5A, 64);
+    CHECK(http_decode_body(&hh, body, 64, sizeof(body), zscratch, sizeof(zscratch), &trunc) == -1, "http: garbage gzip rejected");
+    memset(&hh, 0, sizeof(hh));
+    CHECK(http_decode_body(&hh, body, 64, sizeof(body), zscratch, sizeof(zscratch), &trunc) == 64, "http: identity body untouched");
     static uint8_t scratch[1 << 20];
     image_set_scratch(scratch, sizeof(scratch));
     static uint32_t px[256];

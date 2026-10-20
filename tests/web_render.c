@@ -11,6 +11,8 @@
 #include "web/paint.h"
 #include "webfont.h"
 #include "string.h"
+#include "image/image.h"
+#include "web/url.h"
 
 int printf(const char *fmt, ...);
 void *malloc(unsigned long n);
@@ -23,6 +25,9 @@ int fclose(FILE *f);
 int fseek(FILE *f, long off, int whence);
 long ftell(FILE *f);
 int atoi(const char *s);
+int system(const char *cmd);
+char *getenv(const char *name);
+int snprintf(char *b, unsigned long n, const char *f, ...);
 long clock(void);
 void serial_printf(const char *fmt, ...) { (void)fmt; }
 void serial_puts(const char *s) { (void)s; }
@@ -91,6 +96,39 @@ int main(int argc, char **argv)
         web_doc_set_sheet(&doc, i - 5, c, c ? cl : 0, NULL);
     }
     web_doc_layout(&doc, width, 900, 100, false);
+    /* WEB_BASE=<page url>: download and decode the page's images (curl), relayout */
+    const char *base = getenv("WEB_BASE");
+    if (base) {
+        image_set_scratch(malloc(64u << 20), 64u << 20);
+        Url bu;
+        url_parse(base, &bu);
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = 0; i < doc.image_count; i++) {
+                WebImage *im = &doc.images[i];
+                if (im->state != IMG_PENDING) continue;
+                Url u;
+                char abs[2048], cmd[4200], path[64];
+                if (!url_resolve(&bu, im->url, &u)) { im->state = IMG_FAILED; continue; }
+                url_format(&u, abs, sizeof(abs), false);
+                snprintf(path, sizeof(path), "/tmp/wr_img_%d", i);
+                snprintf(cmd, sizeof(cmd), "curl -sL -m 15 -A 'ojjyOSWeb/3.1' -o %s '%s'", path, abs);
+                system(cmd);
+                size_t il;
+                char *data = slurp(path, &il);
+                int w, h;
+                if (data && image_info((uint8_t *)data, il, &w, &h) && (long)w * h < 20000000) {
+                    uint32_t *px = (uint32_t *)malloc((unsigned long)w * h * 4);
+                    if (image_decode((uint8_t *)data, il, px, (size_t)w * h)) {
+                        im->pixels = px; im->w = (int16_t)w; im->h = (int16_t)h; im->pw = (int16_t)w; im->ph = (int16_t)h;
+                        im->state = IMG_READY;
+                        continue;
+                    }
+                }
+                im->state = IMG_FAILED;
+            }
+            web_doc_layout(&doc, width, 900, 100, false);
+        }
+    }
     long t2 = clock();
     int height = doc.height + 16;
     if (height > 12000) height = 12000;

@@ -441,6 +441,9 @@ static void measure(DomNode *n, int32_t *mn, int32_t *mx, int depth)
         int32_t h;
         a = b = replaced_width(n, 0, &h) + pb_h(&e);
         extra -= pb_h(&e);
+        /* percentage-sized replaced content shrinks with its container:
+         * it does not force a minimum width (CSS compressible content) */
+        if ((s->width.kind == LEN_SET && s->width.pct) || (s->max_w.kind == LEN_SET && s->max_w.pct)) a = pb_h(&e);
     } else if (depth > LAYOUT_DEPTH) {
         a = b = 0;
     } else if (s->display == DISP_TABLE) {

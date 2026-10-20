@@ -100,7 +100,8 @@ enum { IMG_PENDING = 0, IMG_LOADING, IMG_READY, IMG_FAILED };
 
 typedef struct {
     char url[WEB_URL_MAX];      /* as written in the page (resolve against the base) */
-    int16_t w, h;               /* decoded size (0 = unknown) */
+    int16_t w, h;               /* natural size (0 = unknown) */
+    int16_t pw, ph;             /* size of `pixels` (may be downscaled) */
     uint8_t state;
     const uint32_t *pixels;     /* owned by the browser's image cache */
 } WebImage;

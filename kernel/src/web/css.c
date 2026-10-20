@@ -456,7 +456,20 @@ static const char *dup_ident(WebArena *a, const char *s, size_t n, bool lower_it
     size_t k = 0;
     for (size_t i = 0; i < n; i++) {
         char c = s[i];
-        if (c == '\\' && i + 1 < n) { c = s[++i]; if (hexv(c) >= 0) { /* \31 style escapes */ int v = 0, m = 0; while (i < n && hexv(s[i]) >= 0 && m < 6) { v = v * 16 + hexv(s[i]); i++; m++; } if (i < n && s[i] == ' ') i++; i--; c = v < 128 ? (char)v : '?'; } }
+        if (c == '\\' && i + 1 < n) {
+            c = s[++i];
+            if (hexv(c) >= 0) {             /* \31 style escapes */
+                uint32_t v = 0;
+                int m = 0;
+                while (i < n && hexv(s[i]) >= 0 && m < 6) { v = v * 16 + (uint32_t)hexv(s[i]); i++; m++; }
+                if (i < n && s[i] == ' ') i++;
+                i--;
+                if (v == 0 || v > 0x10FFFF) v = 0xFFFD;
+                /* the escape is never shorter than its UTF-8 encoding */
+                if (v >= 128) { k += (size_t)web_utf8_encode(v, d + k); continue; }
+                c = (char)v;
+            }
+        }
         d[k++] = lower_it ? lc(c) : c;
     }
     d[k] = '\0';
@@ -2328,7 +2341,13 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
         for (int i = 0; i < n; i++) bg_position_token(C, s, ts[i], te[i], &axis, fs);
         break;
     }
-    case P_CONTENT: s->content = dup_ident(C->S->a, v, strlen(v), false); break;
+    case P_CONTENT: {
+        /* kept raw: content_text() decodes strings and escapes itself */
+        size_t vl = strlen(v);
+        char *d = (char *)arena_alloc(C->S->a, vl + 1);
+        if (d) { memcpy(d, v, vl + 1); s->content = d; }
+        break;
+    }
     case P_CLEAR:
         s->clear = istarts(v, "both") ? 3 : istarts(v, "left") || istarts(v, "inline-start") ? 1 :
                    istarts(v, "right") || istarts(v, "inline-end") ? 2 : 0;

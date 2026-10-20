@@ -123,7 +123,7 @@ static void paint_bg(GfxSurface *s, const WebDoc *d, const WebItem *it, int x, i
         int tiles = 0;
         for (int64_t ty = y0; ty < H && tiles < 600; ty += dh) {
             for (int64_t tx = x0; tx < W && tiles < 600; tx += dw) {
-                web_paint_image(s, im->pixels, im->w, im->h, x + (int)tx, y + (int)ty, (int)dw, (int)dh);
+                web_paint_image(s, im->pixels, im->pw, im->ph, x + (int)tx, y + (int)ty, (int)dw, (int)dh);
                 tiles++;
                 if (!rx) break;
             }
@@ -238,7 +238,7 @@ void web_paint(GfxSurface *s, const WebDoc *d, int ox, int oy, int scroll, int c
             break;
         case WI_IMAGE: {
             const WebImage *im = it->ref >= 0 && it->ref < d->image_count ? &d->images[it->ref] : NULL;
-            if (im && im->state == IMG_READY && im->pixels) web_paint_image(s, im->pixels, im->w, im->h, x, y, it->w, it->h);
+            if (im && im->state == IMG_READY && im->pixels) web_paint_image(s, im->pixels, im->pw, im->ph, x, y, it->w, it->h);
             else gfx_round_rect(s, x, y, it->w, it->h, 0, 0xE8EAED, 255);
             break;
         }

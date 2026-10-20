@@ -196,12 +196,13 @@ static void css_tests(void)
          "h1{font-size:2em}.rem{font-size:1.5rem}"
          ".hid{display:none}"
          ".pre::before{content:'[' attr(data-x) ']'}"
+         ".sep::after{content:\"x\\a0 \\b7 \\\"q\"}"
          "</style>"
          "<p>red</p><p class=blue>blue</p><p class=blue id=special>green</p><p class=imp id=imp2>orange</p>"
          "<div><span>bold<span class=deep>deep</span></span></div>"
          "<ul><li class=skip>one</li><li>two</li></ul>"
          "<p class=v>var</p><p class=fb>fallback</p><p class=m>media</p>"
-         "<h1>big</h1><p class=rem>rem</p><p class=hid>hidden</p><p class=pre data-x=7>after</p>", 800);
+         "<h1>big</h1><p class=rem>rem</p><p class=hid>hidden</p><p class=pre data-x=7>after</p><p class=sep>sep</p>", 800);
     const WebItem *it;
     CHECK((it = text_item("red")) && it->color == 0xFFFF0000u, "css: type selector");
     CHECK((it = text_item("blue")) && it->color == 0xFF0000FFu, "css: class beats type");
@@ -217,6 +218,7 @@ static void css_tests(void)
     CHECK((it = text_item("rem")) && (it->font & 127) == 24, "css: 1.5rem = 24px");
     CHECK(!text_item("hidden"), "css: display:none removes content");
     CHECK(text_item("[7]"), "css: ::before content with attr()");
+    CHECK(text_item("x\x01") && text_item("\"q"), "css: content escapes decode once (nbsp, escaped quote)");
     uint32_t c;
     CHECK(css_parse_color("rgb(10 20 30 / 50%)", &c) && c == 0x800A141Eu, "css: rgb() space syntax with alpha");
     CHECK(css_parse_color("#abc", &c) && c == 0xFFAABBCCu && css_parse_color("hsl(120, 100%, 50%)", &c) && c == 0xFF00FF00u,
@@ -332,13 +334,44 @@ static void image_tests(void)
         if (memcmp(a, b, sizeof(a)) != 0) jok = false;
     }
     CHECK(jok, "jpeg: progressive decodes exactly like baseline (4:2:0, 4:4:4, grey)");
+    /* WebP against libwebp (Pillow): lossless exact, lossy within rounding */
+    static uint32_t wp[64 * 48];
+    struct { const unsigned char *d; unsigned len; const unsigned *px; int w, h, tol; const char *what; } wv[] = {
+        {webp_lossless, webp_lossless_len, webp_lossless_px, 37, 23, 0, "lossless"},
+        {webp_lossy, webp_lossy_len, webp_lossy_px, 37, 23, 3, "lossy"},
+        {webp_alpha, webp_alpha_len, webp_alpha_px, 37, 23, 3, "alpha"},
+        {webp_mb, webp_mb_len, webp_mb_px, 64, 48, 3, "multi-MB"},
+    };
+    for (unsigned i = 0; i < 4; i++) {
+        int ww = 0, wh = 0;
+        memset(wp, 0, sizeof(wp));
+        bool ok = image_info(wv[i].d, wv[i].len, &ww, &wh) && ww == wv[i].w && wh == wv[i].h &&
+                  image_decode(wv[i].d, wv[i].len, wp, 64 * 48);
+        int worst = 0;
+        for (int k = 0; ok && k < ww * wh; k++)
+            for (int sh = 0; sh < 32; sh += 8) {
+                int dlt = (int)((wp[k] >> sh) & 255) - (int)((wv[i].px[k] >> sh) & 255);
+                if (dlt < 0) dlt = -dlt;
+                if (dlt > worst) worst = dlt;
+            }
+        if (!ok || worst > wv[i].tol) {
+            char m[96] = "FAIL detail: webp ";
+            strcpy(m + strlen(m), wv[i].what);
+            strcpy(m + strlen(m), ok ? " max diff " : " decode failed");
+            if (ok) utoa((uint64_t)worst, m + strlen(m), 10);
+            emit(m);
+        }
+        CHECK(ok && worst <= wv[i].tol, "webp: decodes like libwebp");
+    }
     /* fuzz the decoders */
     static uint8_t buf[8192];
     random_add_entropy("img", 3);
     bool ok = true;
     for (int i = 0; i < 4000; i++) {
-        const uint8_t *src = i % 4 == 0 ? png_rgba : i % 4 == 1 ? png_interlaced : i % 4 == 2 ? gif_small : jpg_prog;
-        unsigned len = i % 4 == 0 ? png_rgba_len : i % 4 == 1 ? png_interlaced_len : i % 4 == 2 ? gif_small_len : jpg_prog_len;
+        const uint8_t *srcs[6] = {png_rgba, png_interlaced, gif_small, jpg_prog, webp_lossy, webp_lossless};
+        const unsigned lens[6] = {png_rgba_len, png_interlaced_len, gif_small_len, jpg_prog_len, webp_lossy_len, webp_lossless_len};
+        const uint8_t *src = srcs[i % 6];
+        unsigned len = lens[i % 6];
         size_t take = random_u32() % (len + 1);
         memcpy(buf, src, take);
         for (int m = 0; m < 6 && take; m++) buf[random_u32() % take] = (uint8_t)random_u32();

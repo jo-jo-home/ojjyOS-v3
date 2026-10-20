@@ -43,6 +43,11 @@ static const UiGlyph *lookup(const UiFontFace *f, uint32_t cp)
     if (cp >= 32 && cp < 127 && f->count >= 95 && f->glyphs[cp - 32].cp == cp) return &f->glyphs[cp - 32];
     for (int i = 0; i < f->count; i++) if (f->glyphs[i].cp == cp) return &f->glyphs[i];
     if (cp == 0x2014 || cp == 0x2013) return lookup(f, '-');
+    /* no-break and typographic spaces draw as a space; soft hyphen,
+     * zero-width spaces/joiners and the BOM draw nothing */
+    if (cp == 0xA0 || (cp >= 0x2000 && cp <= 0x200A) || cp == 0x202F || cp == 0x205F || cp == 0x3000)
+        return lookup(f, ' ');
+    if (cp == 0xAD || (cp >= 0x200B && cp <= 0x200F) || cp == 0x2060 || cp == 0xFEFF) return 0;
     if (cp != '?') return lookup(f, '?');
     return f->count ? &f->glyphs[0] : 0;
 }

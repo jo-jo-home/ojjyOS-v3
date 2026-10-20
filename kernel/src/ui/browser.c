@@ -262,7 +262,7 @@ static void start_res(int kind, int index)
 static void image_done(int index, const uint8_t *data, size_t len)
 {
     WebImage *im = &BR->doc->images[index];
-    int w = 0, h = 0;
+    int w = 0, h = 0, natural_w, natural_h;
     if (!image_info(data, len, &w, &h) || w <= 0 || h <= 0 || (uint64_t)w * (uint64_t)h > 16u * 1024 * 1024) {
         im->state = IMG_FAILED;
         serial_printf("[WEB] image %d undecodable (%02x %02x %02x %02x)\n", index, len > 0 ? data[0] : 0, len > 1 ? data[1] : 0,
@@ -272,11 +272,33 @@ static void image_done(int index, const uint8_t *data, size_t len)
     size_t need = (size_t)w * (size_t)h * 4;
     if (img_used + need > IMG_POOL) { im->state = IMG_FAILED; return; }
     uint32_t *px = (uint32_t *)(img_pool + img_used);
+    natural_w = w;
+    natural_h = h;
     if (!image_decode(data, len, px, (size_t)w * (size_t)h)) { im->state = IMG_FAILED; serial_printf("[WEB] image %d decode failed %dx%d\n", index, w, h); return; }
+    /* very large pictures are halved (2x2 average) until they fit a page
+     * view: the pool then holds many more of them */
+    while (w > 1400 && h > 1) {
+        int nw = w / 2, nh = h / 2;
+        for (int y = 0; y < nh; y++)
+            for (int x = 0; x < nw; x++) {
+                const uint32_t *a = px + (size_t)(2 * y) * w + 2 * x, *b = a + w;
+                uint32_t out = 0;
+                for (int sh = 0; sh < 32; sh += 8) {
+                    uint32_t v = ((a[0] >> sh) & 255) + ((a[1] >> sh) & 255) + ((b[0] >> sh) & 255) + ((b[1] >> sh) & 255);
+                    out |= ((v + 2) >> 2) << sh;
+                }
+                px[(size_t)y * nw + x] = out;
+            }
+        w = nw;
+        h = nh;
+        need = (size_t)w * (size_t)h * 4;
+    }
     img_used += (need + 15) & ~(size_t)15;
     im->pixels = px;
-    im->w = (int16_t)(w > 32767 ? 32767 : w);
-    im->h = (int16_t)(h > 32767 ? 32767 : h);
+    im->w = (int16_t)(natural_w > 32767 ? 32767 : natural_w);
+    im->h = (int16_t)(natural_h > 32767 ? 32767 : natural_h);
+    im->pw = (int16_t)w;
+    im->ph = (int16_t)h;
     im->state = IMG_READY;
 }
 

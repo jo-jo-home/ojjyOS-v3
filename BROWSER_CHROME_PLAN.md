@@ -146,6 +146,13 @@ installed images rebuilt when no VM runs, plain-English summary.
   Real-site tour: build/web-v2..v5. Note: html.c/h deletion landed in hook commit 471fe88 by accident.
 - W3 partial (this commit): CSS background images (size/position/repeat, sheet-relative url()),
   progressive + non-interleaved JPEG (test: progressive == baseline pixels).
-- NEXT: WebP decoder (VP8 lossy + VP8L + ALPH) — ~57% of BBC images are WebP. Tables already
-  extracted to kernel/src/image/webp_tables.h (uncommitted, unused). Then gzip Content-Encoding,
-  GitHub header menus, SVG, JavaScript info bar improvements, docs (APPS.md, What's New), installed images.
+- W3 WebP (this commit): `image/webp.c` decodes VP8 lossy, VP8L lossless and ALPH alpha
+  (tables from RFC 6386 in `webp_tables.h`); host vectors vs Pillow (lossless exact, lossy <= 3),
+  real BBC WebP photos pixel-exact vs libwebp; fuzzed. Images wider than 1400 px are stored halved
+  (WebImage pw/ph = stored size, w/h = natural size). Percentage-width replaced elements no longer
+  force a min-content width (BBC photos overflowed their grid columns). CSS `content` strings are
+  kept raw and decoded once (Wikipedia's "\a0 · " separators showed as "?"); identifier escapes
+  >= U+0080 become UTF-8; no-break/typographic spaces draw as spaces, zero-width chars as nothing.
+  Live: build/web-v7 (BBC, Wikipedia, Apple, GitHub).
+- NEXT: gzip Content-Encoding, GitHub header menus, SVG, JavaScript info bar improvements,
+  docs (APPS.md, What's New), installed images.

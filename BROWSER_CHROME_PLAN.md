@@ -158,5 +158,13 @@ installed images rebuilt when no VM runs, plain-English summary.
   shared 4 MB decode buffer (`http_set_inflate_buffer`); `http_decode_body` decodes gzip, zlib and raw
   deflate in place, keeping the decoded prefix of a cut-off stream. Load log now prints the wire size:
   Wikipedia 675 KB -> 107 KB, GitHub 573 -> 118 KB, BBC 682 -> 98 KB (build/web-v9). 6 new host checks.
-- NEXT: GitHub header menus, SVG, JavaScript info bar improvements,
+- W1 fixes from GitHub (this commit): `min-width` now defaults to auto, so flex items keep their
+  min-content width (every flex item could shrink to nothing before: overlapping menus/cards);
+  CSS cascade layers (`@layer` order statement + blocks, unlayered wins, !important reversed);
+  repeated `<link>` sheets fetched once and 40 sheets / 6 MB per tab; absolute boxes shrink-fit
+  their own content and use their static position when no insets are set (zero-size marker
+  items); fixed boxes inside positioned ancestors are placed against the viewport; var() lookups
+  compare a name hash (GitHub restyle 5x faster; HVF layout <= 122 ms). Host renderer gained
+  WEB_DUMP / WEB_REPEAT / WEB_BENCH. 8 new host checks (94). Live: build/web-v10, web-v11-hvf.
+- NEXT: SVG, JavaScript info bar improvements,
   docs (APPS.md, What's New), installed images.

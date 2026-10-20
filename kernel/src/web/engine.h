@@ -24,7 +24,7 @@
 #define WEB_MAX_FORMS    32
 #define WEB_MAX_ANCHORS  1024
 #define WEB_MAX_IMAGES   384
-#define WEB_MAX_SHEETS   24
+#define WEB_MAX_SHEETS   40
 #define WEB_URL_MAX      512
 
 typedef struct {

@@ -52,6 +52,13 @@ static uint32_t hash_str(const char *s)
     return h;
 }
 
+static uint32_t hash_n(const char *s, size_t n)
+{
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n; i++) { h ^= (uint8_t)s[i]; h *= 16777619u; }
+    return h;
+}
+
 /* Skip a balanced (), [] or {} group starting at p (p points at the opener). */
 static const char *skip_group(const char *p, const char *end)
 {
@@ -202,6 +209,7 @@ typedef struct {
     uint8_t prop;
     uint8_t important;
     const char *name;           /* custom properties */
+    uint32_t name_hash;         /* hash_n(name) for custom properties */
     const char *value;          /* trimmed, without !important */
     const char *base;           /* directory URL of the stylesheet (relative url()) */
 } CssDecl;
@@ -262,8 +270,12 @@ typedef struct {
     CssDecl *decls;
     uint16_t ndecls;
     uint8_t origin;             /* 0 = UA, 1 = author */
+    uint8_t layer;              /* cascade layer rank; LAYER_NONE = unlayered */
     uint32_t order;
 } CssRule;
+
+#define LAYER_NONE 255
+#define MAX_LAYERS 64
 
 typedef struct HashEntry {
     const char *key;
@@ -279,6 +291,9 @@ struct CssSheetSet {
     int rule_count;
     uint32_t order;
     uint8_t origin;
+    uint8_t cur_layer;          /* while parsing: rank of the enclosing @layer */
+    char layer_names[MAX_LAYERS][40];   /* top-level layer names in declaration order */
+    int layer_count;
     const char *cur_base;       /* while parsing a sheet */
     char imports[MAX_IMPORTS][256];
     int import_count;
@@ -971,6 +986,7 @@ static CssDecl *parse_decls(CssSheetSet *S, const char *p, const char *end, uint
         tmp[n].prop = prop;
         tmp[n].important = important;
         tmp[n].name = prop == P_CUSTOM ? dup_ident(S->a, ns, (size_t)(ne - ns), false) : NULL;
+        tmp[n].name_hash = tmp[n].name ? hash_str(tmp[n].name) : 0;
         tmp[n].value = arena_strndup(S->a, vs, (size_t)(ve - vs));      /* raw: escapes are decoded per property */
         tmp[n].base = S->cur_base;
         if (!tmp[n].value) break;
@@ -998,10 +1014,28 @@ static void add_rules(CssSheetSet *S, const char *sel_start, const char *sel_end
             r->decls = decls;
             r->ndecls = nd;
             r->origin = S->origin;
+            r->layer = S->cur_layer;
             r->order = S->order++;
         }
         if (p < sel_end) p++;
     }
+}
+
+/* Rank of a cascade layer, registering it on first use. Nested and dotted
+ * names rank with their top-level layer; anonymous layers get a new rank. */
+static uint8_t layer_rank(CssSheetSet *S, const char *p, const char *end)
+{
+    const char *e = p;
+    while (e < end && *e != '.' && !ws(*e) && *e != ',' && *e != '{' && *e != ';') e++;
+    size_t n = (size_t)(e - p);
+    if (n && n < sizeof(S->layer_names[0]))
+        for (int i = 0; i < S->layer_count; i++)
+            if (strlen(S->layer_names[i]) == n && memcmp(S->layer_names[i], p, n) == 0) return (uint8_t)i;
+    if (S->layer_count >= MAX_LAYERS) return (uint8_t)(MAX_LAYERS - 1);
+    char *d = S->layer_names[S->layer_count];
+    if (n && n < sizeof(S->layer_names[0])) { memcpy(d, p, n); d[n] = '\0'; }
+    else d[0] = '\0';                  /* anonymous: never matched by name */
+    return (uint8_t)S->layer_count++;
 }
 
 static void parse_sheet(CssSheetSet *S, const char *p, const char *end, int depth)
@@ -1047,7 +1081,18 @@ static void parse_sheet(CssSheetSet *S, const char *p, const char *end, int dept
                 continue;
             }
             if (q >= end) break;
-            if (*q == ';') { p = q + 1; continue; }
+            if (*q == ';') {
+                if (ieq(ks, kn, "layer") && S->cur_layer == LAYER_NONE) {
+                    /* "@layer a, b, c;" fixes the order of those layers */
+                    for (const char *n = skip_ws(ke, q); n < q; ) {
+                        layer_rank(S, n, q);
+                        while (n < q && *n != ',') n++;
+                        if (n < q) n = skip_ws(n + 1, q);
+                    }
+                }
+                p = q + 1;
+                continue;
+            }
             const char *close = skip_group(q, end);
             const char *inner = q + 1, *inner_end = close > inner ? close - 1 : inner;
             if (ieq(ks, kn, "media")) {
@@ -1058,7 +1103,12 @@ static void parse_sheet(CssSheetSet *S, const char *p, const char *end, int dept
                 bool ok = true;
                 for (; s + 3 < q; s++) if (istarts(s, "not ")) { ok = false; break; }
                 if (ok) parse_sheet(S, inner, inner_end, depth + 1);
-            } else if (ieq(ks, kn, "layer") || ieq(ks, kn, "container") || ieq(ks, kn, "scope") ||
+            } else if (ieq(ks, kn, "layer")) {
+                uint8_t saved = S->cur_layer;
+                if (saved == LAYER_NONE) S->cur_layer = layer_rank(S, skip_ws(ke, q), q);
+                parse_sheet(S, inner, inner_end, depth + 1);
+                S->cur_layer = saved;
+            } else if (ieq(ks, kn, "container") || ieq(ks, kn, "scope") ||
                        ieq(ks, kn, "document") || ieq(ks, kn, "-moz-document") || ieq(ks, kn, "starting-style")) {
                 if (!ieq(ks, kn, "starting-style")) parse_sheet(S, inner, inner_end, depth + 1);
             }
@@ -1132,6 +1182,7 @@ CssSheetSet *css_new(WebArena *a, const CssMedia *media)
     S->rules = (CssRule *)arena_alloc(a, sizeof(CssRule) * MAX_RULES);
     if (!S->rules) return NULL;
     S->origin = 0;
+    S->cur_layer = LAYER_NONE;
     parse_sheet(S, UA_SHEET, UA_SHEET + sizeof(UA_SHEET) - 1, 0);
     if (media->quirks) parse_sheet(S, QUIRKS_SHEET, QUIRKS_SHEET + sizeof(QUIRKS_SHEET) - 1, 0);
     S->origin = 1;
@@ -1147,6 +1198,7 @@ void css_add_sheet_base(CssSheetSet *S, const char *css, size_t len, const char 
 {
     if (!S) return;
     S->cur_base = base_dir && base_dir[0] ? base_dir : NULL;
+    S->cur_layer = LAYER_NONE;
     parse_sheet(S, css, css + len, 0);
     S->cur_base = NULL;
     S->indexed = false;
@@ -1239,8 +1291,9 @@ typedef struct {
 /* Substitute var(--x, fallback) into out (bounded, depth-limited). */
 static const char *var_lookup(const CssStyle *s, const char *name, size_t n)
 {
+    uint32_t h = hash_n(name, n);
     for (const CssVar *v = s->vars; v; v = v->next)
-        if (strlen(v->name) == n && strncmp(v->name, name, n) == 0) return v->value;
+        if (v->hash == h && strncmp(v->name, name, n) == 0 && v->name[n] == '\0') return v->value;
     return NULL;
 }
 
@@ -1700,7 +1753,7 @@ static void initial_values(CssStyle *s)
     }
     s->max_w.kind = LEN_NONE;
     s->max_h.kind = LEN_NONE;
-    s->min_w.kind = LEN_SET;
+    s->min_w.kind = LEN_AUTO;           /* flex items: auto = content-based minimum */
     s->min_h.kind = LEN_SET;
 }
 
@@ -2218,7 +2271,14 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
     }
     case P_WIDTH: parse_len(C, v, end, fs, &s->width); break;
     case P_HEIGHT: parse_len(C, v, end, fs, &s->height); break;
-    case P_MIN_WIDTH: if (!parse_len(C, v, end, fs, &s->min_w) || s->min_w.kind != LEN_SET) { s->min_w.kind = LEN_SET; s->min_w.px = s->min_w.pct = 0; } break;
+    case P_MIN_WIDTH:
+        if (istarts(v, "auto") || istarts(v, "min-content") || istarts(v, "fit-content") || istarts(v, "max-content")) {
+            s->min_w.kind = LEN_AUTO;
+        } else if (!parse_len(C, v, end, fs, &s->min_w) || s->min_w.kind != LEN_SET) {
+            s->min_w.kind = LEN_SET;
+            s->min_w.px = s->min_w.pct = 0;
+        }
+        break;
     case P_MAX_WIDTH: parse_len(C, v, end, fs, &s->max_w); if (s->max_w.kind == LEN_AUTO) s->max_w.kind = LEN_NONE; break;
     case P_MIN_HEIGHT: if (!parse_len(C, v, end, fs, &s->min_h) || s->min_h.kind != LEN_SET) { s->min_h.kind = LEN_SET; s->min_h.px = s->min_h.pct = 0; } break;
     case P_MAX_HEIGHT: parse_len(C, v, end, fs, &s->max_h); if (s->max_h.kind == LEN_AUTO) s->max_h.kind = LEN_NONE; break;
@@ -2526,6 +2586,19 @@ static int nmatched;
 static Matched pmatched[256];          /* ::before / ::after rules of the element */
 static int npmatched;
 
+/* Cascade order: origin, layer, specificity, source order. Specificity is
+ * squeezed into 22 bits (ids <= 63, classes and types <= 255). */
+static uint64_t rule_key(const CssRule *r)
+{
+    uint32_t sp = r->sel->spec;
+    uint32_t ids = sp >> 20, cls = (sp >> 10) & 1023, tags = sp & 1023;
+    if (ids > 63) ids = 63;
+    if (cls > 255) cls = 255;
+    if (tags > 255) tags = 255;
+    uint64_t spec = ((uint64_t)ids << 16) | ((uint64_t)cls << 8) | tags;
+    return ((uint64_t)r->origin << 62) | ((uint64_t)r->layer << 54) | (spec << 32) | r->order;
+}
+
 static void consider(const CssSheetSet *S, int ri, const DomNode *n)
 {
     const CssRule *r = &S->rules[ri];
@@ -2534,13 +2607,13 @@ static void consider(const CssSheetSet *S, int ri, const DomNode *n)
     if (r->sel->pseudo_elem) {
         if (npmatched < (int)ARRAY_SIZE(pmatched)) {
             pmatched[npmatched].rule = r;
-            pmatched[npmatched].key = ((uint64_t)r->origin << 62) | ((uint64_t)r->sel->spec << 32) | r->order;
+            pmatched[npmatched].key = rule_key(r);
             npmatched++;
         }
         return;
     }
     matched[nmatched].rule = r;
-    matched[nmatched].key = ((uint64_t)r->origin << 62) | ((uint64_t)r->sel->spec << 32) | r->order;
+    matched[nmatched].key = rule_key(r);
     nmatched++;
 }
 
@@ -2566,6 +2639,7 @@ static void apply_decl(const Ctx *C, CssStyle *s, const CssDecl *d, int pass)
         CssVar *v = (CssVar *)arena_alloc(C->S->a, sizeof(CssVar));
         if (!v) return;
         v->name = d->name;
+        v->hash = d->name_hash;
         v->value = d->value;
         v->next = s->vars;
         s->vars = v;
@@ -2600,9 +2674,23 @@ static void run_passes(const Ctx *C, CssStyle *s, const CssDecl *inline_decls, i
 {
     for (int pass = 0; pass < 3; pass++) {
         for (int imp = 0; imp < 2; imp++) {
-            for (int i = 0; i < nmatched; i++) {
-                const CssRule *r = matched[i].rule;
-                for (int k = 0; k < r->ndecls; k++) if (r->decls[k].important == imp) apply_decl(C, s, &r->decls[k], pass);
+            if (!imp) {
+                for (int i = 0; i < nmatched; i++) {
+                    const CssRule *r = matched[i].rule;
+                    for (int k = 0; k < r->ndecls; k++) if (!r->decls[k].important) apply_decl(C, s, &r->decls[k], pass);
+                }
+            } else {
+                /* !important reverses origin and layer precedence: walk the
+                 * (origin, layer) groups from last to first, each in order */
+                for (int hi = nmatched; hi > 0; ) {
+                    int lo = hi - 1;
+                    while (lo > 0 && (matched[lo - 1].key >> 54) == (matched[hi - 1].key >> 54)) lo--;
+                    for (int i = lo; i < hi; i++) {
+                        const CssRule *r = matched[i].rule;
+                        for (int k = 0; k < r->ndecls; k++) if (r->decls[k].important) apply_decl(C, s, &r->decls[k], pass);
+                    }
+                    hi = lo;
+                }
             }
             for (int k = 0; k < ninline; k++) if (inline_decls[k].important == imp) apply_decl(C, s, &inline_decls[k], pass);
         }

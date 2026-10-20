@@ -219,6 +219,18 @@ static void css_tests(void)
     CHECK(!text_item("hidden"), "css: display:none removes content");
     CHECK(text_item("[7]"), "css: ::before content with attr()");
     CHECK(text_item("x\x01") && text_item("\"q"), "css: content escapes decode once (nbsp, escaped quote)");
+    page("<!DOCTYPE html><style>"
+         "@layer base, theme;"
+         "@layer theme{.l1{color:#000002}}"
+         "@layer base{#x.l1{color:#000001} .l2{color:#000001!important}}"
+         ".l1{color:#000003}"
+         "@layer theme{.l2{color:#000002!important}}"
+         ".l2{color:#000003}"
+         "@layer base{.l3{color:#000001}} @layer theme{.l3{color:#000002}}"
+         "</style><p class=l1 id=x>layone</p><p class=l2>laytwo</p><p class=l3>laythree</p>", 800);
+    CHECK((it = text_item("layone")) && it->color == 0xFF000003u, "css: unlayered beats layered despite specificity");
+    CHECK((it = text_item("laytwo")) && it->color == 0xFF000001u, "css: !important in the earliest layer wins");
+    CHECK((it = text_item("laythree")) && it->color == 0xFF000002u, "css: later layer beats earlier layer");
     uint32_t c;
     CHECK(css_parse_color("rgb(10 20 30 / 50%)", &c) && c == 0x800A141Eu, "css: rgb() space syntax with alpha");
     CHECK(css_parse_color("#abc", &c) && c == 0xFFAABBCCu && css_parse_color("hsl(120, 100%, 50%)", &c) && c == 0xFF00FF00u,
@@ -242,6 +254,27 @@ static void layout_tests(void)
     int red = -1;
     for (int i = 0; i < doc.item_count; i++) if (doc.items[i].kind == WI_RECT && doc.items[i].color == 0xFFFF0000u) red = i;
     CHECK(red >= 0 && doc.items[red].x == 100 && doc.items[red].w == 400, "layout: flex-grow fills the rest");
+    /* min-width:auto: a nowrap flex item never shrinks below its text */
+    page("<!DOCTYPE html><body style='margin:0'><div style='display:flex;width:300px'>"
+         "<div style='white-space:nowrap'>keepwhole keepwhole</div><div style='width:100%'>other</div></div>", 600);
+    const WebItem *kw = text_item("keepwhole"), *ot = text_item("other");
+    CHECK(kw && ot && ot->x >= kw->x + kw->w, "layout: flex items keep their min-content width");
+    /* absolute box with only left set shrink-fits its text */
+    page("<!DOCTYPE html><body style='margin:0'><div style='position:relative;width:300px;height:40px'>"
+         "<span style='position:absolute;left:10px;top:0'>twowords here</span></div>", 600);
+    const WebItem *t1 = text_item("twowords"), *t2 = text_item("here");
+    CHECK(t1 && t2 && t1->y == t2->y && t1->x == 10, "layout: absolute box shrink-fits on one line");
+    /* no insets: the static position */
+    page("<!DOCTYPE html><body style='margin:0'><div style='position:relative'><div style='height:50px'></div>"
+         "<div style='position:absolute'>statpos</div></div>", 600);
+    CHECK(text_item("statpos") && text_item("statpos")->y >= 50 && text_item("statpos")->y < 70, "layout: absolute static position");
+    /* fixed inside a positioned ancestor still uses the viewport */
+    page("<!DOCTYPE html><body style='margin:0'><div style='position:relative;margin-top:100px'>"
+         "<div style='position:fixed;top:5px;left:0'>fixd</div></div>", 600);
+    CHECK(text_item("fixd") && text_item("fixd")->y < 30, "layout: nested fixed box placed against the viewport");
+    /* the same stylesheet linked twice is fetched once */
+    page("<!DOCTYPE html><link rel=stylesheet href=a.css><link rel=stylesheet href=b.css><link rel=stylesheet href=a.css>", 600);
+    CHECK(doc.sheet_url_count == 2, "layout: duplicate stylesheet links requested once");
     /* centred block with auto margins */
     page("<!DOCTYPE html><body style='margin:0'><div style='width:200px;margin:0 auto;background:#00f'>c</div>", 600);
     int blue = -1;

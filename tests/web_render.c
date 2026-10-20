@@ -96,6 +96,31 @@ int main(int argc, char **argv)
         web_doc_set_sheet(&doc, i - 5, c, c ? cl : 0, NULL);
     }
     web_doc_layout(&doc, width, 900, 100, false);
+    /* WEB_REPEAT=n: lay out n more times (profiling) */
+    for (int rep = getenv("WEB_REPEAT") ? atoi(getenv("WEB_REPEAT")) : 0; rep > 0; rep--)
+        web_doc_layout(&doc, width, 900, 100, (rep & 1) != 0);  /* alternating media forces a restyle */
+    if (getenv("WEB_REPEAT")) web_doc_layout(&doc, width, 900, 100, false);
+    /* WEB_BENCH=n: time n restyles split into sheet parsing and the style tree */
+    if (getenv("WEB_BENCH")) {
+        long tp = 0, ts = 0;
+        for (int rep = atoi(getenv("WEB_BENCH")); rep > 0; rep--) {
+            long a0 = clock();
+            arena_reset(doc.css_arena);
+            CssMedia m = {width, 900, false, 100, doc.tree.quirks};
+            doc.css = css_new(doc.css_arena, &m);
+            for (int i = 0; i < doc.sheet_count; i++)
+                if (doc.sheets[i].text && css_media_matches(doc.css, doc.sheets[i].media))
+                    css_add_sheet_base(doc.css, doc.sheets[i].text, doc.sheets[i].len, doc.sheets[i].base);
+            long a1 = clock();
+            css_style_tree(doc.css, &doc.tree);
+            long a2 = clock();
+            tp += a1 - a0;
+            ts += a2 - a1;
+        }
+        printf("bench parse=%ldms style=%ldms (total over runs)\n", tp / 1000, ts / 1000);
+        doc.css_dirty = true;
+        web_doc_layout(&doc, width, 900, 100, false);
+    }
     /* WEB_BASE=<page url>: download and decode the page's images (curl), relayout */
     const char *base = getenv("WEB_BASE");
     if (base) {
@@ -152,6 +177,18 @@ int main(int argc, char **argv)
            (t3 - t2) / 1000, doc.needs_js, doc.truncated, (unsigned long)(dom.used >> 10),
            (unsigned long)(css.used >> 10), (unsigned long)(lay.used >> 10));
     for (int i = 0; i < doc.sheet_url_count; i++) printf("sheet %s\n", doc.sheet_urls[i]);
+    /* WEB_DUMP=text: list the display items whose text contains it */
+    const char *dump = getenv("WEB_DUMP");
+    for (int i = 0; dump && i < doc.item_count; i++) {
+        const WebItem *it = &doc.items[i];
+        if (it->kind != WI_TEXT || !it->text) continue;
+        size_t dl = strlen(dump);
+        bool hit = false;
+        for (size_t k = 0; !hit && k + dl <= (size_t)it->len; k++) hit = memcmp(it->text + k, dump, dl) == 0;
+        if (!hit) continue;
+        printf("item %d x=%d y=%d w=%d h=%d font=%d '%.*s'\n", i, (int)it->x, (int)it->y, (int)it->w, (int)it->h,
+               (int)it->font, (int)it->len, it->text);
+    }
     FILE *o = fopen(argv[2], "wb");
     char hdr[64];
     char num[16];

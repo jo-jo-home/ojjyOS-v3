@@ -17,7 +17,7 @@
 #define MAX_TABS      12
 #define TAB_HIST      40
 #define PAGE_CAP      (4u << 20)
-#define SHEET_CAP     (3u << 20)
+#define SHEET_CAP     (6u << 20)
 #define RES_SLOTS     4
 #define RES_CAP       (3u << 20)
 #define IMG_POOL      (96u << 20)

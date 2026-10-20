@@ -32,6 +32,7 @@
 typedef struct {
     int32_t minw, maxw;
     bool measured;
+    int32_t static_item;        /* out-of-flow box: 1 + index of its static-position marker */
 } NodeInfo;
 
 static struct {
@@ -50,6 +51,7 @@ static struct {
     uint32_t marker_color;
     uint8_t marker_font;
     int16_t marker_link;
+    const DomNode *measure_self;    /* out-of-flow box measuring its own content */
 } L;
 
 static CssStyle default_style;
@@ -426,7 +428,10 @@ static void measure_table(DomNode *n, int32_t *mn, int32_t *mx, int depth);
 static void measure(DomNode *n, int32_t *mn, int32_t *mx, int depth)
 {
     *mn = *mx = 0;
-    if (n->type != DOM_ELEMENT || skip_node(n)) return;
+    if (n->type != DOM_ELEMENT) return;
+    /* out-of-flow boxes add nothing to their parent's size, but an absolute
+     * box shrink-fitting itself still measures its own content */
+    if (skip_node(n) && !(n == L.measure_self && st(n)->display != DISP_NONE && !closed_details_content(n))) return;
     NodeInfo *ni = info(n);
     if (ni && ni->measured) { *mn = ni->minw; *mx = ni->maxw; return; }
     const CssStyle *s = st(n);
@@ -2329,14 +2334,36 @@ static int32_t layout_table(DomNode *n, const CssStyle *s, int32_t x, int32_t y,
 /* Block flow                                                          */
 /* ------------------------------------------------------------------ */
 
+/* Out-of-flow children of n before `upto` (NULL = all remaining) get an
+ * invisible marker at the current flow position: absolute boxes without
+ * insets are placed there (their CSS static position). Markers move with
+ * any later translation of the subtree, so the position stays right. */
+static void mark_static(DomNode **walk, const DomNode *upto, int32_t x, int32_t y)
+{
+    for (; *walk && *walk != upto; *walk = (*walk)->next) {
+        DomNode *c = *walk;
+        if (c->type != DOM_ELEMENT || !c->style || c->style->display == DISP_NONE || !out_of_flow(c->style)) continue;
+        int mi = emit(WI_RECT, x, y, 0, 0, 0);
+        NodeInfo *ni = info(c);
+        if (mi >= 0 && ni) ni->static_item = mi + 1;
+    }
+}
+
 static int32_t layout_flow(DomNode *n, DomNode **kids, int count, int32_t x, int32_t y, int32_t w)
 {
     int32_t cy = y;
     int32_t pending_mb = 0;     /* previous sibling's bottom margin (collapsing) */
     bool first = true;
     int i = 0;
+    DomNode *walk = NULL;
+    for (DomNode *c = n->first; c; c = c->next)
+        if (c->type == DOM_ELEMENT && c->style && out_of_flow(c->style)) { walk = n->first; break; }
     while (i < count) {
         DomNode *c = kids[i];
+        if (walk && c->parent == n) {
+            mark_static(&walk, c, x, cy + (pending_mb > 0 ? pending_mb : 0));
+            if (walk) walk = walk->next;
+        }
         if (c->type == DOM_TEXT || !is_block_level(c)) {
             int j = i;
             while (j < count && (kids[j]->type == DOM_TEXT || !is_block_level(kids[j]))) j++;
@@ -2373,6 +2400,7 @@ static int32_t layout_flow(DomNode *n, DomNode **kids, int count, int32_t x, int
         first = false;
         i++;
     }
+    if (walk) mark_static(&walk, NULL, x, cy + (pending_mb > 0 ? pending_mb : 0));
     return cy + (pending_mb > 0 ? pending_mb : 0) - y;
 }
 
@@ -2398,7 +2426,7 @@ static bool is_positioned(const CssStyle *s) { return s->position != POS_STATIC;
  * Fixed boxes use the page's initial containing block; bottom-anchored fixed
  * bars (cookie banners, chat widgets) are skipped: there is no way to close
  * them without scripts. */
-static void layout_abs_descendants(DomNode *cb, int32_t cbx, int32_t cby, int32_t cbw, int32_t cbh, bool root)
+static void layout_abs_descendants(DomNode *cb, int32_t cbx0, int32_t cby0, int32_t cbw0, int32_t cbh0, bool root)
 {
     if (L.depth > LAYOUT_DEPTH) return;
     for (DomNode *c = cb->first; c; ) {
@@ -2415,11 +2443,14 @@ static void layout_abs_descendants(DomNode *cb, int32_t cbx, int32_t cby, int32_
             place:
                 skip_children = true;
                 if (s->invisible) { c = dom_next(c, cb, true); continue; }
-                if (s->position == POS_FIXED && !root) { c = dom_next(c, cb, true); continue; }
                 if (s->position == POS_FIXED && s->inset[2].kind == LEN_SET && s->inset[0].kind != LEN_SET) {
                     c = dom_next(c, cb, true);
                     continue;
                 }
+                /* fixed boxes belong to the viewport (drawn at the page top),
+                 * even inside a positioned ancestor */
+                int32_t cbx = cbx0, cby = cby0, cbw = cbw0, cbh = cbh0;
+                if (s->position == POS_FIXED && !root) { cbx = 0; cby = 0; cbw = L.d->width; cbh = L.viewport_h; }
                 Edges e;
                 edges(s, cbw, &e);
                 bool l = s->inset[3].kind == LEN_SET, r = s->inset[1].kind == LEN_SET;
@@ -2440,6 +2471,15 @@ static void layout_abs_descendants(DomNode *cb, int32_t cbx, int32_t cby, int32_
                 int32_t mw = bo.w + e.m[1] + e.m[3], mh = bo.h + e.m[0] + e.m[2];
                 int32_t px = l ? cbx + left : r ? cbx + cbw - right - mw : cbx;
                 int32_t py = t ? cby + top : b ? cby + cbh - bottom - mh : cby;
+                /* no insets on an axis: the static position (where it would have flowed) */
+                const NodeInfo *si = (const NodeInfo *)c->box;
+                if (si && si->static_item > 0 && si->static_item <= L.d->item_count) {
+                    const WebItem *m = &L.d->items[si->static_item - 1];
+                    if (m->kind == WI_RECT && m->w == 0 && m->color == 0) {
+                        if (!l && !r) px = m->x;
+                        if (!t && !b) py = m->y;
+                    }
+                }
                 translate(item0, anchor0, px + e.m[3], py + e.m[0]);
             } else if (is_positioned(s) && c != cb) {
                 skip_children = true;           /* has its own containing block */
@@ -2472,7 +2512,10 @@ static void layout_box(DomNode *n, int32_t x, int32_t y, int32_t cw, int32_t for
         if (shrink || s->display == DISP_TABLE || s->display == DISP_INLINE_BLOCK || s->display == DISP_INLINE_FLEX ||
             n->tag == TAG_BUTTON) {
             int32_t a, b;
+            const DomNode *saved_self = L.measure_self;
+            L.measure_self = n;
             measure(n, &a, &b, L.depth);
+            L.measure_self = saved_self;
             int32_t m = (e.mauto_l ? 0 : e.m[3]) + (e.mauto_r ? 0 : e.m[1]);
             a -= pbw + m;
             b -= pbw + m;
@@ -2832,6 +2875,14 @@ void web_doc_parse(WebDoc *d, const char *html, size_t len, bool plain, bool lat
                     bool comma = false;
                     for (const char *m = media; *m; m++) if (*m == ',') comma = true;
                     if (strncmp(media, "print", 5) == 0 && !comma) sheet = false;
+                }
+                /* the same file linked again (GitHub repeats its shared sheets
+                 * a dozen times) would only re-apply identical rules */
+                for (int k = 0; sheet && k < d->sheet_count; k++) {
+                    const WebSheetSrc *o = &d->sheets[k];
+                    if (!o->external || o->text || o->len >= (size_t)d->sheet_url_count) continue;
+                    const char *om = o->media ? o->media : "";
+                    if (strcmp(d->sheet_urls[o->len], href) == 0 && strcmp(om, media ? media : "") == 0) sheet = false;
                 }
                 if (sheet && d->sheet_count < WEB_MAX_SHEETS && d->sheet_url_count < WEB_MAX_SHEETS && strlen(href) < WEB_URL_MAX) {
                     strcpy(d->sheet_urls[d->sheet_url_count], href);

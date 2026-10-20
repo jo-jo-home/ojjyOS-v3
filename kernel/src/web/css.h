@@ -70,6 +70,7 @@ typedef struct CssGrid {
 
 typedef struct CssVar {
     const char *name;           /* "--x" */
+    uint32_t hash;              /* of name: lookups compare this first */
     const char *value;
     struct CssVar *next;
 } CssVar;

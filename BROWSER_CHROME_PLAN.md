@@ -174,5 +174,10 @@ installed images rebuilt when no VM runs, plain-English summary.
   laid out as a replaced box (viewBox-only svgs use the viewBox size, not Chrome's full width)
   and rasterized at 2x its laid-out size without a fetch. 12 host checks + 1500-document fuzz.
   Live: build/web-v12-hvf (GitHub logo/icons, Wikipedia logo, BBC logo, Apple glyphs).
+- W6 delivered (2026-10-19): docs (APPS.md Web section, in-OS What's New + shortcuts, AGENTS.md);
+  installed images rebuilt in the main folder with no VM running: both data partitions
+  (LBA 67584..102399) hash-identical before/after, backups in build/<arch>/backups/;
+  build/ojjyOS.app rebuilt. Receipts: build/browser-final-build-*.log, browser-final-vmapp.log,
+  build/browser-final-installed/ (HVF tour of the installed image on a private copy).
 - NEXT: SVG, JavaScript info bar improvements,
   docs (APPS.md, What's New), installed images.

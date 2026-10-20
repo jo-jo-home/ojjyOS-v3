@@ -22,6 +22,11 @@ bool png_decode(const uint8_t *data, size_t len, uint32_t *argb, size_t pixels, 
 bool gif_info(const uint8_t *data, size_t len, int *w, int *h);
 bool gif_decode(const uint8_t *data, size_t len, uint32_t *argb, size_t pixels, uint8_t *scratch, size_t scratch_size);
 
+/* SVG documents: image_info gives the intrinsic size and image_decode
+ * renders at it; image_render_svg renders at any size (HiDPI, CSS size). */
+bool image_is_svg(const uint8_t *data, size_t len);
+bool image_render_svg(const uint8_t *data, size_t len, uint32_t *argb, int w, int h, uint32_t current_color);
+
 bool webp_info(const uint8_t *data, size_t len, int *w, int *h);
 bool webp_decode(const uint8_t *data, size_t len, uint32_t *argb, size_t pixels, uint8_t *scratch, size_t scratch_size);
 

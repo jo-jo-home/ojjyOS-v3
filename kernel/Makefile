@@ -86,6 +86,7 @@ COMMON_C_SOURCES = src/main.c \
                    src/image/png.c \
                    src/image/gif.c \
                    src/image/webp.c \
+                   src/image/svg.c \
                    src/image/image.c \
                    src/ui/browser.c \
                    src/ui/browser_ui.c \

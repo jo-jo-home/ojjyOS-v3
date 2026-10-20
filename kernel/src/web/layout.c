@@ -1391,6 +1391,182 @@ static int register_image(DomNode *n, const char *url)
     return d->image_count++;
 }
 
+/* ---- inline <svg>: serialized back to markup and rasterized like an image ---- */
+
+static size_t ser_text(char *out, size_t cap, size_t o, const char *t, size_t n, bool in_attr)
+{
+    for (size_t i = 0; i < n; i++) {
+        const char *rep = NULL;
+        if (t[i] == '&') rep = "&amp;";
+        else if (t[i] == '<') rep = "&lt;";
+        else if (t[i] == '"' && in_attr) rep = "&quot;";
+        if (rep) {
+            size_t rl = strlen(rep);
+            if (out && o + rl <= cap) memcpy(out + o, rep, rl);
+            o += rl;
+        } else {
+            if (out && o < cap) out[o] = t[i];
+            o++;
+        }
+    }
+    return o;
+}
+
+static size_t ser_raw(char *out, size_t cap, size_t o, const char *t)
+{
+    size_t n = strlen(t);
+    if (out && o + n <= cap) memcpy(out + o, t, n);
+    return o + n;
+}
+
+/* One element subtree. root_fill: CSS fill of the <svg> (replaces its attribute). */
+static size_t ser_node(const DomNode *n, char *out, size_t cap, size_t o, int depth, const char *root_fill,
+                       const DomNode *const *defs, int ndefs)
+{
+    if (depth > 64) return o;
+    if (n->type == DOM_TEXT) {
+        if (n->parent && n->parent->name && strcmp(n->parent->name, "style") == 0) o = ser_text(out, cap, o, n->text, n->text_len, false);
+        return o;
+    }
+    if (n->type != DOM_ELEMENT || !n->name) return o;
+    o = ser_raw(out, cap, o, "<");
+    o = ser_raw(out, cap, o, n->name);
+    for (int i = 0; i < n->nattrs; i++) {
+        if (depth == 0 && root_fill && strcmp(n->attrs[i].name, "fill") == 0) continue;
+        o = ser_raw(out, cap, o, " ");
+        o = ser_raw(out, cap, o, n->attrs[i].name);
+        o = ser_raw(out, cap, o, "=\"");
+        o = ser_text(out, cap, o, n->attrs[i].value, strlen(n->attrs[i].value), true);
+        o = ser_raw(out, cap, o, "\"");
+    }
+    if (depth == 0 && root_fill) {
+        o = ser_raw(out, cap, o, " fill=\"");
+        o = ser_raw(out, cap, o, root_fill);
+        o = ser_raw(out, cap, o, "\"");
+    }
+    o = ser_raw(out, cap, o, ">");
+    for (const DomNode *c = n->first; c; c = c->next) o = ser_node(c, out, cap, o, depth + 1, NULL, NULL, 0);
+    if (depth == 0 && ndefs) {
+        o = ser_raw(out, cap, o, "<defs>");
+        for (int i = 0; i < ndefs; i++) o = ser_node(defs[i], out, cap, o, 1, NULL, NULL, 0);
+        o = ser_raw(out, cap, o, "</defs>");
+    }
+    o = ser_raw(out, cap, o, "</");
+    o = ser_raw(out, cap, o, n->name);
+    o = ser_raw(out, cap, o, ">");
+    return o;
+}
+
+static bool subtree_has_id(DomNode *root, const char *id)
+{
+    for (DomNode *k = root; k; k = dom_next(k, root, false))
+        if (k->type == DOM_ELEMENT && k->id && strcmp(k->id, id) == 0) return true;
+    return false;
+}
+
+/* register (or reuse) the inline svg's image; currentColor = its CSS colour */
+static int register_svg(DomNode *n)
+{
+    WebDoc *d = L.d;
+    if (n->image) return n->image - 1;
+    const CssStyle *s = st(n);
+    char fill[40];
+    const char *root_fill = NULL;
+    if (s->svg_fill_kind == 1) root_fill = "none";
+    else if (s->svg_fill_kind == 3) root_fill = "currentColor";
+    else if (s->svg_fill_kind == 2) {
+        static const char hex[] = "0123456789abcdef";
+        uint32_t c = s->svg_fill;
+        fill[0] = '#';
+        for (int i = 0; i < 6; i++) fill[1 + i] = hex[(c >> (20 - 4 * i)) & 15];
+        fill[7] = '\0';
+        root_fill = (c >> 24) ? fill : "none";
+    }
+    /* <use href="#id"> pointing outside this svg (page-wide sprites) */
+    const DomNode *defs[8];
+    int ndefs = 0;
+    for (DomNode *k = n; k && ndefs < 8; k = dom_next(k, n, false)) {
+        if (k->type != DOM_ELEMENT || !k->name || strcmp(k->name, "use") != 0) continue;
+        const char *h = dom_attr(k, "href");
+        if (!h) h = dom_attr(k, "xlink:href");
+        if (!h || h[0] != '#' || subtree_has_id(n, h + 1)) continue;
+        for (DomNode *t = d->tree.root; t; t = dom_next(t, d->tree.root, false))
+            if (t->type == DOM_ELEMENT && t->id && strcmp(t->id, h + 1) == 0) { defs[ndefs++] = t; break; }
+    }
+    size_t len = ser_node(n, NULL, 0, 0, 0, root_fill, defs, ndefs);
+    if (len == 0 || len > (512u << 10)) return -1;
+    char *buf = (char *)arena_alloc(d->dom_arena, len + 1);
+    if (!buf) return -1;
+    ser_node(n, buf, len, 0, 0, root_fill, defs, ndefs);
+    buf[len] = '\0';
+    uint32_t color = s->color;
+    for (int i = 0; i < d->image_count; i++) {
+        const WebImage *im = &d->images[i];
+        if (im->svg && im->svg_len == len && im->color == color && memcmp(im->svg, buf, len) == 0) {
+            n->image = (int16_t)(i + 1);
+            return i;
+        }
+    }
+    if (d->image_count >= WEB_MAX_IMAGES) return -1;
+    WebImage *im = &d->images[d->image_count];
+    memset(im, 0, sizeof(*im));
+    im->svg = buf;
+    im->svg_len = (uint32_t)len;
+    im->color = color;
+    n->image = (int16_t)(d->image_count + 1);
+    return d->image_count++;
+}
+
+/* svg width/height attribute in px (units px/em; % and junk = unset) */
+static int svg_len_attr(const DomNode *n, const char *name, int fs)
+{
+    const char *v = dom_attr(n, name);
+    if (!v) return -1;
+    while (*v == ' ') v++;
+    int32_t k = 0, frac = 0, div = 1;
+    bool any = false;
+    for (; *v >= '0' && *v <= '9' && k < 100000; v++) { k = k * 10 + (*v - '0'); any = true; }
+    if (*v == '.') for (v++; *v >= '0' && *v <= '9'; v++) if (div < 1000) { frac = frac * 10 + (*v - '0'); div *= 10; any = true; }
+    if (!any || *v == '%') return -1;
+    int32_t px100 = k * 100 + frac * 100 / div;
+    if (v[0] == 'e' && v[1] == 'm') px100 *= fs;
+    return (int)(px100 / 100);
+}
+
+/* intrinsic size of an inline svg: attributes, the viewBox ratio, else 300x150 */
+static void svg_intrinsic(const DomNode *n, int fs, int32_t cw, int32_t *iw, int32_t *ih)
+{
+    int aw = svg_len_attr(n, "width", fs), ah = svg_len_attr(n, "height", fs);
+    int32_t vw = 0, vh = 0;
+    const char *vb = dom_attr(n, "viewbox");
+    if (vb) {
+        int32_t v[4] = {0, 0, 0, 0};
+        const char *p = vb;
+        for (int i = 0; i < 4 && *p; i++) {
+            while (*p == ' ' || *p == ',') p++;
+            bool neg = *p == '-';
+            if (neg || *p == '+') p++;
+            int32_t k = 0;
+            while (*p >= '0' && *p <= '9') { if (k < 1000000) k = k * 10 + (*p - '0'); p++; }
+            if (*p == '.') { p++; while (*p >= '0' && *p <= '9') p++; }
+            v[i] = neg ? -k : k;
+        }
+        vw = v[2];
+        vh = v[3];
+    }
+    if (aw > 0 && ah > 0) { *iw = aw; *ih = ah; }
+    else if (aw > 0) { *iw = aw; *ih = vw > 0 && vh > 0 ? aw * vh / vw : aw; }
+    else if (ah > 0) { *ih = ah; *iw = vw > 0 && vh > 0 ? ah * vw / vh : ah; }
+    else if (vw > 0 && vh > 0) {
+        /* viewBox only: Chrome fills the line, which turns every icon whose
+         * CSS size we miss into a giant block; the viewBox size is safer */
+        int32_t w = vw;
+        if (cw > 0 && w > cw) w = cw;
+        *iw = w;
+        *ih = (int32_t)((int64_t)w * vh / vw);
+    } else { *iw = 300; *ih = 150; }
+}
+
 /* Content width of a replaced element (and its height through h_out). */
 static int32_t replaced_width(DomNode *n, int32_t cw, int32_t *h_out)
 {
@@ -1456,7 +1632,11 @@ static int32_t replaced_width(DomNode *n, int32_t cw, int32_t *h_out)
         ih = rows * L.fm->height(font_of(s)) + 4;
         break;
     }
-    case TAG_SVG: case TAG_MATH: {
+    case TAG_SVG:
+        register_svg(n);
+        svg_intrinsic(n, fs, cw, &iw, &ih);
+        break;
+    case TAG_MATH: {
         int aw = parse_int_attr(n, "width", -1), ah = parse_int_attr(n, "height", -1);
         iw = aw > 0 ? aw : 0;
         ih = ah > 0 ? ah : 0;
@@ -1524,6 +1704,20 @@ static void layout_replaced(DomNode *n, int32_t x, int32_t y, int32_t cw, BoxOut
             /* broken image: show nothing (alt text below when there is room) */
         }
         if (idx >= 0 && w > 0 && h > 0) {
+            int k = emit(WI_IMAGE, cx, cy, w, h, 0);
+            if (k >= 0) L.d->items[k].ref = (int16_t)idx;
+        }
+        break;
+    }
+    case TAG_SVG: {
+        int idx = n->image ? n->image - 1 : -1;
+        if (idx >= 0 && w > 0 && h > 0) {
+            WebImage *im = &L.d->images[idx];
+            if (w > im->rw) im->rw = (int16_t)(w > 4096 ? 4096 : w);
+            if (h > im->rh) im->rh = (int16_t)(h > 4096 ? 4096 : h);
+            /* shown larger than it was rasterized (zoom): render again */
+            if (im->state == IMG_READY && im->pw < 2048 && (im->rw > im->pw / 2 + 1 || im->rh > im->ph / 2 + 1))
+                im->state = IMG_PENDING;
             int k = emit(WI_IMAGE, cx, cy, w, h, 0);
             if (k >= 0) L.d->items[k].ref = (int16_t)idx;
         }

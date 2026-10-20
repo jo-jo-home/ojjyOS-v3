@@ -23,7 +23,7 @@
 #define WEB_MAX_FIELDS   256
 #define WEB_MAX_FORMS    32
 #define WEB_MAX_ANCHORS  1024
-#define WEB_MAX_IMAGES   384
+#define WEB_MAX_IMAGES   768
 #define WEB_MAX_SHEETS   40
 #define WEB_URL_MAX      512
 
@@ -104,6 +104,12 @@ typedef struct {
     int16_t pw, ph;             /* size of `pixels` (may be downscaled) */
     uint8_t state;
     const uint32_t *pixels;     /* owned by the browser's image cache */
+    /* inline <svg>: markup to rasterize (no fetch), its currentColor and
+     * the largest laid-out size (the browser renders at twice that) */
+    const char *svg;
+    uint32_t svg_len;
+    uint32_t color;
+    int16_t rw, rh;
 } WebImage;
 
 typedef struct {

@@ -6,6 +6,7 @@
 
 #include "image/image.h"
 #include "image/jpeg.h"
+#include "image/svg.h"
 #include "string.h"
 
 static uint8_t *scratch;
@@ -29,6 +30,7 @@ bool image_info(const uint8_t *data, size_t len, int *w, int *h)
     if (is_gif(data, len)) return gif_info(data, len, w, h);
     if (is_jpeg(data, len)) return jpeg_info(data, len, w, h);
     if (is_webp(data, len)) return webp_info(data, len, w, h);
+    if (svg_detect(data, len)) return svg_info(data, len, w, h);
     return false;
 }
 
@@ -46,5 +48,20 @@ bool image_decode(const uint8_t *data, size_t len, uint32_t *argb, size_t pixels
         return scratch && jpeg_decode_full(data, len, argb, pixels, scratch, scratch_size);
     }
     if (is_webp(data, len)) return scratch && webp_decode(data, len, argb, pixels, scratch, scratch_size);
+    if (svg_detect(data, len)) {
+        int w, h;
+        if (!svg_info(data, len, &w, &h) || (size_t)w * (size_t)h > pixels) return false;
+        return scratch && svg_render(data, len, argb, w, h, 0xFF000000u, scratch, scratch_size);
+    }
     return false;
+}
+
+bool image_is_svg(const uint8_t *data, size_t len)
+{
+    return data && !is_png(data, len) && !is_gif(data, len) && !is_jpeg(data, len) && !is_webp(data, len) && svg_detect(data, len);
+}
+
+bool image_render_svg(const uint8_t *data, size_t len, uint32_t *argb, int w, int h, uint32_t current_color)
+{
+    return scratch && svg_render(data, len, argb, w, h, current_color, scratch, scratch_size);
 }

@@ -96,6 +96,26 @@ int main(int argc, char **argv)
         web_doc_set_sheet(&doc, i - 5, c, c ? cl : 0, NULL);
     }
     web_doc_layout(&doc, width, 900, 100, false);
+    /* inline <svg>s rasterize like the browser does (twice the laid-out size) */
+    static bool scratch_set;
+    if (!scratch_set) { image_set_scratch(malloc(64u << 20), 64u << 20); scratch_set = true; }
+    int svgs = 0;
+    for (int i = 0; i < doc.image_count; i++) {
+        WebImage *im = &doc.images[i];
+        if (!im->svg || im->state != IMG_PENDING) continue;
+        int rw = im->rw > 0 ? im->rw : 16, rh = im->rh > 0 ? im->rh : 16;
+        int pw = rw * scale * 2, ph = rh * scale * 2;
+        while (pw > 2048 || ph > 2048) { pw /= 2; ph /= 2; }
+        uint32_t *px = (uint32_t *)malloc((unsigned long)pw * (unsigned long)ph * 4);
+        if (px && image_render_svg((const uint8_t *)im->svg, im->svg_len, px, pw, ph, im->color)) {
+            im->pixels = px; im->w = (int16_t)rw; im->h = (int16_t)rh; im->pw = (int16_t)pw; im->ph = (int16_t)ph;
+            im->state = IMG_READY;
+            svgs++;
+        } else {
+            im->state = IMG_FAILED;
+        }
+    }
+    if (svgs) web_doc_layout(&doc, width, 900, 100, false);
     /* WEB_REPEAT=n: lay out n more times (profiling) */
     for (int rep = getenv("WEB_REPEAT") ? atoi(getenv("WEB_REPEAT")) : 0; rep > 0; rep--)
         web_doc_layout(&doc, width, 900, 100, (rep & 1) != 0);  /* alternating media forces a restyle */

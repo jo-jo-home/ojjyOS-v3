@@ -82,6 +82,8 @@ typedef struct CssStyle {
     uint8_t center_blocks;      /* -webkit-center / <center>: centre child blocks too */
     uint8_t masked;             /* mask-image icon: the background is a mask fill */
     uint8_t clear;              /* 1 left, 2 right, 3 both */
+    uint8_t svg_fill_kind;      /* CSS fill (inherited): 0 unset, 1 none, 2 colour, 3 currentColor */
+    uint32_t svg_fill;
     uint16_t font_weight;
     int16_t font_size;          /* px */
     int16_t line_height;        /* px; 0 = normal */

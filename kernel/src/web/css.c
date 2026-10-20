@@ -120,7 +120,7 @@ static bool parse_num(const char **pp, const char *end, int32_t *out)
 /* ------------------------------------------------------------------ */
 
 typedef enum {
-    P_UNKNOWN = 0, P_CUSTOM,
+    P_UNKNOWN = 0, P_CUSTOM, P_FILL,
     P_DISPLAY, P_POSITION, P_FLOAT, P_VISIBILITY, P_COLOR, P_BACKGROUND, P_BACKGROUND_COLOR, P_BACKGROUND_IMAGE,
     P_FONT, P_FONT_SIZE, P_FONT_WEIGHT, P_FONT_STYLE, P_FONT_FAMILY, P_LINE_HEIGHT, P_TEXT_ALIGN,
     P_TEXT_DECORATION, P_TEXT_DECORATION_LINE, P_TEXT_TRANSFORM, P_WHITE_SPACE, P_TEXT_WRAP, P_TEXT_INDENT,
@@ -145,7 +145,7 @@ typedef enum {
 
 static const struct { const char *name; uint8_t id; } prop_names[] = {
     {"display", P_DISPLAY}, {"position", P_POSITION}, {"float", P_FLOAT}, {"visibility", P_VISIBILITY},
-    {"color", P_COLOR}, {"background", P_BACKGROUND}, {"background-color", P_BACKGROUND_COLOR},
+    {"color", P_COLOR}, {"fill", P_FILL}, {"background", P_BACKGROUND}, {"background-color", P_BACKGROUND_COLOR},
     {"background-image", P_BACKGROUND_IMAGE}, {"font", P_FONT}, {"font-size", P_FONT_SIZE},
     {"font-weight", P_FONT_WEIGHT}, {"font-style", P_FONT_STYLE}, {"font-family", P_FONT_FAMILY},
     {"line-height", P_LINE_HEIGHT}, {"text-align", P_TEXT_ALIGN}, {"text-decoration", P_TEXT_DECORATION},
@@ -1737,6 +1737,8 @@ static void inherit_from(CssStyle *s, const CssStyle *p)
     s->border_spacing = p->border_spacing;
     s->decoration = p->decoration;          /* propagates to descendants' text */
     s->vars = p->vars;
+    s->svg_fill_kind = p->svg_fill_kind;
+    s->svg_fill = p->svg_fill;
 }
 
 static void initial_values(CssStyle *s)
@@ -2052,6 +2054,13 @@ static void apply(const Ctx *C, CssStyle *s, const CssDecl *d, const char *v)
         break;
     case P_CONTENT_VISIBILITY:
         if (istarts(v, "hidden")) s->display = DISP_NONE;
+        break;
+    case P_FILL:
+        if (inherit) { s->svg_fill_kind = P->svg_fill_kind; s->svg_fill = P->svg_fill; break; }
+        if (initial) { s->svg_fill_kind = 0; break; }
+        if (istarts(v, "none")) s->svg_fill_kind = 1;
+        else if (istarts(v, "currentcolor")) s->svg_fill_kind = 3;
+        else if (parse_color_n(v, (size_t)(end - v), &col)) { s->svg_fill_kind = 2; s->svg_fill = col; }
         break;
     case P_COLOR:
         if (inherit || initial) { s->color = initial ? 0xFF000000u : P->color; break; }

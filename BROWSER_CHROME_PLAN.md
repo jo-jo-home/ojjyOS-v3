@@ -166,5 +166,13 @@ installed images rebuilt when no VM runs, plain-English summary.
   items); fixed boxes inside positioned ancestors are placed against the viewport; var() lookups
   compare a name hash (GitHub restyle 5x faster; HVF layout <= 122 ms). Host renderer gained
   WEB_DUMP / WEB_REPEAT / WEB_BENCH. 8 new host checks (94). Live: build/web-v10, web-v11-hvf.
+- W3 SVG (this commit): `image/svg.c` rasterizes SVG with integer maths only (16.16 fixed point,
+  CORDIC trig, 4x sub-scanline AA): paths incl. arcs, basic shapes, g/use/symbol/nested svg,
+  fill/stroke/currentColor, first gradient stop, joins/caps, fill-rule, opacity, transforms,
+  style="" and simple <style> rules. `<img src=*.svg>` renders at 2x; inline `<svg>` is serialized
+  back from the DOM (CSS `fill` on the svg and page-wide `<use>` sprites carried over), deduped,
+  laid out as a replaced box (viewBox-only svgs use the viewBox size, not Chrome's full width)
+  and rasterized at 2x its laid-out size without a fetch. 12 host checks + 1500-document fuzz.
+  Live: build/web-v12-hvf (GitHub logo/icons, Wikipedia logo, BBC logo, Apple glyphs).
 - NEXT: SVG, JavaScript info bar improvements,
   docs (APPS.md, What's New), installed images.

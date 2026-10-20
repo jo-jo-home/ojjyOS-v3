@@ -447,6 +447,71 @@ static void image_tests(void)
     CHECK(ok, "fuzz: 4000 corrupted images and streams handled");
 }
 
+static int alpha_sum(const uint32_t *px, int n)
+{
+    int t = 0;
+    for (int i = 0; i < n; i++) t += (int)(px[i] >> 24);
+    return t;
+}
+
+static void svg_tests(void)
+{
+    static uint32_t px[64 * 64];
+    int w, h;
+    const char *sq = "<svg viewBox='0 0 10 10' width='10' height='10'><rect x='2' y='2' width='6' height='6' fill='#f00'/></svg>";
+    CHECK(image_info((const uint8_t *)sq, strlen(sq), &w, &h) && w == 10 && h == 10 && image_is_svg((const uint8_t *)sq, strlen(sq)),
+          "svg: detected, size from attributes");
+    CHECK(image_render_svg((const uint8_t *)sq, strlen(sq), px, 10, 10, 0xFF000000u) && px[5 * 10 + 5] == 0xFFFF0000u &&
+          px[2 * 10 + 2] == 0xFFFF0000u && px[1 * 10 + 1] == 0 && px[8 * 10 + 8] == 0, "svg: rect covers exactly its pixels");
+    const char *vb = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 24'></svg>";
+    CHECK(image_info((const uint8_t *)vb, strlen(vb), &w, &h) && w == 48 && h == 24, "svg: size from the viewBox");
+    /* circle r=8 at 2x scale: area pi*r^2 */
+    const char *ci = "<svg viewBox='0 0 32 32'><circle cx='16' cy='16' r='8' fill='currentColor'/></svg>";
+    image_render_svg((const uint8_t *)ci, strlen(ci), px, 32, 32, 0xFF0000FFu);
+    int area = alpha_sum(px, 32 * 32) / 255;
+    CHECK(area >= 195 && area <= 207 && px[16 * 32 + 16] == 0xFF0000FFu, "svg: circle area and currentColor");
+    /* even-odd hole, near-closed arcs */
+    const char *eo = "<svg viewBox='0 0 32 32'><path fill-rule='evenodd' d='M16 2 A14 14 0 1 1 15.9 2 Z M16 10 a6 6 0 1 0 .1 0 z'/></svg>";
+    image_render_svg((const uint8_t *)eo, strlen(eo), px, 32, 32, 0xFF000000u);
+    CHECK(px[16 * 32 + 16] == 0 && (px[16 * 32 + 5] >> 24) == 255 && (px[1 * 32 + 16] >> 24) < 40, "svg: arcs and even-odd hole");
+    /* stroke, transform, use + symbol, class rule */
+    const char *mix = "<svg viewBox='0 0 40 40'><style>.k{fill:#00ff00}</style>"
+                      "<defs><symbol id='s' viewBox='0 0 2 2'><rect width='2' height='2'/></symbol></defs>"
+                      "<line x1='0' y1='5' x2='40' y2='5' stroke='#0000ff' stroke-width='2'/>"
+                      "<g transform='translate(20,20)'><rect class='k' width='4' height='4'/></g>"
+                      "<use href='#s' x='30' y='30' width='6' height='6' fill='#ff0000'/></svg>";
+    image_render_svg((const uint8_t *)mix, strlen(mix), px, 40, 40, 0xFF000000u);
+    CHECK(px[5 * 40 + 20] == 0xFF0000FFu && px[4 * 40 + 20] == 0xFF0000FFu && px[8 * 40 + 20] == 0, "svg: stroke width");
+    CHECK(px[22 * 40 + 22] == 0xFF00FF00u && px[18 * 40 + 18] == 0, "svg: transform and <style> class rule");
+    CHECK(px[33 * 40 + 33] == 0xFFFF0000u && px[29 * 40 + 29] == 0, "svg: use of a symbol with its viewBox");
+    /* inline svg in a page: registered, serialized with CSS fill, sprite pulled in */
+    page("<!DOCTYPE html><style>.ic{fill:#00ff00}</style><body style='margin:0;color:#123456'>"
+         "<svg width='16' height='16' viewBox='0 0 16 16' fill='currentColor'><path d='M0 0h16v16H0z'></path></svg>"
+         "<svg class='ic' width='8' height='8'><use href='#spr'></use></svg>"
+         "<svg style='display:none'><symbol id='spr' viewBox='0 0 8 8'><circle cx='4' cy='4' r='4'></circle></symbol></svg>", 600);
+    int svgs = 0, item16 = 0;
+    for (int i = 0; i < doc.image_count; i++) if (doc.images[i].svg) svgs++;
+    for (int i = 0; i < doc.item_count; i++) if (doc.items[i].kind == WI_IMAGE && doc.items[i].w == 16 && doc.items[i].h == 16) item16++;
+    CHECK(svgs == 2 && item16 == 1 && doc.images[0].color == 0xFF123456u &&
+          strstr_local(doc.images[0].svg, doc.images[0].svg_len, "<path d=\"M0 0h16v16H0z\">"), "svg: inline svg laid out as an image");
+    CHECK(strstr_local(doc.images[1].svg, doc.images[1].svg_len, "fill=\"#00ff00\"") &&
+          strstr_local(doc.images[1].svg, doc.images[1].svg_len, "<defs><symbol id=\"spr\""), "svg: CSS fill and page sprite carried over");
+    image_render_svg((const uint8_t *)doc.images[1].svg, doc.images[1].svg_len, px, 8, 8, 0xFF000000u);
+    CHECK(px[4 * 8 + 4] == 0xFF00FF00u, "svg: sprite rendered with the CSS fill");
+    /* fuzz */
+    static uint8_t fz[2048];
+    random_add_entropy("svg", 3);
+    for (int i = 0; i < 1500; i++) {
+        const char *src = i % 3 == 0 ? mix : i % 3 == 1 ? eo : ci;
+        size_t len = strlen(src), take = random_u32() % (len + 1);
+        memcpy(fz, src, take);
+        for (int m = 0; m < 8 && take; m++) fz[random_u32() % take] = (uint8_t)(i & 1 ? random_u32() : "0123456789.-,MLCAZz <>/\"'"[random_u32() % 25]);
+        int fw = 1 + (int)(random_u32() % 64), fh = 1 + (int)(random_u32() % 64);
+        image_render_svg(fz, take, px, fw, fh, 0xFF000000u);
+    }
+    CHECK(true, "fuzz: 1500 mutated SVG documents rasterized safely");
+}
+
 static void fuzz_engine(void)
 {
     static char fuzz[8192];
@@ -483,6 +548,7 @@ int main(void)
     css_tests();
     layout_tests();
     image_tests();
+    svg_tests();
     fuzz_engine();
     return finish();
 }

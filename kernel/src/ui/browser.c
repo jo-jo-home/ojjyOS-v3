@@ -259,10 +259,34 @@ static void start_res(int kind, int index)
     }
 }
 
+/* SVG at a chosen size: twice the requested size for HiDPI, at most 2048 */
+static bool svg_raster(WebImage *im, const uint8_t *data, size_t len, int rw, int rh, uint32_t color)
+{
+    int w = rw * 2, h = rh * 2;
+    while (w > 2048 || h > 2048) { w /= 2; h /= 2; }
+    if (w < 1 || h < 1) return false;
+    size_t need = (size_t)w * (size_t)h * 4;
+    if (img_used + need > IMG_POOL) return false;
+    uint32_t *px = (uint32_t *)(img_pool + img_used);
+    if (!image_render_svg(data, len, px, w, h, color)) return false;
+    img_used += (need + 15) & ~(size_t)15;
+    im->pixels = px;
+    im->w = (int16_t)rw;
+    im->h = (int16_t)rh;
+    im->pw = (int16_t)w;
+    im->ph = (int16_t)h;
+    im->state = IMG_READY;
+    return true;
+}
+
 static void image_done(int index, const uint8_t *data, size_t len)
 {
     WebImage *im = &BR->doc->images[index];
     int w = 0, h = 0, natural_w, natural_h;
+    if (image_is_svg(data, len)) {
+        if (!image_info(data, len, &w, &h) || !svg_raster(im, data, len, w, h, 0xFF000000u)) im->state = IMG_FAILED;
+        return;
+    }
     if (!image_info(data, len, &w, &h) || w <= 0 || h <= 0 || (uint64_t)w * (uint64_t)h > 16u * 1024 * 1024) {
         im->state = IMG_FAILED;
         serial_printf("[WEB] image %d undecodable (%02x %02x %02x %02x)\n", index, len > 0 ? data[0] : 0, len > 1 ? data[1] : 0,
@@ -354,10 +378,21 @@ static void poll_resources(void)
         if (t->sheet_state[i] == SHEET_NONE) start_res(RES_SHEET, i);
     }
     if (!BR->doc_laid_out) return;
+    /* inline <svg>s: rasterized here, nothing to fetch (bounded per turn) */
+    for (int i = 0, done = 0; i < BR->doc->image_count && done < 48; i++) {
+        WebImage *im = &BR->doc->images[i];
+        if (!im->svg || im->state != IMG_PENDING) continue;
+        int nw = 0, nh = 0;
+        image_info((const uint8_t *)im->svg, im->svg_len, &nw, &nh);
+        int rw = im->rw > 0 ? im->rw : nw, rh = im->rh > 0 ? im->rh : nh;
+        if (!svg_raster(im, (const uint8_t *)im->svg, im->svg_len, rw, rh, im->color)) im->state = IMG_FAILED;
+        done++;
+        ui_mark_dirty();
+    }
     for (int pass = 0; pass < 2; pass++) {
         for (int i = 0; i < BR->doc->image_count; i++) {
             if (!free_slot()) return;
-            if (BR->doc->images[i].state != IMG_PENDING) continue;
+            if (BR->doc->images[i].state != IMG_PENDING || BR->doc->images[i].svg) continue;
             if (pass == 0) {
                 bool near = false;
                 for (int k = 0; k < BR->doc->item_count; k++) {

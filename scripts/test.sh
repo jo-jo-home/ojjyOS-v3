@@ -50,3 +50,5 @@ done
 echo "Running test_wallpack"
 "$OUT/test_wallpack" "$OUT/sample.pack"
 python3 -B tests/test_image.py
+echo "Running roadmap check"
+python3 -B roadmap/tools/roadmap.py check

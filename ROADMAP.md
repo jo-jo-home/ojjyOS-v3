@@ -1,4 +1,8 @@
-# ojjyOS roadmap — ideas list
+# ojjyOS roadmap — ideas list (superseded)
+
+> Superseded on 2026-10-22 by the detailed five-year plan in
+> `roadmap/README.md`; every idea below is covered by a card there.
+> Kept for history.
 
 Created by Jonas Lee. Ideas proposed during AI-assisted sessions; ordered
 roughly by value to the "reliable boot -> input -> storage -> protected apps

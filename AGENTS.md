@@ -1,5 +1,21 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## >>> LONG-TERM PLAN (2026-10-22): read `roadmap/README.md` <<<
+
+Jonas asked for a detailed five-year roadmap to make ojjyOS a full modern
+OS (macOS Tahoe Liquid Glass look; best of macOS, Windows, Linux and Arch;
+Windows and Linux app compatibility; a ChromeOS-style browser "ojjyWeb").
+It lives in **`roadmap/`**: ~700 cards (one per driver, app, settings
+pane, control, subsystem step), each with context, steps, "Done when",
+tests and pitfalls. Start with `roadmap/README.md` and
+`roadmap/00-how-to-work.md` (session protocol + Definition of Done).
+Tool: `python3 roadmap/tools/roadmap.py next|show ID|deps ID|critical|check|status`
+(the check also runs in `scripts/test.sh`). To hand a card to an AI, use
+`roadmap/templates/session-prompt.md`. Short-term P0 cards point at
+`DESKTOP_PLAN.md` / `NET_WEB_PLAN.md`. New decision D-023: the base system
+stays original; open-source programs may be ported only as optional
+ojjypkg packages.
+
 ## LATEST (2026-10-19, later): Track D — Chrome-like browser ("ojjyOS Web")
 
 Jonas asked for a browser that feels like Chrome. Real Chrome cannot run

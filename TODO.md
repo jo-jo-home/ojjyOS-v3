@@ -9,6 +9,10 @@ committing, never touch a disk image a running VM uses).
 
 Status markers: [ ] not started, [~] started, [x] done.
 
+**Long-term plan (2026 → 2031): `roadmap/README.md`.** This file stays the
+short-term list; everything beyond the current round is a card in
+`roadmap/` (`python3 roadmap/tools/roadmap.py next` lists what is ready).
+
 **`BETTER_OS_PLAN.md` is the detailed improvement list** (security pass,
 kernel, storage, networking, desktop) compiled from the 2026-10-18
 "make the OS better + routine bug/security check" request; work its

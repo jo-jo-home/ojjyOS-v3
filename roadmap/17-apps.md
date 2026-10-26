@@ -78,15 +78,34 @@ sections incl. Downloads, column sorting, glass toolbar.
 **Refs.** DESKTOP_PLAN.md.
 
 ### APP-NOTES-01 — Notes polish (D6)
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: DESKTOP_PLAN.md D6
+- Files: DESKTOP_PLAN.md D6, kernel/src/ui/notes.c/h (new), kernel/src/ui/compositor.c, kernel/src/ui/services.c, kernel/src/main.c (hook), tests/test_notes.c (new), tests/qemu_notes.py (new)
 
+**Context (2026-10-26).** Notes edits exactly one file,
+`~/Documents/Notes.txt`, and rewrites it (plus re-indexes Spotlight) on
+every key press. Loading a file and saving it again adds one empty line
+each time, and a file longer than the editor grid (64 lines x 79
+columns) is cut short when it is saved.
 **Goal.** Sidebar list of `~/Notes/*.txt`, New Note, autosave.
-**Done when.** D6 acceptance.
-**Tests.** As D6.
-**Pitfalls.** —
-**Refs.** DESKTOP_PLAN.md.
+**Steps.**
+- [ ] 1. Notes library `kernel/src/ui/notes.c/h` (no drawing): `*.txt` filter, name sort (RAMFS has no timestamps), first-line preview, unique "New Note N.txt" names, `~/Notes` creation with a one-time copy of `~/Documents/Notes.txt`, scan/create, autosave timing. Host test `tests/test_notes.c` on a real RAMFS mounted at `/Users`, plus a preview fuzz loop; wired into `scripts/test.sh` and `kernel/Makefile`. Test: `bash scripts/test.sh` + sanitizer run. Trap: `vfs.c` calls `users_*` for home isolation, so link `users.c` like `test_ramfs`.
+- [ ] 2. Editor safety for autosave (`compositor.c` `textedit_load_file`/`textedit_save`): a load/save round trip keeps the byte count (no extra empty line); files longer than 64 lines or 79 columns open read-only and are never written back. Test: `tests/qemu_notes.py` byte counts across reopen + a copied long file stays unchanged. Trap: a full 64-line file ending in a newline is not "too long".
+- [ ] 3. Notes window (`compositor.c`): sidebar (title + preview rows, selection, wheel scroll), New Note button + Cmd+N, typing into an empty library creates a note, autosave 1 s after the last edit instead of a write per key, save on switch/close/lock, re-scan on open/raise, reload on user switch, read-only notice. Test: `tests/qemu_notes.py` logs + screenshots. Trap: windows move between `app_states` slots on raise, so always look up by `app_window_index[APP_NOTES]`; keep the list one global (one Notes window), not per window (BSS).
+- [ ] 4. `hook:` `main.c` `save_persistent_state()` first calls `compositor_save_documents()`, so sync/shutdown (also from the console after Shift+Esc) never loses the last second of typing. Test: `tests/qemu_notes.py` types, shuts down at once from the console, cold-boots and checks the byte count. Trap: only when the UI was initialized.
+- [ ] 5. Spotlight finds notes (`services.c` indexes `~/Notes`) and opens them in Notes, not TextEdit (`open_path`). Test: `tests/qemu_notes.py` Spotlight query. Trap: the shared 32-slot file index.
+- [ ] 6. Live test `tests/qemu_notes.py` (private disk, fresh data) runs all of the above on TCG and HVF; screenshots light + dark looked at. Evidence `build/app-notes-01-*`.
+**Done when.**
+- [ ] Notes shows a sidebar of `~/Notes/*.txt` (title + first-line preview, sorted by name); clicking a row opens that note.
+- [ ] New Note (button and Cmd+N) creates and opens "New Note.txt", "New Note 2.txt", ...
+- [ ] Edits save about 1 s after typing stops (one write per pause, not per key) and on switch, close, lock, sync and shutdown; the text survives a cold boot byte for byte.
+- [ ] An existing `~/Documents/Notes.txt` is copied (not moved) into `~/Notes` on first launch; too-long notes are read-only, never truncated.
+- [ ] Both dev builds 0 warnings; `scripts/test.sh` + sanitizer run pass; smoke passes; `checklist.py --strict` clean.
+- [ ] Docs: `APPS.md` Notes section, DESKTOP_PLAN D6 log line, this card's Log, `STATUS.md`, `AGENTS.md` LATEST.
+**Tests.** `tests/test_notes.c` (host + ASan/UBSan), `tests/qemu_notes.py` (TCG + HVF), `tests/qemu_smoke.py`.
+**Pitfalls.** RAMFS has 256 nodes per instance in total, so the list is capped
+(48 notes); `pmm_alloc_bytes` cannot free; the editor grid is 64 x 79.
+**Refs.** DESKTOP_PLAN.md D6.
 
 ### APP-CAL-01 — Calendar, Calculator, Activity Monitor, About polish (D7)
 - Phase: P0 · Size: M · Status: todo

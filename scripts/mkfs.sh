@@ -314,7 +314,8 @@ cat > "$SYSROOT/System/Web/shortcuts.html" << 'PAGE'
 <tr><td><b>Tab</b></td><td>Next text field</td></tr>
 </table>
 <h3>Editing</h3>
-<p><b>Cmd+S</b> save, <b>Cmd+O</b> open the last file, <b>Cmd+C / X / V</b> copy, cut and paste.</p>
+<p><b>Cmd+S</b> save, <b>Cmd+O</b> open the last file, <b>Cmd+C / X / V</b> copy, cut and paste,
+<b>Cmd+N</b> new note in Notes.</p>
 <p><a href="ojjy:home">Back to the start page</a></p>
 </body></html>
 PAGE
@@ -334,6 +335,7 @@ suggestions, bookmarks bar, history, downloads, find in page, zoom and view sour
 </ul>
 <h3>Also new</h3>
 <ul>
+<li><b>Notes</b> &mdash; a sidebar with all your notes, New Note, and saving by itself while you type.</li>
 <li><b>Networking</b> &mdash; a from-scratch network stack with DHCP, DNS and TCP.</li>
 <li><b>A real web browser</b> &mdash; open websites, follow links, search and fill in forms.</li>
 <li><b>HTTPS</b> &mdash; TLS 1.3 written from scratch (x25519, ChaCha20-Poly1305, AES-GCM).</li>

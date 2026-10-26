@@ -100,8 +100,11 @@ live resize, Terminal themes.
   - [ ] **S2** window snapping (left/right half, top = maximise, preview).
   - [ ] **S3** live resize smoothness.
   - [ ] **S4** Terminal themes + coloured prompt and `ls`.
-  - [ ] **A** every app: Finder, Terminal, TextEdit, Notes, Calendar,
+  - [~] **A** every app: Finder, Terminal, TextEdit, Notes, Calendar,
     Calculator, Activity Monitor, Settings, Web, About, Preview, Login.
+    Notes done 2026-10-26 (roadmap card APP-NOTES-01); all other apps still
+    open (their roadmap cards: APP-FINDER-01, APP-TEXTEDIT-01, APP-CAL-01,
+    APP-SET-01, APP-TERM-01).
   - [ ] Leftovers: drop the unused `.raw` wallpapers from `mkfs.sh` and make
     Spotlight list desktop pictures; desktop "Change Wallpaper..." opens
     Settings > Wallpaper.

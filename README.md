@@ -233,7 +233,8 @@ file authorization remain future work.
 | `Cmd+Tab` | Open App Switcher (release `Cmd` or click an icon to activate) |
 | `Cmd+Q` | Close active window / quit active app |
 | `Ctrl+Cmd+Q` | Lock Screen immediately |
-| `Cmd+S` / `Cmd+O` | Save / Open file in TextEdit or Notes |
+| `Cmd+S` / `Cmd+O` | Save in TextEdit or Notes / Open the last file in TextEdit |
+| `Cmd+N` | New note (in Notes) |
 | `Esc` / `Shift+Esc` | Dismiss active overlay or menu (`Shift+Esc` returns to kernel console) |
 
 ### Console & Terminal Commands

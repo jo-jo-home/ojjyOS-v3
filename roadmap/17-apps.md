@@ -78,7 +78,7 @@ sections incl. Downloads, column sorting, glass toolbar.
 **Refs.** DESKTOP_PLAN.md.
 
 ### APP-NOTES-01 — Notes polish (D6)
-- Phase: P0 · Size: S · Status: doing
+- Phase: P0 · Size: S · Status: done
 - Depends: —
 - Files: DESKTOP_PLAN.md D6, kernel/src/ui/notes.c/h (new), kernel/src/ui/compositor.c, kernel/src/ui/services.c, kernel/src/main.c (hook), tests/test_notes.c (new), tests/qemu_notes.py (new)
 
@@ -94,18 +94,25 @@ columns) is cut short when it is saved.
 - [x] 3. Notes window (`compositor.c`): sidebar (title + preview rows, selection, wheel scroll), New Note button + Cmd+N, typing into an empty library creates a note, autosave 1 s after the last edit instead of a write per key, save on switch/close/lock, re-scan on open/raise, reload on user switch, read-only notice. Test: `tests/qemu_notes.py` logs + screenshots. Trap: windows move between `app_states` slots on raise, so always look up by `app_window_index[APP_NOTES]`; keep the list one global (one Notes window), not per window (BSS). — done 2026-10-26 (test: tests/qemu_notes.py TCG PASS build/app-notes-01-tcg2: import, New Note button + Cmd+N, 23 keys -> 1 autosave, switch + close save at once, lock save 0.09 s after the keys; screenshots 01-08 light/dark/read-only looked at)
 - [x] 4. `hook:` `main.c` `save_persistent_state()` first calls `compositor_save_documents()`, so sync/shutdown (also from the console after Shift+Esc) never loses the last second of typing. Test: `tests/qemu_notes.py` types, shuts down at once from the console, cold-boots and checks the byte count. Trap: only when the UI was initialized. — done 2026-10-26 (test: tests/qemu_notes.py TCG PASS build/app-notes-01-tcg2: "Hi " typed, Shift+Esc at once, no autosave before the console, then console `shutdown` logs "Saved 'New Note 2.txt' 15 bytes" before "[POWER] Shutdown"; cold boot reopens it with 15 bytes)
 - [x] 5. Spotlight finds notes (`services.c` indexes `~/Notes`) and opens them in Notes, not TextEdit (`open_path`). Test: `tests/qemu_notes.py` Spotlight query. Trap: the shared file index (grown from 16 to 32 slots). — done 2026-10-26 (test: tests/qemu_notes.py TCG PASS build/app-notes-01-tcg2: "new note 2" lists the note as "Note" and Enter opens it in Notes; screenshot 06)
-- [ ] 6. Live test `tests/qemu_notes.py` (private disk, fresh data) runs all of the above on TCG and HVF; screenshots light + dark looked at. Evidence `build/app-notes-01-*`.
+- [x] 6. Live test `tests/qemu_notes.py` (private disk, fresh data) runs all of the above on TCG and HVF; screenshots light + dark looked at. Evidence `build/app-notes-01-*`. — done 2026-10-26 (test: tests/qemu_notes.py 9/9 checks PASS on TCG build/app-notes-01-tcg3 + build/app-notes-01-final-tcg (final image) and HVF build/app-notes-01-hvf; screenshots 01-08 looked at)
 **Done when.**
-- [ ] Notes shows a sidebar of `~/Notes/*.txt` (title + first-line preview, sorted by name); clicking a row opens that note.
-- [ ] New Note (button and Cmd+N) creates and opens "New Note.txt", "New Note 2.txt", ...
-- [ ] Edits save about 1 s after typing stops (one write per pause, not per key) and on switch, close, lock, sync and shutdown; the text survives a cold boot byte for byte.
-- [ ] An existing `~/Documents/Notes.txt` is copied (not moved) into `~/Notes` on first launch; too-long notes are read-only, never truncated.
-- [ ] Both dev builds 0 warnings; `scripts/test.sh` + sanitizer run pass; smoke passes; `checklist.py --strict` clean.
-- [ ] Docs: `APPS.md` Notes section, DESKTOP_PLAN D6 log line, this card's Log, `STATUS.md`, `AGENTS.md` LATEST.
+- [x] Notes shows a sidebar of `~/Notes/*.txt` (title + first-line preview, sorted by name); clicking a row opens that note. — done 2026-10-26 (test: qemu_notes.py row clicks log "Opened", screenshots 02/04/05 show title + first line; test_notes order checks)
+- [x] New Note (button and Cmd+N) creates and opens "New Note.txt", "New Note 2.txt", ... — done 2026-10-26 (test: qemu_notes.py logs "New note 'New Note.txt'" from the button and "New note 'New Note 2.txt'" from Cmd+N; test_notes new-name checks)
+- [x] Edits save about 1 s after typing stops (one write per pause, not per key) and on switch, close, lock, sync and shutdown; the text survives a cold boot byte for byte. — done 2026-10-26 (test: build/app-notes-01-final-tcg: 23 keys -> 1 save; switch saves before opening the next note; close saves with no window left; lock saves 0.09 s after the keys; console shutdown saves via the hook; cold boot reopens 30 and 15 bytes. Sync uses the same save_persistent_state() hook as shutdown and is not tested separately)
+- [x] An existing `~/Documents/Notes.txt` is copied (not moved) into `~/Notes` on first launch; too-long notes are read-only, never truncated. — done 2026-10-26 (test: qemu_notes.py "Imported Documents/Notes.txt" + 50-byte note; test_notes byte-exact copy and original kept; 1851-byte file stays 1851 bytes after typing + Cmd+S)
+- [x] Both dev builds 0 warnings; `scripts/test.sh` + sanitizer run pass; smoke passes; `checklist.py --strict` clean. — done 2026-10-26 (test: build/app-notes-01-{arm,x86}.log 0 warnings; app-notes-01-tests.log + app-notes-01-san.log 18/18 suites, 0 sanitizer reports; smoke PASS TCG/HVF/Intel build/app-notes-01-smoke-{tcg,hvf,x86}; checklist --strict 0 problems)
+- [x] Docs: `APPS.md` Notes section, DESKTOP_PLAN D6 log line, this card's Log, `STATUS.md`, `AGENTS.md` LATEST. — done 2026-10-26 (verified: also README shortcuts and the in-OS Shortcuts / What's New pages in scripts/mkfs.sh, tested in the final image)
 **Tests.** `tests/test_notes.c` (host + ASan/UBSan), `tests/qemu_notes.py` (TCG + HVF), `tests/qemu_smoke.py`.
 **Pitfalls.** RAMFS has 256 nodes per instance in total, so the list is capped
 (48 notes); `pmm_alloc_bytes` cannot free; the editor grid is 64 x 79.
 **Refs.** DESKTOP_PLAN.md D6.
+**Log.** 2026-10-26 done: commits `c99e4a8` (start), `bf72d06` (notes.c + test_notes),
+`9abdefa` (sidebar, New Note, autosave, editor fixes, Spotlight), `b9c8194`
+(`hook:` save before disk saves), then the live test + docs commit. Evidence
+`build/app-notes-01-*` (tcg3, final-tcg, hvf, smoke-tcg/hvf/x86, arm/x86/tests/san
+logs). Limits: list sorted by title (RAMFS has no timestamps), 48 notes listed,
+editor still 64 x 79 with no word wrap (APP-TEXTEDIT-01), no delete or rename
+inside Notes (Finder does it), sync shares the tested shutdown save path.
 
 ### APP-CAL-01 — Calendar, Calculator, Activity Monitor, About polish (D7)
 - Phase: P0 · Size: M · Status: todo

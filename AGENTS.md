@@ -1,5 +1,32 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-26, evening): APP-NOTES-01 done — Notes sidebar, New Note, autosave
+
+First card taken with the new workflow (board id 809980, Track D worktree
+`ojjyOS-v3-ui` / `desktop-polish`, fast-forwarded to `main`). Notes now
+keeps one file per note in `~/Notes`: sidebar (title + first line),
+"+ New Note" / Cmd+N, autosave 1 s after typing stops (the old app rewrote
+`~/Documents/Notes.txt` and re-indexed Spotlight on EVERY key) and at once
+on switch/new/close/lock/Cmd+S. First launch copies the old
+`Documents/Notes.txt` in (original kept). Spotlight indexes `~/Notes` (index
+16 -> 32 files) and opens notes in Notes. Where: logic in the new
+`kernel/src/ui/notes.c/h` (VFS only, host test `tests/test_notes.c`, 91
+checks incl. preview fuzz); UI in `compositor.c` (`draw_notes_window`,
+`notes_*` block after `textedit_handle_key`, `notes_autosave_tick` at the
+top of `compositor_tick`); `hook:` in `main.c` `save_persistent_state()`
+calls `compositor_save_documents()` so sync/shutdown/restart (also from the
+console, which runs no compositor ticks) never lose the last second.
+Two shared-editor bugs fixed on the way (TextEdit too): every load + save
+added an empty line; files over 64 lines x 79 columns were silently cut on
+save — they now open read-only (shown cut down, edits/Save refused).
+Verified: `tests/qemu_notes.py` (new, 2 boots, 9 checks) PASS on TCG and
+HVF, smoke TCG + HVF + Intel PASS, host + ASan/UBSan suites pass, both dev builds 0
+warnings, screenshots (light, dark, read-only, Spotlight) looked at. Also
+marked 28 pre-checklist ticks `(legacy)` so `checklist.py --strict` is clean.
+Limits: list sorted by title (RAMFS has no timestamps), 48 notes listed,
+editor still 64 x 79 (word wrap is APP-TEXTEDIT-01), no delete/rename in
+Notes (use Finder). Next ready P0 cards: APP-TEXTEDIT-01, DOC-03, QA-22.
+
 ## LATEST (2026-10-26, later): history cleaned before the first push since Feb
 
 Before pushing to the PUBLIC GitHub repo, a review (gitleaks: no secrets;

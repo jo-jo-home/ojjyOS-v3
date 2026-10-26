@@ -115,7 +115,10 @@ This document defines core app layouts, data models, and implementation details 
 
 ### Implementation
 
-- Loads file contents via VFS.
+- Loads file contents via VFS. Opening and saving keeps the bytes (the
+  newline that ends the last line does not add an empty line); a file
+  longer than 64 lines x 79 columns, or with NUL bytes, is shown cut down
+  and opens read-only (edits blocked, Save refused) so it is never cut.
 - Save writes to RAMFS-backed `/Users/<user>/Documents`.
 - Super+O reopens last file opened from Finder.
 - Super+S saves to RAMFS-backed file.
@@ -128,12 +131,35 @@ This document defines core app layouts, data models, and implementation details 
 
 ### Layout
 
-- Note canvas, saved to `/Users/<user>/Documents/Notes.txt`.
+- Sidebar (left): "Notes" + count, a "+ New Note" capsule button, then one
+  row per note with its title (file name without `.txt`) and first line;
+  the open note is highlighted in Notes yellow. The wheel scrolls the list.
+- Editor (right): the shared TextEdit page with the yellow notepad header
+  (note title, "Edited" or "Read-only" pill), ruled paper and status line.
+
+### Data model
+
+- Every note is a plain-text file in `/Users/<user>/Notes/` (`*.txt`, any
+  case; hidden files skipped), listed by title because RAMFS keeps no
+  timestamps. Up to 48 notes are listed ("More notes in Finder" beyond).
+- `kernel/src/ui/notes.c/h` (no drawing, host-tested by
+  `tests/test_notes.c`) lists the folder, builds previews, picks
+  "New Note.txt", "New Note 2.txt", ... and decides when to autosave.
+- First launch makes `~/Notes` and copies the old single
+  `~/Documents/Notes.txt` into it (the original stays where it was).
 
 ### Implementation
 
-- Uses TextEdit buffer + save, preloads `Notes.txt` from the active user's `Documents` folder.
-- Auto-saves on edits.
+- "+ New Note" or Cmd+N makes and opens a note; typing with no note open
+  starts one.
+- Autosave: one write once typing has paused for 1 second, and right away
+  when switching notes, making a new one, closing the window, locking the
+  screen, Cmd+S, and before every save to disk (sync, shutdown, restart).
+- A file longer than the editor (64 lines x 79 columns) opens read-only
+  and is never rewritten.
+- Spotlight finds notes (shown as "Note") and opens them in Notes.
+- Serial receipts: `[NOTES] Opened|Saved '<name>' <bytes> bytes`,
+  `[NOTES] New note '<name>'` (`tests/qemu_notes.py` checks them).
 
 ## Preview
 

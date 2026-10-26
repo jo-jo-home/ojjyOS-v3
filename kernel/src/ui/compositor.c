@@ -21,6 +21,7 @@
 #include "../user.h"
 #include "netcmd.h"
 #include "calcmath.h"
+#include "notes.h"
 #include "browser.h"
 #include "draw.h"
 #include "wallpaper.h"
@@ -213,6 +214,7 @@ typedef struct {
     char file_path[128];
     char status[48];
     bool dirty;
+    bool read_only;              /* file does not fit the grid: never written back */
     bool sel_active;
     int sel_line;
     int sel_start;
@@ -303,6 +305,11 @@ static AppWindowState app_states[COMPOSITOR_MAX_WINDOWS];
 static int active_window_index = -1;
 static int app_window_index[APP_COUNT];
 
+/* The ~/Notes library. Notes has at most one window, so the list lives
+ * here once instead of in every AppWindowState slot. */
+static NotesLibrary notes_lib;
+static bool notes_follow_selection;     /* scroll the sidebar to the open note */
+
 /*
  * Scratch buffer for reordering windows. AppWindowState is ~110KB, so
  * it must NEVER live on the kernel stack (the old raise path copied it
@@ -390,6 +397,9 @@ static bool path_in_trash(const char *path);
 static void trash_dir(char *out, size_t size);
 static void empty_trash(void);
 static void textedit_load_file(TextEditState *edit, const char *path);
+static void notes_save_open(TextEditState *edit);
+static TextEditState *notes_editor(void);
+static void notes_open_note(TextEditState *edit, int index);
 static size_t str_append(char *dest, size_t size, const char *src);
 static const char *str_find(const char *haystack, const char *needle);
 static void terminal_make_prompt(const TerminalState *term, char *out, size_t size);
@@ -1780,12 +1790,19 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
                                         dark ? RGB(120, 96, 30) : RGB(255, 222, 89), dark ? RGB(96, 76, 22) : RGB(248, 196, 40), 255);
     draw_icon_id(notes ? ICON_NOTES : ICON_TEXTEDIT, content_x + 10, hy + 7, 16, 255);
     const char *name = edit->file_path[0] ? vfs_basename(edit->file_path) : (notes ? "Quick Note" : "Untitled");
+    char note_title[NOTES_NAME_MAX];
+    if (notes && edit->file_path[0]) {          /* Notes shows titles, not file names */
+        notes_title(name, note_title, sizeof(note_title));
+        name = note_title;
+    }
     int nw = text_draw_fit(surface(), content_x + 32, text_y_center(hy, hh, TEXT_BODY_BOLD), name, TEXT_BODY_BOLD,
                            notes && !dark ? RGB(70, 50, 10) : theme->text, content_w - 140);
-    if (edit->dirty) {
-        int pw = text_width("Edited", TEXT_SMALL_BOLD) + 14;
-        draw_rounded_rect_blend(content_x + 40 + nw, hy + 7, pw, 16, 8, theme->accent, 220);
-        ui_text_mid(content_x + 47 + nw, hy + 7, 16, "Edited", TEXT_SMALL_BOLD, COLOR_WHITE);
+    const char *pill = edit->read_only ? "Read-only" : edit->dirty ? "Edited" : NULL;
+    if (pill) {
+        int pw = text_width(pill, TEXT_SMALL_BOLD) + 14;
+        draw_rounded_rect_blend(content_x + 40 + nw, hy + 7, pw, 16, 8,
+                                edit->read_only ? theme->text_muted : theme->accent, 220);
+        ui_text_mid(content_x + 47 + nw, hy + 7, 16, pill, TEXT_SMALL_BOLD, COLOR_WHITE);
     }
 
     /* Paper */
@@ -1844,6 +1861,82 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
     utoa(edit->cursor_col + 1, num, 10);
     str_append(status, sizeof(status), num);
     ui_text_mid(content_x + 4, content_y + content_h - 22, 22, status, TEXT_SMALL, theme->text_muted);
+}
+
+/* Notes: a sidebar of notes (title + first line) left of the editor.
+ * notes_click() uses the same geometry. */
+#define NOTES_SIDEBAR_W  180
+#define NOTES_BUTTON_Y   32     /* New Note button, below content_y */
+#define NOTES_BUTTON_H   24
+#define NOTES_LIST_Y     66     /* first row, below content_y */
+#define NOTES_ROW_H      40
+#define NOTES_FOOTER_H   22     /* "More notes in Finder" */
+
+static int notes_sidebar_w(int content_w)
+{
+    return MIN(NOTES_SIDEBAR_W, content_w / 3);
+}
+
+static int notes_visible_rows(int content_h)
+{
+    int rows = (content_h - NOTES_LIST_Y - (notes_lib.more ? NOTES_FOOTER_H : 6)) / NOTES_ROW_H;
+    return MAX(rows, 0);
+}
+
+static void draw_notes_window(TextEditState *edit, int content_x, int content_y, int content_w, int content_h)
+{
+    bool dark = settings_get()->dark_mode;
+    Color panel = dark ? RGB(18, 24, 36) : COLOR_WHITE;
+    int sw = notes_sidebar_w(content_w);
+    draw_rounded_rect_blend(content_x, content_y, sw, content_h, 12, panel, 70);
+
+    ui_text(content_x + 12, content_y + 9, "Notes", TEXT_BODY_BOLD, theme->text);
+    char count[8];
+    utoa((uint64_t)notes_lib.count, count, 10);
+    ui_text(content_x + sw - 12 - text_width(count, TEXT_SMALL), content_y + 11, count, TEXT_SMALL, theme->text_muted);
+    draw_push_button(content_x + 8, content_y + NOTES_BUTTON_Y, sw - 16, NOTES_BUTTON_H, "+ New Note", true);
+
+    int visible = notes_visible_rows(content_h);
+    if (notes_follow_selection && notes_lib.selected >= 0 && visible > 0) {
+        if (notes_lib.selected < notes_lib.scroll) notes_lib.scroll = notes_lib.selected;
+        if (notes_lib.selected >= notes_lib.scroll + visible) notes_lib.scroll = notes_lib.selected - visible + 1;
+    }
+    notes_follow_selection = false;
+    notes_lib.scroll = MAX(0, MIN(notes_lib.scroll, notes_lib.count - visible));
+
+    int top = content_y + NOTES_LIST_Y;
+    if (notes_lib.count == 0 && notes_lib.dir[0]) {
+        const char *empty = "No notes yet";
+        ui_text(content_x + (sw - text_width(empty, TEXT_BODY)) / 2, top + 14, empty, TEXT_BODY, theme->text_muted);
+    }
+    Color pick = dark ? RGB(150, 112, 24) : RGB(255, 214, 10);     /* Notes yellow */
+    fb_set_clip(content_x, top, sw, visible * NOTES_ROW_H);
+    for (int r = 0; r < visible && notes_lib.scroll + r < notes_lib.count; r++) {
+        int i = notes_lib.scroll + r;
+        int ry = top + r * NOTES_ROW_H;
+        if (i == notes_lib.selected)
+            draw_rounded_rect_blend(content_x + 6, ry + 1, sw - 12, NOTES_ROW_H - 2, 8, pick, dark ? 150 : 120);
+        else if (r > 0 && i - 1 != notes_lib.selected)        /* hairline between plain rows */
+            draw_rounded_rect_blend(content_x + 14, ry, sw - 28, 1, 0, dark ? COLOR_WHITE : theme->midnight, dark ? 22 : 18);
+        char title[NOTES_NAME_MAX];
+        notes_title(notes_lib.items[i].name, title, sizeof(title));
+        text_draw_fit(surface(), content_x + 14, ry + 5, title, TEXT_BODY_BOLD, theme->text, sw - 28);
+        const char *preview = notes_lib.items[i].preview[0] ? notes_lib.items[i].preview : "No additional text";
+        text_draw_fit(surface(), content_x + 14, ry + 22, preview, TEXT_SMALL, theme->text_muted, sw - 28);
+    }
+    fb_reset_clip();
+    if (notes_lib.more)
+        ui_text(content_x + 12, content_y + content_h - NOTES_FOOTER_H + 4, "More notes in Finder", TEXT_SMALL, theme->text_muted);
+
+    /* The open note, or an empty page while none is open. */
+    int ex = content_x + sw + 10, ew = content_w - sw - 10;
+    if (edit->file_path[0]) {
+        draw_textedit_window(edit, ex, content_y, ew, content_h, true);
+        return;
+    }
+    draw_rounded_rect_blend(ex, content_y, ew, content_h, 8, dark ? RGB(24, 30, 42) : RGB(255, 252, 238), 250);
+    const char *hint = notes_lib.dir[0] ? "Click New Note or start typing" : edit->status;
+    ui_text(ex + (ew - text_width(hint, TEXT_BODY)) / 2, content_y + content_h / 2 - 8, hint, TEXT_BODY, theme->text_muted);
 }
 
 static void calendar_format_time(const CalendarEvent *ev, char *out, size_t size)
@@ -2657,7 +2750,7 @@ static void draw_window(int idx)
             draw_textedit_window(&state->textedit, content_x, content_y, content_w, content_h, false);
             break;
         case APP_NOTES:
-            draw_textedit_window(&state->notes, content_x, content_y, content_w, content_h, true);
+            draw_notes_window(&state->notes, content_x, content_y, content_w, content_h);
             break;
         case APP_PREVIEW:
             draw_preview_window(&state->preview, content_x, content_y, content_w, content_h);
@@ -4629,6 +4722,7 @@ static int destroy_window_internal(int id)
     }
     if (idx >= 0 && users_is_authenticated()) ghost_capture(idx, GHOST_CLOSE);
     if (idx < 0) return -1;
+    if (app_states[idx].type == APP_NOTES) notes_save_open(&app_states[idx].notes);
 
     AppType closed_type = app_states[idx].type;
 
@@ -5658,6 +5752,18 @@ static void open_path(const char *path)
             finder_set_path(finder, path);
         }
     } else if (vfs_isfile(path)) {
+        /* A note (a .txt file in ~/Notes) opens in Notes, next to the others. */
+        char notes_dir[128], parent[128];
+        int notes_idx = app_registry_find_by_bundle_id("com.ojjyos.notes");
+        if (notes_idx >= 0 && notes_is_note_name(vfs_basename(path)) &&
+            users_make_home_path(notes_dir, sizeof(notes_dir), "Notes") == 0 &&
+            vfs_dirname(path, parent, sizeof(parent)) == 0 && strcmp(parent, notes_dir) == 0) {
+            launch_app_index(notes_idx, timer_get_ticks());
+            TextEditState *edit = notes_editor();
+            int index = notes_find(&notes_lib, vfs_basename(path));
+            if (edit && index >= 0 && index != notes_lib.selected) notes_open_note(edit, index);
+            return;
+        }
         strncpy(last_opened_path, path, sizeof(last_opened_path) - 1);
         int textedit_idx = app_registry_find_by_bundle_id("com.ojjyos.textedit");
         if (textedit_idx >= 0) {
@@ -5677,6 +5783,7 @@ static void textedit_clear(TextEditState *edit)
     edit->cursor_col = 0;
     memset(edit->lines, 0, sizeof(edit->lines));
     edit->dirty = false;
+    edit->read_only = false;
     edit->sel_active = false;
     edit->sel_line = 0;
     edit->sel_start = 0;
@@ -5797,28 +5904,39 @@ static void textedit_load_file(TextEditState *edit, const char *path)
         return;
     }
 
+    /* A file that does not fit the grid (or holds NUL bytes) is shown cut
+     * down and opens read-only: saving that copy would destroy the rest. */
     char buffer[128];
     int line = 0;
     int col = 0;
     bool any = false;
+    bool ends_with_newline = false;
+    bool full = false;
     ssize_t bytes;
 
-    while ((bytes = vfs_read(file, buffer, sizeof(buffer))) > 0) {
+    while (!full && (bytes = vfs_read(file, buffer, sizeof(buffer))) > 0) {
         any = true;
-        for (int i = 0; i < bytes && line < TEXTEDIT_MAX_LINES; i++) {
+        for (int i = 0; i < bytes; i++) {
             char c = buffer[i];
+            if (line >= TEXTEDIT_MAX_LINES) {
+                edit->read_only = true;
+                full = true;
+                break;
+            }
             if (c == '\n') {
                 line++;
                 col = 0;
-                if (line >= TEXTEDIT_MAX_LINES) break;
+                ends_with_newline = true;
                 continue;
             }
-            if (col < TEXTEDIT_LINE_MAX - 1) {
-                edit->lines[line][col++] = c;
-                edit->lines[line][col] = '\0';
+            ends_with_newline = false;
+            if (c == '\0' || col >= TEXTEDIT_LINE_MAX - 1) {
+                edit->read_only = true;
+                continue;
             }
+            edit->lines[line][col++] = c;
+            edit->lines[line][col] = '\0';
         }
-        if (line >= TEXTEDIT_MAX_LINES) break;
     }
     vfs_close(file);
 
@@ -5826,12 +5944,37 @@ static void textedit_load_file(TextEditState *edit, const char *path)
         strcpy(edit->status, "Empty file");
         return;
     }
-    edit->line_count = line + 1;
+    /* The newline that ends the last line does not start another one:
+     * textedit_save writes one per line, so load + save keeps the bytes. */
+    edit->line_count = ends_with_newline ? line : line + 1;
+    if (edit->line_count < 1) edit->line_count = 1;
+    if (edit->line_count > TEXTEDIT_MAX_LINES) edit->line_count = TEXTEDIT_MAX_LINES;
+    if (edit->read_only) strcpy(edit->status, "Read-only: too long to edit here");
+}
+
+/* Bytes textedit_save writes: every line plus its newline. */
+static int textedit_byte_count(const TextEditState *edit)
+{
+    int total = 0;
+    for (int i = 0; i < edit->line_count; i++) total += (int)strlen(edit->lines[i]) + 1;
+    return total;
+}
+
+/* Keys that never change a read-only document. */
+static bool textedit_key_allowed(const TextEditState *edit, KeyCode key)
+{
+    if (!edit->read_only) return true;
+    return key == KEY_LEFT || key == KEY_RIGHT || key == KEY_UP || key == KEY_DOWN ||
+           key == KEY_HOME || key == KEY_END || key == KEY_PAGEUP || key == KEY_PAGEDOWN;
 }
 
 static void textedit_save(TextEditState *edit)
 {
     if (!edit) return;
+    if (edit->read_only) {
+        strcpy(edit->status, "Read-only: not saved");
+        return;
+    }
     if (edit->file_path[0] == '\0') {
         users_make_home_path(edit->file_path, sizeof(edit->file_path), "Documents/Untitled.txt");
     }
@@ -6169,6 +6312,153 @@ static void textedit_handle_key(TextEditState *edit, char ascii, KeyCode key, ui
     }
 }
 
+/* ---- Notes: the ~/Notes library (ui/notes.c) around the shared editor ---- */
+
+static TextEditState *notes_editor(void)
+{
+    int idx = app_window_index[APP_NOTES];
+    return (idx >= 0 && idx < window_count) ? &app_states[idx].notes : NULL;
+}
+
+/* Writes the open note if it has unsaved edits: autosave, switching notes,
+ * New Note, closing, locking, Cmd+S and every disk sync go through here. */
+static void notes_save_open(TextEditState *edit)
+{
+    if (!edit || !edit->dirty || !edit->file_path[0] || edit->read_only) return;
+    textedit_save(edit);
+    if (edit->dirty) {
+        serial_printf("[NOTES] Save failed for '%s'\n", vfs_basename(edit->file_path));
+        return;
+    }
+    serial_printf("[NOTES] Saved '%s' %d bytes\n", vfs_basename(edit->file_path), textedit_byte_count(edit));
+    notes_refresh(&notes_lib, notes_lib.selected);
+}
+
+static void notes_open_note(TextEditState *edit, int index)
+{
+    char path[NOTES_DIR_MAX + NOTES_NAME_MAX];
+    if (!edit || notes_path(&notes_lib, index, path, sizeof(path)) != 0) return;
+    if (strlen(path) >= sizeof(edit->file_path)) {
+        strcpy(edit->status, "Note name too long");
+        return;
+    }
+    notes_save_open(edit);
+    notes_lib.selected = index;
+    notes_follow_selection = true;
+    textedit_load_file(edit, path);
+    VfsStat st;
+    int size = vfs_stat(path, &st) == 0 ? (int)st.size : -1;
+    serial_printf("[NOTES] Opened '%s' %d bytes%s\n", notes_lib.items[index].name, size,
+                  edit->read_only ? " read-only" : "");
+}
+
+/* Lists the current user's ~/Notes (made on first use) and opens the
+ * first note. */
+static void notes_reload(TextEditState *edit)
+{
+    if (!edit) return;
+    textedit_clear(edit);
+    edit->file_path[0] = '\0';
+    int result = notes_open(&notes_lib, users_current_home());
+    if (result < 0) {
+        strcpy(edit->status, "Can't open the Notes folder");
+        serial_printf("[NOTES] No Notes folder\n");
+        return;
+    }
+    if (result == 1) serial_printf("[NOTES] Imported Documents/Notes.txt\n");
+    serial_printf("[NOTES] %d notes in %s\n", notes_lib.count, notes_lib.dir);
+    if (notes_lib.count > 0) notes_open_note(edit, 0);
+    else strcpy(edit->status, "No notes yet");
+}
+
+/* Notes came to the front again: pick up notes made or deleted elsewhere
+ * (Finder, Terminal) in the meantime. */
+static void notes_rescan(TextEditState *edit)
+{
+    if (!edit) return;
+    if (!notes_lib.dir[0]) {
+        notes_reload(edit);
+        return;
+    }
+    notes_save_open(edit);
+    notes_scan(&notes_lib);
+    if (notes_lib.selected >= 0) return;
+    if (notes_lib.count > 0) {           /* the open note is gone, or none was open */
+        edit->dirty = false;
+        notes_open_note(edit, 0);
+    } else {
+        textedit_clear(edit);
+        edit->file_path[0] = '\0';
+        strcpy(edit->status, "No notes yet");
+    }
+}
+
+static void notes_new(TextEditState *edit)
+{
+    if (!edit) return;
+    notes_save_open(edit);
+    if (!notes_lib.dir[0]) {
+        strcpy(edit->status, "Can't open the Notes folder");
+        return;
+    }
+    int index = notes_create(&notes_lib);
+    if (index < 0) {
+        strcpy(edit->status, notes_lib.count >= NOTES_MAX ? "Notes is full" : "Couldn't make a note");
+        serial_printf("[NOTES] New note failed\n");
+        return;
+    }
+    serial_printf("[NOTES] New note '%s'\n", notes_lib.items[index].name);
+    notes_open_note(edit, index);
+    strcpy(edit->status, "New note");
+}
+
+static void notes_handle_key(TextEditState *edit, char ascii, KeyCode keycode, uint8_t modifiers)
+{
+    if (!edit->file_path[0]) {
+        /* Typing with no note open starts one. */
+        if ((modifiers & (INPUT_MOD_SUPER | INPUT_MOD_CTRL)) || ascii < 32 || ascii > 126) return;
+        notes_new(edit);
+        if (!edit->file_path[0]) return;
+    }
+    if (!textedit_key_allowed(edit, keycode)) return;
+    textedit_handle_key(edit, ascii, keycode, modifiers);
+    if (edit->dirty) notes_lib.last_edit_ms = timer_get_ticks();
+}
+
+/* Autosave: one write once typing has paused for NOTES_AUTOSAVE_MS (the
+ * old Notes rewrote the file on every key), and at once when the screen
+ * locks - the next user may not be allowed to write this home folder. */
+static void notes_autosave_tick(uint64_t now_ms)
+{
+    TextEditState *edit = notes_editor();
+    if (!edit || !edit->dirty || edit->read_only) return;
+    if (!login_screen_visible() && !notes_autosave_due(true, notes_lib.last_edit_ms, now_ms)) return;
+    notes_save_open(edit);
+    if (edit->dirty) notes_lib.last_edit_ms = now_ms;      /* failed: try again in a second */
+    mark_dirty();
+}
+
+void compositor_save_documents(void)
+{
+    notes_save_open(notes_editor());
+}
+
+static void notes_click(TextEditState *edit, int content_x, int content_y, int content_w, int content_h, int x, int y)
+{
+    int sw = notes_sidebar_w(content_w);
+    if (x < content_x || x >= content_x + sw || y < content_y) return;
+    if (y >= content_y + NOTES_BUTTON_Y && y < content_y + NOTES_BUTTON_Y + NOTES_BUTTON_H) {
+        notes_new(edit);
+        return;
+    }
+    int top = content_y + NOTES_LIST_Y;
+    if (y < top) return;
+    int row = (y - top) / NOTES_ROW_H;
+    if (row >= notes_visible_rows(content_h)) return;
+    int index = notes_lib.scroll + row;
+    if (index < notes_lib.count && index != notes_lib.selected) notes_open_note(edit, index);
+}
+
 static AppType app_type_from_bundle(const char *bundle_id)
 {
     if (!bundle_id) return APP_DEMO;
@@ -6256,10 +6546,7 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         textedit_clear(&state->textedit);
         strcpy(state->textedit.status, "Ready");
     } else if (type == APP_NOTES) {
-        textedit_clear(&state->notes);
-        users_make_home_path(state->notes.file_path, sizeof(state->notes.file_path), "Documents/Notes.txt");
-        textedit_load_file(&state->notes, state->notes.file_path);
-        strcpy(state->notes.status, "Notes");
+        notes_reload(&state->notes);
     } else if (type == APP_PREVIEW) {
         state->preview.index = wp_choice;
     } else if (type == APP_CALENDAR) {
@@ -6304,6 +6591,7 @@ static int app_open_window(AppType type, const char *title)
         }
         windows[idx].minimized = false;
         raise_window_to_top(idx);
+        if (type == APP_NOTES) notes_rescan(&app_states[window_count - 1].notes);
         CompositorWindow *top = &windows[window_count - 1];
         serial_printf("[UI] window '%s' at %d,%d %dx%d\n", top->title, top->x, top->y, top->w, top->h);
         return top->id;
@@ -6317,7 +6605,7 @@ static int app_open_window(AppType type, const char *title)
     if (type == APP_SETTINGS) { w = 700; h = 460; }
     if (type == APP_TERMINAL) { w = 600; h = 360; }
     if (type == APP_TEXTEDIT) { w = 560; h = 360; }
-    if (type == APP_NOTES) { w = 460; h = 320; }
+    if (type == APP_NOTES) { w = 640; h = 400; }
     if (type == APP_PREVIEW) { w = 480; h = 320; }
     if (type == APP_CALENDAR) { w = 720; h = 440; }
     if (type == APP_ABOUT) { w = 460; h = 300; }
@@ -6358,8 +6646,7 @@ void compositor_on_user_switched(void)
             strncpy(st->terminal.cwd, users_current_home(), sizeof(st->terminal.cwd) - 1);
             st->terminal.cwd[sizeof(st->terminal.cwd) - 1] = '\0';
         } else if (st->type == APP_NOTES) {
-            users_make_home_path(st->notes.file_path, sizeof(st->notes.file_path), "Documents/Notes.txt");
-            textedit_load_file(&st->notes, st->notes.file_path);
+            notes_reload(&st->notes);
         } else if (st->type == APP_CALENDAR) {
             calendar_load(&st->calendar);
         }
@@ -6563,14 +6850,26 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode, uint8_t 
     if (state->type != APP_TEXTEDIT && state->type != APP_NOTES) {
         return false;
     }
-    TextEditState *edit = (state->type == APP_NOTES) ? &state->notes : &state->textedit;
+    bool notes = state->type == APP_NOTES;
+    TextEditState *edit = notes ? &state->notes : &state->textedit;
+    /* Cut/paste change the text: not in a read-only document, and Notes
+     * needs a note to change. */
+    if ((keycode == KEY_X || keycode == KEY_V) && (edit->read_only || (notes && !edit->file_path[0]))) {
+        return true;
+    }
 
     switch (keycode) {
         case KEY_S:
-            textedit_save(edit);
+            if (notes) notes_save_open(edit);
+            else textedit_save(edit);
+            return true;
+        case KEY_N:
+            if (!notes) return false;
+            notes_new(edit);
             return true;
         case KEY_O:
-            if (last_opened_path[0]) {
+            /* Notes edits only its own notes; the sidebar opens them. */
+            if (!notes && last_opened_path[0]) {
                 textedit_load_file(edit, last_opened_path);
             }
             return true;
@@ -6597,12 +6896,14 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode, uint8_t 
                 textedit_delete_line(edit, edit->cursor_line);
                 strcpy(edit->status, "Cut line");
             }
+            if (notes) notes_lib.last_edit_ms = timer_get_ticks();
             return true;
         case KEY_V:
             if (text_clipboard[0]) {
                 textedit_insert_line(edit, edit->cursor_line + 1, text_clipboard);
                 strcpy(edit->status, "Pasted line");
             }
+            if (notes) notes_lib.last_edit_ms = timer_get_ticks();
             return true;
         default:
             return false;
@@ -6891,12 +7192,10 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
             terminal_handle_key(&state->terminal, ascii, keycode);
         } else if (state->type == APP_TEXTEDIT) {
             /* Cmd shortcuts were already handled by handle_app_shortcut */
-            textedit_handle_key(&state->textedit, ascii, keycode, modifiers);
+            if (textedit_key_allowed(&state->textedit, keycode))
+                textedit_handle_key(&state->textedit, ascii, keycode, modifiers);
         } else if (state->type == APP_NOTES) {
-            textedit_handle_key(&state->notes, ascii, keycode, modifiers);
-            if (state->notes.dirty) {
-                textedit_save(&state->notes);
-            }
+            notes_handle_key(&state->notes, ascii, keycode, modifiers);
         } else if (state->type == APP_FINDER) {
             FinderState *finder = &state->finder;
             /* A stale selection (e.g. after delete/refresh) must not act
@@ -7475,7 +7774,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         if (active_window_index >= 0 && active_window_index < window_count) {
                             AppWindowState *st = &app_states[active_window_index];
                             if (st->type == APP_TEXTEDIT) textedit_save(&st->textedit);
-                            else if (st->type == APP_NOTES) textedit_save(&st->notes);
+                            else if (st->type == APP_NOTES) notes_save_open(&st->notes);
                         }
                     } else if (item == 4) {
                         compositor_handle_key(KEY_Q, 0, INPUT_MOD_SUPER);
@@ -8183,6 +8482,8 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             cal->selected_event = indices[row];
                         }
                     }
+                } else if (state->type == APP_NOTES) {
+                    notes_click(&state->notes, win->x + 12, win->y + 40, win->w - 24, win->h - 52, x, y);
                 } else if (state->type == APP_PREVIEW) {
                     preview_click(&state->preview, win->x + 12, win->y + 40, win->w - 24, win->h - 52, x, y);
                 } else if (state->type == APP_WEB) {
@@ -8347,6 +8648,10 @@ void compositor_handle_scroll(int32_t dx, int32_t dy)
             if (state->textedit.scroll < 0) state->textedit.scroll = 0;
             break;
         case APP_NOTES:
+            if (cursor_x >= win->x + 12 && cursor_x < win->x + 12 + notes_sidebar_w(win->w - 24)) {
+                notes_lib.scroll = MAX(0, notes_lib.scroll + (delta > 0 ? 1 : -1));   /* clamped when drawn */
+                break;
+            }
             state->notes.scroll += delta;
             if (state->notes.scroll < 0) state->notes.scroll = 0;
             break;
@@ -8576,6 +8881,7 @@ void compositor_tick(uint64_t now_ms)
     pointer_pump();
     if (netcmd_busy()) netcmd_poll(terminal_net_print);
     browser_poll();
+    notes_autosave_tick(now_ms);
     pointer_pump();
     {
         /* Network status shows in the menu bar, Control Center and Settings:

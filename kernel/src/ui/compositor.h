@@ -79,5 +79,8 @@ void compositor_get_cursor(int32_t *x, int32_t *y);
 bool compositor_overlay_active(void);
 void compositor_on_user_switched(void);
 void compositor_tick(uint64_t now_ms);
+/* Writes documents with unsaved edits (the open note) to the filesystem;
+ * called before every save to disk so sync/shutdown never lose them. */
+void compositor_save_documents(void);
 
 #endif /* _OJJY_UI_COMPOSITOR_H */

@@ -12,7 +12,7 @@
 static AppInfo app_registry[APP_REGISTRY_MAX];
 static int app_count = 0;
 
-static char file_index[16][256];
+static char file_index[32][256];
 static int file_count = 0;
 
 static SettingsState settings_state = {
@@ -221,44 +221,34 @@ int app_registry_launch(int index)
     return -1;
 }
 
+/* Adds the files in one folder of the user's home to the index. */
+static void index_home_folder(const char *subpath)
+{
+    char dir_path[128];
+    if (users_make_home_path(dir_path, sizeof(dir_path), subpath) != 0) return;
+    VfsDir *dir = vfs_opendir(dir_path);
+    if (!dir) return;
+    VfsDirEntry entry;
+    while (vfs_readdir(dir, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
+        if (entry.type != VFS_TYPE_FILE) continue;
+        char full[256];
+        if (vfs_join_path(full, sizeof(full), dir_path, entry.name) == 0) {
+            strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
+            file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
+        }
+    }
+    vfs_closedir(dir);
+}
+
 void search_index_init(void)
 {
     file_count = 0;
     memset(file_index, 0, sizeof(file_index));
 
     /* (Desktop pictures are added by the compositor, which owns them.) */
-    VfsDirEntry entry;
-    char docs_dir[128];
-    users_make_home_path(docs_dir, sizeof(docs_dir), "Documents");
-    VfsDir *docs = vfs_opendir(docs_dir);
-    if (docs) {
-        while (vfs_readdir(docs, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
-            if (entry.type == VFS_TYPE_FILE) {
-                char full[256];
-                if (vfs_join_path(full, sizeof(full), docs_dir, entry.name) == 0) {
-                    strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
-                    file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
-                }
-            }
-        }
-        vfs_closedir(docs);
-    }
-
-    char desk_dir[128];
-    users_make_home_path(desk_dir, sizeof(desk_dir), "Desktop");
-    VfsDir *desk = vfs_opendir(desk_dir);
-    if (desk) {
-        while (vfs_readdir(desk, &entry) == 0 && file_count < (int)ARRAY_SIZE(file_index)) {
-            if (entry.type == VFS_TYPE_FILE) {
-                char full[256];
-                if (vfs_join_path(full, sizeof(full), desk_dir, entry.name) == 0) {
-                    strncpy(file_index[file_count++], full, sizeof(file_index[0]) - 1);
-                    file_index[file_count - 1][sizeof(file_index[0]) - 1] = '\0';
-                }
-            }
-        }
-        vfs_closedir(desk);
-    }
+    index_home_folder("Documents");
+    index_home_folder("Desktop");
+    index_home_folder("Notes");
 }
 
 static void add_result(SearchResult *results, int *count, int max_results,
@@ -311,12 +301,13 @@ int search_index_query(const char *query, SearchResult *results, int max_results
     for (int i = 0; i < file_count && count < max_results; i++) {
         const char *path = file_index[i];
         const char *name = vfs_basename(path);
+        const char *kind = str_find(path, "/Notes/") ? "Note" : "Document";
         if (str_prefix_ci(name, query)) {
             add_result(results, &count, max_results, SEARCH_RESULT_FILE,
-                       name, "Document", path, -1, 1);
+                       name, kind, path, -1, 1);
         } else if (str_contains_ci(name, query)) {
             add_result(results, &count, max_results, SEARCH_RESULT_FILE,
-                       name, "Document", path, -1, 3);
+                       name, kind, path, -1, 3);
         }
     }
 

@@ -1,5 +1,26 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-26): project moved to ~/Developer after the iCloud loss
+
+On 2026-10-25 the whole `~/Desktop/Desktop Jonas` folder was removed from
+iCloud from another device; Jonas's dad had a copy and put it back on
+2026-10-26. It was merged into **`~/Developer/ojjyOS-kernel/`** (not synced
+by iCloud): main folder `ojjyOS-v3` [ui-polish-3], worktrees `ojjyOS-v3-ui`
+[desktop-polish] and `ojjyOS-v3-net` [net-web] (`git worktree repair` run).
+History is complete through `f074fce`; `git fsck` clean; `bash
+scripts/test.sh` passes; roadmap check 695 cards, 0 errors. Files from the
+restored copy that were older than the committed ones are parked in
+`~/Developer/.merge-hold-2026-10-26/`. Old absolute paths in this file that
+say `~/Desktop/Desktop Jonas/...` now mean `~/Developer/...`.
+
+New workflow (both Claude Code and OpenCode): `/home`, `/wrapup`, `/backup`,
+`/idea`, `/teach`, `/ojjyos` skills; tasks are checkbox lists ticked only with
+evidence (`~/.claude/skills/home/scripts/checklist.py --strict`); shared AI
+board `~/Developer/AI-BOARD.md`; ask Jonas before every push. Dashboard
+**ojjy Control** (`~/Developer/ojjy-control`, http://127.0.0.1:4321) shows a
+"ready to test" light: after building a visible change into the installed
+image, run `~/.claude/skills/ojjyos/scripts/ready_to_test.py` (ojjyos skill).
+
 ## >>> LONG-TERM PLAN (2026-10-22): read `roadmap/README.md` <<<
 
 Jonas asked for a detailed five-year roadmap to make ojjyOS a full modern

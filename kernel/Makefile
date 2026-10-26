@@ -93,7 +93,8 @@ COMMON_C_SOURCES = src/main.c \
                    src/ui/browser_profile.c \
                    src/ui/browser_pages.c \
                    src/ui/netcmd.c \
-                   src/ui/calcmath.c
+                   src/ui/calcmath.c \
+                   src/ui/notes.c
 
 ifeq ($(ARCH),aarch64)
 TARGET_TRIPLE = aarch64-unknown-none-elf

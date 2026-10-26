@@ -378,6 +378,8 @@ static void cmd_ui(const char *arg)
  */
 static bool save_persistent_state(void)
 {
+    /* Open documents first: Notes autosaves only after a pause in typing. */
+    if (ui_initialized) compositor_save_documents();
     if (!persist_instances[0]) return true;
     if (block_available()) {
         return persist_save(persist_instances, 2) == 0;

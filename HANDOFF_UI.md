@@ -60,14 +60,14 @@ file so far is `kernel/Makefile` (both add source lines — trivial merge).
 
 | Step | Commit | What |
 |---|---|---|
-| LG1 | `f5f9afe` | `gfx_liquid_glass()` material in `kernel/src/gfx.c` |
-| LG2 | `f5f9afe` | Dock, menus, menu bar, Control Center, Spotlight, tooltips, Cmd+Tab, Mission Control cards, login card use it |
-| W1 | `ea69750` | Baseline JPEG decoder `kernel/src/image/jpeg.c` |
-| W2-W4 | `d32722d` | Tahoe wallpaper pack, Settings > Wallpaper grid, Preview viewer, saved choice, boot-forces-Light bug fixed |
+| LG1 | `fa87bae` | `gfx_liquid_glass()` material in `kernel/src/gfx.c` |
+| LG2 | `fa87bae` | Dock, menus, menu bar, Control Center, Spotlight, tooltips, Cmd+Tab, Mission Control cards, login card use it |
+| W1 | `f25889d` | Baseline JPEG decoder `kernel/src/image/jpeg.c` |
+| W2-W4 | `1d2c110` | Tahoe wallpaper pack, Settings > Wallpaper grid, Preview viewer, saved choice, boot-forces-Light bug fixed |
 
 Earlier in this branch (before Liquid Glass): browser text in Inter, dark-mode
 browser, real Settings pages for Wallpaper/Dock/Keyboard/Mouse, TextEdit and
-Notes caret + paper look (`b8eede0` .. `efc8b91`).
+Notes caret + paper look (`3079ea1` .. `3c28501`).
 
 ### 3.1 Liquid Glass (LG1/LG2)
 

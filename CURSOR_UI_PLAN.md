@@ -6,7 +6,7 @@ started. Keep custom kernel, blue Tahoe styling, accounts and saved documents.
 ## Investigation / baseline
 
 - User reports pointer offset and lag, then asks for UI cleanup afterward.
-- Reproduced using the delivered `ef92f96` ARM64 image on a private disk:
+- Reproduced using the delivered `7499306` ARM64 image on a private disk:
   QMP absolute (100,100) -> visible guest tip (512,582); (200,150) -> (712,682);
   returning to (100,100) after crossing the edge -> (0,0). PNG evidence:
   `build/cursor-before/`. Pixel template detects the actual rendered sprite.

@@ -8,7 +8,7 @@ strict file ownership so they never edit the same code. Both publish
 finished steps to `main` with fast-forwards. Read this whole file before
 touching anything, then your track's plan.
 
-## 1. Where the project stands (studied 2026-10-18 evening, `main` = `0b18cb5`)
+## 1. Where the project stands (studied 2026-10-18 evening, `main` = `a340a64`)
 
 Done and on `main`:
 - Custom kernel for ARM64 + x86-64; protected EL0 programs (ARM64, one at a

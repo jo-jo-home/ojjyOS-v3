@@ -1,5 +1,19 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-26, later): history cleaned before the first push since Feb
+
+Before pushing to the PUBLIC GitHub repo, a review (gitleaks: no secrets;
+manual: personal info, big/unneeded files, Apple wallpapers) found Jonas's Mac
+account name inside absolute paths in 9 docs. Unpushed history (87 commits)
+was rewritten with git-filter-repo `--refs ... ^origin/main` (paths now
+`~/...`; the 4 commits already on GitHub are untouched). **All commit ids
+after GitHub's `07e1e69` changed**; references in the current docs were
+remapped (old→new map: `.git/filter-repo/commit-map`). Backups of the old
+history: `~/ojjyOS-rescue-2026-10-25/ojjyOS-v3-before-history-cleanup-2026-10-26.bundle`.
+Also untracked the compiled host tools (`tools/mk*`, built by tools/Makefile)
+and `.Rhistory`. Never write absolute `/Users/<name>/...` paths into tracked
+files: use `~/Developer/...`.
+
 ## LATEST (2026-10-26): project moved to ~/Developer after the iCloud loss
 
 On 2026-10-25 the whole `~/Desktop/Desktop Jonas` folder was removed from
@@ -7,7 +21,7 @@ iCloud from another device; Jonas's dad had a copy and put it back on
 2026-10-26. It was merged into **`~/Developer/ojjyOS-kernel/`** (not synced
 by iCloud): main folder `ojjyOS-v3` [ui-polish-3], worktrees `ojjyOS-v3-ui`
 [desktop-polish] and `ojjyOS-v3-net` [net-web] (`git worktree repair` run).
-History is complete through `f074fce`; `git fsck` clean; `bash
+History is complete through `4675f75`; `git fsck` clean; `bash
 scripts/test.sh` passes; roadmap check 695 cards, 0 errors. Files from the
 restored copy that were older than the committed ones are parked in
 `~/Developer/.merge-hold-2026-10-26/`. Old absolute paths in this file that
@@ -53,9 +67,9 @@ visits live sites (use `OJJY_ACCEL=hvf` for real timings; TCG is ~8x slower).
 
 ## LATEST (2026-10-19): Track N — N1 crypto primitives DONE and on main
 
-`main` = `e6ad444` and holds BOTH tracks' latest (D: D1 glass controls +
+`main` = `f35c47a` and holds BOTH tracks' latest (D: D1 glass controls +
 mouse-lag fix; N: N1). Track N branch `net-web` == `main`, tree clean.
-N1 (`04419bb`): SHA-384/512, 4224-bit big integers with CIOS Montgomery,
+N1 (`7537656`): SHA-384/512, 4224-bit big integers with CIOS Montgomery,
 RSA PKCS#1 v1.5 + RSASSA-PSS, ECDSA P-256/P-384 — written from the
 specs, in the kernel build, host-tested (72 checks, OpenSSL-CLI and
 Python-hashlib vectors, 4000-corruption fuzz + truncation sweeps, green
@@ -149,7 +163,7 @@ stays untracked.
 
 ## LATEST (2026-10-18): native VM delivered; N1–N11 complete
 
-All native milestones are verified (`0054e86` is the N9/N10 app commit;
+All native milestones are verified (`e403dd8` is the N9/N10 app commit;
 see git log for the final N11 capture/docs commit). Integration is a local
 fast-forward to `main`; nothing is pushed. Launch **`build/ojjyOS.app`** or run
 `bash scripts/run-vm.sh`. It boots Jonas's custom kernel on Apple's VZ,
@@ -194,7 +208,7 @@ The conversation-export JSON is intentionally untracked. Do not add it.
 
 ## Historical checkpoint (N9/N10 verified, before N11; 2026-10-18)
 
-N8 kernel component committed `91bf20d`. Native app implementation:
+N8 kernel component committed `a73c5a0`. Native app implementation:
 `vmapp/main.swift`, `scripts/{build-vmapp,run-vm,test-vmapp}.sh`,
 `tests/{test_vmapp.swift,vz_smoke.py}`. `build/ojjyOS.app` builds/signs and
 runs VZ at 2880x1800. `native-guards/report.json` proves setup with uppercase
@@ -222,8 +236,8 @@ docs/merge to main only when green. Never push. Installed disks untouched so far
 
 ## LATEST (2026-10-18): N8 USB driver implemented; native app is next
 
-`native-vm`: N5/N6 boot fixes committed as `a094d68`, N4/N7 timer/clock
-health as `65d26d3`. N8 adds original `xhci.c` / `usb_hid.c`, runtime DMA
+`native-vm`: N5/N6 boot fixes committed as `b54a85a`, N4/N7 timer/clock
+health as `eb1fd23`. N8 adds original `xhci.c` / `usb_hid.c`, runtime DMA
 rings, polled direct-port enumeration, boot keyboard and descriptor-driven
 absolute pointer, shared input translation/repeat policy. VZ enumerates its
 Apple keyboard (05ac:8105) and pointer (05ac:8106); QEMU USB full smoke
@@ -248,7 +262,7 @@ pressure is the inference; host queue occupancy was not measured.
 
 ## LATEST (2026-10-18, resumed): VZ boots with all five PCI devices
 
-Work continues on `native-vm` from `1411d0e`; not paused. Read the newest
+Work continues on `native-vm` from `d4f2252`; not paused. Read the newest
 log entries in `NATIVE_VM_PLAN.md` before the historical handoff below.
 The VZ guest now reaches the main loop with PCI GPU, console, disk, RNG,
 and networking (real DHCP lease). USB input and the native app remain next.
@@ -361,8 +375,8 @@ on virtio-gpu and on the ramfb fallback; x86 unchanged. Nothing pushed.
 
 ## (2026-10-17): networking, browser with HTTPS, real Wi-Fi tile, apps pass DONE
 
-Commits c07af3a (network), 11cbdbd (browser), 9adb978 (TLS 1.3/HTTPS),
-5887bf9 (Wi-Fi tile + Settings > Network), 305fc9e (apps pass). Next ideas
+Commits 2526e68 (network), 45d40c7 (browser), 40b3732 (TLS 1.3/HTTPS),
+b641922 (Wi-Fi tile + Settings > Network), 52620fb (apps pass). Next ideas
 in ROADMAP.md: certificate verification, images (PNG), Downloads, TextEdit
 word wrap, Preview for real files, Intel NIC. Nothing pushed.
 
@@ -393,7 +407,7 @@ Session records / HEAD at this write (2026-10-17 ~21:15):
   (`ojjyos-v3-bugs-macos-features-custom-kernel.json`; deliberately NOT
   committed — too large). His msg 280 is the canonical requirements list;
   his latest instructions supersede older ones.
-- HEAD is `8cc8d5a` (file-copy data loss, Finder shortcut/refresh/history,
+- HEAD is `d1282d2` (file-copy data loss, Finder shortcut/refresh/history,
   account-name bug pass; details in `IMPROVEMENTS.md`); main is 17 commits
   ahead of origin/main, **nothing pushed**.
 - More than one AI session has worked in this repo concurrently today.
@@ -458,7 +472,7 @@ doing that in future sessions. Read **HANDOFF.md**, **PROTECTED_APPS.md** and
 Jonas's latest request was: **"pause. and write all context to the project.
 like a new ai can know whats happening"**. Read **[HANDOFF.md](HANDOFF.md)**
 alongside this file before resuming. The reliability pass is committed as
-`bac1dec`. The next protected-app milestone was only being investigated;
+`cd2c46b`. The next protected-app milestone was only being investigated;
 **no protected-app implementation or runtime changes were made afterward**.
 This pause changes documentation only. Do not start the proposed work until
 Jonas asks to resume. Never push without explicit authorization.
@@ -571,7 +585,7 @@ defects and the current implementation:
   dirty-tracked, verified 0.000% idle framebuffer diff), shipped the
   anti-aliased **JetBrains Mono** font, 2x cursor, `show-cursor=on`,
   `-smp 1` + MPIDR core parking, Tahoe ASCII art everywhere
-  (commits `d4f0fa7`, `6eea513`, `1f860de`).
+  (commits `e331aa4`, `278370a`, `216b2df`).
 - **Session 7 (historical handoff):** documented repeated `o`, incorrect
   deletion, apparent freezes, and fullscreen bars. Its high-confidence
   autorepeat claim was unproven. Session 8 found the negotiated-depth and
@@ -616,8 +630,8 @@ defects and the current implementation:
   ASCII art across splash/serial/console/login/About/Terminal/power-off.
 - Persistence: RAMFS snapshots autosaved to the data partition every
   30 s when dirty + on shutdown/reboot/`sync`; restored on boot.
-- Commits: `0dbaea6` → `7ceff6a` → `db6dba2` → `d4f0fa7` → `6eea513`
-  → `1f860de` (all local, nothing pushed — Jonas pushes himself).
+- Commits: `0dbaea6` → `17ba39b` → `26cec5c` → `e331aa4` → `278370a`
+  → `216b2df` (all local, nothing pushed — Jonas pushes himself).
 
 ---
 
@@ -752,7 +766,7 @@ Fixed 28+ defects across build, boot, input, filesystem, and desktop:
   `Reduced Motion` (`rm=`) toggles in Settings, Control Center Restart/Shut Down
   buttons, and PS/2 modifier key release events for `Cmd+Tab`.
 
-### Session 4 (User Accounts, Salted SHA-256 Credentials & Tahoe Desktop Expansion, commit `3582b8e`)
+### Session 4 (User Accounts, Salted SHA-256 Credentials & Tahoe Desktop Expansion, commit `cfbd5de`)
 
 - **Multi-User Account & Credential Engine (`kernel/src/users.h`, `kernel/src/users.c`):**
   - Full FIPS 180-4 SHA-256 implementation with per-account 8-hex-char salt

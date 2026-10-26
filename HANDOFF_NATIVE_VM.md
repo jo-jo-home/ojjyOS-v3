@@ -51,7 +51,7 @@ Jonas. You (the next AI) have NO other context: read this whole file, then
 ## ⚠️ PROGRESS UPDATE (paused again 2026-10-18, ~16:30) — READ FIRST
 
 A second session continued from the WIP and got much further. State:
-branch `native-vm`, commits `65c605f` (N2 done) and `b6e5aa3` (N3 done),
+branch `native-vm`, commits `e5e45e3` (N2 done) and `e4871fd` (N3 done),
 PLUS a large UNCOMMITTED working tree (N5/N6 + three bug fixes). Both
 builds compile with 0 warnings and `bash scripts/test.sh` passes right
 now. THE WORKING TREE IS BEING COMMITTED AS "N5/N6 WIP" — check
@@ -59,11 +59,11 @@ now. THE WORKING TREE IS BEING COMMITTED AS "N5/N6 WIP" — check
 
 ### Done and committed
 
-- **N2** (`65c605f`): platform plumbing — `platform.c` ACPI parse,
+- **N2** (`e5e45e3`): platform plumbing — `platform.c` ACPI parse,
   `platform_init()` first in kernel_main, `pci.h/.c` (ECAM via mmio.h,
   bus-0 enumerate, BAR decode, Memory+BusMaster enable, `pci_find()`).
   QEMU TCG+HVF smoke --protected + pointer PASS (build/n2-*).
-- **N3** (`b6e5aa3`): owned page tables — 2 MiB blocks classified from
+- **N3** (`e4871fd`): owned page tables — 2 MiB blocks classified from
   the UEFI map (RAM=Normal, else Device), 4-8 GiB Device blocks for VZ's
   64-bit virtio BARs, IPS=40 when PARange>=2. All suites PASS (build/n3-*).
 
@@ -211,7 +211,7 @@ at 0x1_000x_0000 which IS covered.
 
 ## 2. Repository state when you start
 
-- Branch `main` = last green state (commit `96358a9` + this handoff).
+- Branch `main` = last green state (commit `9182cea` + this handoff).
 - Branch **`native-vm`** = `main` + the unfinished step N2 work (commit
   "WIP N2 ..."). **It does not build yet.** Do `git checkout native-vm` and
   continue there; merge into main (fast-forward) only when QEMU suites pass.

@@ -10,10 +10,16 @@ build/
 kernel.bin
 
 # Generated files
+# Host tools are built from tools/*.c by tools/Makefile (scripts/mkfs.sh)
+tools/mkojfs
+tools/mkicon
+tools/mkwallpaper
+tools/mkarray
 kernel/src/fs/system_fs.h
 sysroot/System/Programs/*.elf
 
 # OS junk
+.Rhistory
 .DS_Store
 *.swp
 *~
@@ -29,3 +35,6 @@ __pycache__/
 
 # Apple wallpapers downloaded for personal use - never commit (copyright Apple)
 wallpapers/local/
+
+# Local AI session exports (personal, large)
+*-custom-kernel.json

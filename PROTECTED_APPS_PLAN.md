@@ -1,6 +1,6 @@
 # Protected execution milestone (ARM64 first)
 
-Author: Jonas Lee. Resumed after the paused handoff at `2443b0a`.
+Author: Jonas Lee. Resumed after the paused handoff at `c85b2ff`.
 
 ## Contract and scope
 

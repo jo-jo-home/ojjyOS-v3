@@ -8,10 +8,10 @@ Captured: **2026-10-17**. Read this together with **AGENTS.md**.
   order, extracted from the 9.7 MB session export he provided in the repo
   root (`ojjyos-v3-bugs-macos-features-custom-kernel.json`, intentionally
   uncommitted). Read it for requirements history and tone.
-- HEAD at this write: `8cc8d5a` (bug/improvement pass — file-copy data loss,
+- HEAD at this write: `d1282d2` (bug/improvement pass — file-copy data loss,
   Finder Cmd+C, stale listings, forward history, username validation; see
-  `IMPROVEMENTS.md`). Cursor/UI fix: `e649535` (receipts in
-  `CURSOR_UI_PLAN.md`). Protected apps: `ef92f96` (`PROTECTED_APPS.md`).
+  `IMPROVEMENTS.md`). Cursor/UI fix: `70ffdff` (receipts in
+  `CURSOR_UI_PLAN.md`). Protected apps: `7499306` (`PROTECTED_APPS.md`).
   Main is 17 commits ahead of origin/main; **nothing pushed**.
 - Multiple AI sessions edited this repo concurrently today; re-check git
   state before trusting any single handoff file, including this one.
@@ -20,7 +20,7 @@ Captured: **2026-10-17**. Read this together with **AGENTS.md**.
 
 ## DONE: cursor and UI request (see CURSOR_UI_PLAN.md receipts)
 
-After `ef92f96`, Jonas first requested an OS status update, then reported the
+After `7499306`, Jonas first requested an OS status update, then reported the
 guest pointer is offset from the host pointer and laggy, and requested UI
 cleanup after the pointer fix. Scheduler design was only being considered;
 no implementation edits were made. Latest task is cursor first, visuals second.
@@ -96,7 +96,7 @@ Next: rerun ARM64 with `--protected`, finish all fault/timeout/register/Terminal
 checks, inspect failures rather than weakening assertions, review memory and trap
 boundaries, rerun both builds + host/sanitized tests, finalize docs and commit
 locally as Jonas. No push. Evidence is `build/protected-*.log` and matching private
-test directories. The old `2443b0a` remains last committed checkpoint for now;
+test directories. The old `c85b2ff` remains last committed checkpoint for now;
 inspect `git status` to see all active work.
 
 Checkpoint 2: ARM64 register preservation and output-budget tests now pass.
@@ -140,7 +140,7 @@ Jonas said:
 > pause. and write all context to the project. like a new ai can know whats happening
 
 **Implementation is paused.** The completed reliability pass is committed as
-`bac1dec` (`Fix kernel reliability: preserve disks, correct virtqueues, recover checkpoints`).
+`cd2c46b` (`Fix kernel reliability: preserve disks, correct virtqueues, recover checkpoints`).
 After Jonas said "alright continue", the assistant announced protected application
 execution as the next kernel-first milestone and read the relevant code. Jonas
 then paused the work. **No protected-app code, MMU changes, ELF app loader,
@@ -215,7 +215,7 @@ derived from clocks/username/counter, not a strong password KDF with secure entr
 Some account-management and fallback console paths have insufficient authorization.
 Do not call this a hardened multi-user security boundary.
 
-## 4. Completed reliability pass (`bac1dec`)
+## 4. Completed reliability pass (`cd2c46b`)
 
 ### 4.1 Safe rebuilding and architecture-specific disks
 
@@ -520,6 +520,6 @@ validation. Do not present this design sketch as an implemented or approved ABI.
 - GBrain was not pinned as a reliable code index for this worktree. Use local source
   searches, not an assumption that the shared brain contains the implementation.
 - The full earlier session history remains in AGENTS.md and local git commits. The
-  former Session-7 handoff `6f4a1f0` is useful history, not the current fix plan.
+  former Session-7 handoff `c4c24d4` is useful history, not the current fix plan.
 - When resuming, inspect `git status` and the actual source first. Do not overwrite
   changes a different AI or Jonas may have made after this snapshot.

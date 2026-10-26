@@ -4,7 +4,7 @@ The starting point every card builds on. "Now" in cards means this snapshot.
 Update the snapshot only when a whole subsystem is replaced (and say so in
 the card log). File sizes are approximate line counts.
 
-`main` = `5d52295`. ~212k lines in `kernel/src` (of which ~160k are generated
+`main` = `c6da1a9`. ~212k lines in `kernel/src` (of which ~160k are generated
 font/icon data). Version string 3.1.0 (`kernel/src/main.c`).
 
 ---

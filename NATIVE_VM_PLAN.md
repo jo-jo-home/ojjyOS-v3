@@ -91,7 +91,7 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
   the UI job's commits follows; nothing pushed.
 
 - Integration correction: local `main` had independently advanced to
-  `ca29f6a` with browser Inter text, Liquid Glass, JPEG/desktop-picture support
+  `1eaf5fe` with browser Inter text, Liquid Glass, JPEG/desktop-picture support
   and handoffs. A fast-forward refused safely. Per TODO.md and the native
   prompt's explicit normal-merge allowance, merged main into native-vm with
   no commit pending combined-source verification. Preserved both Makefile
@@ -250,7 +250,7 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
   within one second of the host. USB input, visible clock/animation QA and
   the app are not yet validated by these boot checks.
 
-- 2026-10-18 (resumed after 1411d0e): N5/N6 now reaches the main loop on
+- 2026-10-18 (resumed after d4f2252): N5/N6 now reaches the main loop on
   VZ, with all five virtio devices attached and DHCP 192.168.64.2.
   Evidence: `build/vz-resume/devices/serial.log`; PCI GPU 1440x900,
   GICv3 1024 lines, 24MHz virtual timer, disk checkpoint restore, RNG,

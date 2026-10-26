@@ -21,7 +21,7 @@ Order: N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> N7 -> N8. Commit and publish to
 
 ## Current state (updated 2026-10-19 after N1; verify lines by reading)
 
-**Where the tracks stand:** `main` = `e6ad444` and contains BOTH tracks'
+**Where the tracks stand:** `main` = `f35c47a` and contains BOTH tracks'
 latest work (Track D: D1 LG4 glass controls, mouse-lag fix, poll hooks;
 Track N: N1 crypto below). Track N branch `net-web` == `main`, tree clean.
 N2 (ASN.1/X.509) is the next step; nothing for N2 exists yet.

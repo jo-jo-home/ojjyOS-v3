@@ -26,7 +26,7 @@ section 0 fixes before anything else here.
   progressive JPEG, `<img>`, downloads, Web app polish) — worktree
   `ojjyOS-v3-net`, branch `net-web`, plan `NET_WEB_PLAN.md`, prompt
   `docs/handoff-prompts/PROMPT_4_NET_WEB.md`.
-  - [x] **N1 done (2026-10-19, `04419bb`)**: SHA-384/512, big integers
+  - [x] **N1 done (2026-10-19, `7537656`)**: SHA-384/512, big integers
         (Montgomery), RSA PKCS#1 v1.5 + PSS, ECDSA P-256/P-384 — all
         host-tested against OpenSSL vectors + fuzz, in the kernel build.
   - [ ] N2 ASN.1 DER + X.509 parser, N3 TLS chain + CertificateVerify
@@ -61,8 +61,8 @@ Intel and fallback.
 
 - Detailed steps N1-N11 with addresses, device facts and verification:
   `HANDOFF_NATIVE_VM.md`; progress log: `NATIVE_VM_PLAN.md` (on `native-vm`).
-- Native milestones N1–N11 implemented and tested; app commit `0054e86`,
-  final capture/protected-smoke commit `9d3e78c`. Launch `build/ojjyOS.app`
+- Native milestones N1–N11 implemented and tested; app commit `e403dd8`,
+  final capture/protected-smoke commit `cd46092`. Launch `build/ojjyOS.app`
   or `bash scripts/run-vm.sh`. See `NATIVE_VM_PLAN.md` for exact receipts.
 - All native input/device/clock/display/persistence milestones are done.
   Remaining platform limits: live guest display-mode resize, USB hubs/hot-plug,

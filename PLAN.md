@@ -164,30 +164,30 @@ freestanding x86_64 toolchain and by host-side unit tests of the filesystem and 
     (needs key-release forwarding from main.c).
 
 ### Phase E — Verify (COMPLETED ✅)
-- [x] Freestanding compile of every kernel translation unit (`clang`, both `aarch64-unknown-none-elf` and `x86_64-unknown-none-elf`), assemble `entry.asm` with `nasm` and `entry.S` with `clang`.
-- [x] Host unit tests (`tests/test_fs.c` — 37 assertions; `tests/test_ramfs.c` — 81 assertions; 118 total): OJFS reader against a real `mkojfs`-generated image; ramfs write/grow/unlink/rename cycles; `strncpy`/normalization edge cases; salted SHA-256 user credentials; kernel heap coalescing; process & syscall dispatch.
-- [x] Tools (`mkojfs`, `mkicon`, `mkwallpaper`, `mkarray`) build and run on the host.
-- [x] Documented acceptance checklist in `README.md` and `RELEASE.md`.
+- [x] (legacy) Freestanding compile of every kernel translation unit (`clang`, both `aarch64-unknown-none-elf` and `x86_64-unknown-none-elf`), assemble `entry.asm` with `nasm` and `entry.S` with `clang`.
+- [x] (legacy) Host unit tests (`tests/test_fs.c` — 37 assertions; `tests/test_ramfs.c` — 81 assertions; 118 total): OJFS reader against a real `mkojfs`-generated image; ramfs write/grow/unlink/rename cycles; `strncpy`/normalization edge cases; salted SHA-256 user credentials; kernel heap coalescing; process & syscall dispatch.
+- [x] (legacy) Tools (`mkojfs`, `mkicon`, `mkwallpaper`, `mkarray`) build and run on the host.
+- [x] (legacy) Documented acceptance checklist in `README.md` and `RELEASE.md`.
 
 ### Phase F — Native Apple Silicon (`aarch64`) Port & Tahoe Desktop Polish (COMPLETED ✅)
-- [x] Full `aarch64` kernel port (`kernel/src/arch/aarch64/`): `entry.S` (EL3/EL2$\rightarrow$EL1, `VBAR_EL1` vectors), `gicv2.c`, `timer_a64.c` (1 kHz ARM Generic Timer), `pl011.c`, `pl031.c`, `virtio.c` (`virtio-mmio` v2 transport), `virtio_input.c` (keyboard + tablet), `virtio_blk.c` (disk), `psci.c` (`SYSTEM_OFF`/`SYSTEM_RESET`), and `linker-aarch64.ld` (`0x41000000`).
-- [x] Dual-architecture build system (`kernel/Makefile`, `boot/Makefile`, `boot/ojjy-boot.c`, `scripts/build.sh`, `scripts/mkimg.sh`, `scripts/run-qemu.sh` with Apple Silicon `-accel hvf`).
-- [x] RAMFS disk persistence (`kernel/src/fs/persist.c`) to the GPT `ojjyOS Data` partition (`LBA 67584`) with CRC-32 validation, 30s dirty autosave, `sync`, and clean power-off/reboot flush.
-- [x] Window resizing (bottom-right drag grip) and green traffic-light Maximize/Zoom toggle.
-- [x] Live Mission Control window cards (`Cmd+M`), Control Center Restart/Shut Down/Reduced Transparency buttons, clickable `ojjy` menu bar item (opens About), centered Launchpad labels, Reduced Transparency & Reduced Motion accessibility settings, and PS/2 modifier key release events for `Cmd+Tab`.
+- [x] (legacy) Full `aarch64` kernel port (`kernel/src/arch/aarch64/`): `entry.S` (EL3/EL2$\rightarrow$EL1, `VBAR_EL1` vectors), `gicv2.c`, `timer_a64.c` (1 kHz ARM Generic Timer), `pl011.c`, `pl031.c`, `virtio.c` (`virtio-mmio` v2 transport), `virtio_input.c` (keyboard + tablet), `virtio_blk.c` (disk), `psci.c` (`SYSTEM_OFF`/`SYSTEM_RESET`), and `linker-aarch64.ld` (`0x41000000`).
+- [x] (legacy) Dual-architecture build system (`kernel/Makefile`, `boot/Makefile`, `boot/ojjy-boot.c`, `scripts/build.sh`, `scripts/mkimg.sh`, `scripts/run-qemu.sh` with Apple Silicon `-accel hvf`).
+- [x] (legacy) RAMFS disk persistence (`kernel/src/fs/persist.c`) to the GPT `ojjyOS Data` partition (`LBA 67584`) with CRC-32 validation, 30s dirty autosave, `sync`, and clean power-off/reboot flush.
+- [x] (legacy) Window resizing (bottom-right drag grip) and green traffic-light Maximize/Zoom toggle.
+- [x] (legacy) Live Mission Control window cards (`Cmd+M`), Control Center Restart/Shut Down/Reduced Transparency buttons, clickable `ojjy` menu bar item (opens About), centered Launchpad labels, Reduced Transparency & Reduced Motion accessibility settings, and PS/2 modifier key release events for `Cmd+Tab`.
 
 ### Phase G — Multi-User Account & Salted SHA-256 Credential System + Tahoe Desktop Expansion (COMPLETED ✅)
-- [x] Multi-user account & credential engine (`kernel/src/users.h`, `kernel/src/users.c`) with salted FIPS 180-4 SHA-256 password hashing, constant-time digest verification, persistent `/Library/Accounts/users.db`, and automatic `/Users/<username>` home directory provisioning (`Desktop/Welcome.txt`, `Documents/Notes.txt`, `Calendar.txt`).
-- [x] First-Boot Account Setup Assistant (`users_count() == 0` or `+ New Account`) and macOS Tahoe Lock/Login Screen (`!users_is_authenticated()`, `Ctrl+Cmd+Q` lock shortcut).
-- [x] `Settings → Users & Accounts` (`SETTINGS_PAGE_USERS`) with active user card, SHA-256 password change form, registered accounts list, `+ Add Account`, `Lock Screen`, and `Switch User` buttons.
-- [x] Interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`) + clickable active username pill on the top-right menu bar.
-- [x] Desktop right-click context menu (`compositor_handle_right_click`).
-- [x] Built-in `Calculator.app` (`APP_CALCULATOR`) and `Activity Monitor.app` (`APP_MONITOR`), bringing total built-in apps to 11.
+- [x] (legacy) Multi-user account & credential engine (`kernel/src/users.h`, `kernel/src/users.c`) with salted FIPS 180-4 SHA-256 password hashing, constant-time digest verification, persistent `/Library/Accounts/users.db`, and automatic `/Users/<username>` home directory provisioning (`Desktop/Welcome.txt`, `Documents/Notes.txt`, `Calendar.txt`).
+- [x] (legacy) First-Boot Account Setup Assistant (`users_count() == 0` or `+ New Account`) and macOS Tahoe Lock/Login Screen (`!users_is_authenticated()`, `Ctrl+Cmd+Q` lock shortcut).
+- [x] (legacy) `Settings → Users & Accounts` (`SETTINGS_PAGE_USERS`) with active user card, SHA-256 password change form, registered accounts list, `+ Add Account`, `Lock Screen`, and `Switch User` buttons.
+- [x] (legacy) Interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`) + clickable active username pill on the top-right menu bar.
+- [x] (legacy) Desktop right-click context menu (`compositor_handle_right_click`).
+- [x] (legacy) Built-in `Calculator.app` (`APP_CALCULATOR`) and `Activity Monitor.app` (`APP_MONITOR`), bringing total built-in apps to 11.
 
 ### Phase H — Kernel Heap Allocator & Process/Syscall Subsystem (COMPLETED ✅)
-- [x] 512 KB 16-byte-aligned coalescing free-list Kernel Heap Allocator (`kheap_init`, `kmalloc`, `kcalloc`, `krealloc`, `kfree`, `kheap_validate` in `kernel/src/memory.h` & `kernel/src/memory.c`).
-- [x] Kernel Process Table & Syscall Dispatcher (`kernel/src/proc.h`, `kernel/src/proc.c`) spawning system daemons (`PID 1 kernel_task`, `PID 2 vfs_persistd`, `PID 3 inputd`, `PID 4 WindowServer`), tracking per-user app processes (`PID >= 5`), CPU ticks, memory, and 13 syscalls (`syscall_dispatch`).
-- [x] Live process table & heap telemetry wired into `Activity Monitor.app`, `Terminal.app` (`ps`, `top`, `kill <pid>`, `heap`), and the fallback kernel console.
+- [x] (legacy) 512 KB 16-byte-aligned coalescing free-list Kernel Heap Allocator (`kheap_init`, `kmalloc`, `kcalloc`, `krealloc`, `kfree`, `kheap_validate` in `kernel/src/memory.h` & `kernel/src/memory.c`).
+- [x] (legacy) Kernel Process Table & Syscall Dispatcher (`kernel/src/proc.h`, `kernel/src/proc.c`) spawning system daemons (`PID 1 kernel_task`, `PID 2 vfs_persistd`, `PID 3 inputd`, `PID 4 WindowServer`), tracking per-user app processes (`PID >= 5`), CPU ticks, memory, and 13 syscalls (`syscall_dispatch`).
+- [x] (legacy) Live process table & heap telemetry wired into `Activity Monitor.app`, `Terminal.app` (`ps`, `top`, `kill <pid>`, `heap`), and the fallback kernel console.
 
 ---
 

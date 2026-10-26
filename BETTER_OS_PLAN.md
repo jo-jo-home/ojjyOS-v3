@@ -27,7 +27,7 @@ validates CRCs and structure into scratch before swapping; the EL0
 boundary suite (19 programs) holds; the host app's control socket is
 owner-only with view-local input.
 
-- [x] **S1 CRITICAL — unauthenticated admin creation.** FIXED: the lock
+- [x] (legacy) **S1 CRITICAL — unauthenticated admin creation.** FIXED: the lock
   screen's "+ New Account" (and Settings' "+ Add Account" and Terminal
   `adduser`, which both route to the same paths) called
   `users_create(..., is_admin=true)` with no authorization — anyone at
@@ -37,11 +37,11 @@ owner-only with view-local input.
   bootstrap. Both UIs and `adduser` explain the denial. Verified: host
   test (second create denied unauthenticated/non-admin, allowed as
   admin) + first-boot setup still works in every live smoke.
-- [x] **S2 HIGH — guessable password salt.** FIXED: 8 bytes from
+- [x] (legacy) **S2 HIGH — guessable password salt.** FIXED: 8 bytes from
   `random_bytes()` (the ChaCha20 DRBG) stored as 16 hex chars; the old
   time/username/counter mix is gone. Verified: host test asserts the
   16-hex CSPRNG salt; legacy 8-hex salts still verify.
-- [x] **S3 HIGH — no key stretching.** FIXED: PBKDF2-HMAC-SHA256, 10,000
+- [x] (legacy) **S3 HIGH — no key stretching.** FIXED: PBKDF2-HMAC-SHA256, 10,000
   iterations (a deliberate compromise for a TCG-emulated guest — OWASP's
   modern floor is far higher; scale up when preemptive scheduling
   lands). New hashes are `pbkdf2$10000$<hex>`; the DB loader accepts
@@ -54,7 +54,7 @@ owner-only with view-local input.
   Verified: host tests incl. a fixed legacy vector
   (sha256("ojjyOS-v3-auth:deadbeef:legacy-pass")) planted in users.db,
   loaded, logged in and upgraded.
-- [x] **S4 MEDIUM — no per-user file isolation.** FIXED: VFS-level
+- [x] (legacy) **S4 MEDIUM — no per-user file isolation.** FIXED: VFS-level
   enforcement in `vfs_open/opendir/stat/exists/isdir/isfile/mkdir/
   unlink/rename` — authenticated non-admins are denied everything under
   `/Users/<other>/` (case-insensitive name compare); admins and the
@@ -63,14 +63,14 @@ owner-only with view-local input.
   Preview and the apps inherit it because they all go through VFS.
   Verified: host tests (non-admin denied read/stat/probe of another
   home, own home and admin unaffected).
-- [x] **S5 MEDIUM — credential database readable.** FIXED: non-admins are
+- [x] (legacy) **S5 MEDIUM — credential database readable.** FIXED: non-admins are
   denied all access under `/Library/Accounts/` except the exact
   write-open `users_save()` performs for password self-service (a
   non-admin create|truncate open of users.db is the remaining,
   documented compromise until the journaled filesystem brings real
   per-file ACLs). Verified: host tests (non-admin read denied, admin
   allowed).
-- [x] **S6 — `users_delete` guards.** FIXED: admin session required;
+- [x] (legacy) **S6 — `users_delete` guards.** FIXED: admin session required;
   cannot delete yourself; cannot delete the last administrator.
   Verified by host tests.
 

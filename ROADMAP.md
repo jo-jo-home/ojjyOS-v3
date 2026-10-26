@@ -26,8 +26,8 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 - [ ] Intel: PCI enumeration, e1000/virtio-pci NIC, absolute USB tablet.
 
 ## Networking & web
-- [x] Network stack + working browser over http:// (BROWSER_APPS_PLAN.md).
-- [x] HTTPS (TLS 1.3) in the browser (encrypted; identity not yet verified).
+- [x] (legacy) Network stack + working browser over http:// (BROWSER_APPS_PLAN.md).
+- [x] (legacy) HTTPS (TLS 1.3) in the browser (encrypted; identity not yet verified).
 - [ ] HTTPS certificate verification (X.509, RSA/ECDSA, root store).
 - [ ] PNG/GIF image decoding in the browser (inflate + palette); JPEG
       baseline decoding exists (`kernel/src/image/jpeg.c`), progressive not.
@@ -36,12 +36,12 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 - [ ] Simple chat/mail-like app over a home-made protocol to a host server.
 
 ## Desktop & apps
-- [x] Liquid Glass material on floating chrome; official Tahoe wallpapers
+- [x] (legacy) Liquid Glass material on floating chrome; official Tahoe wallpapers
       with a Settings grid and Preview viewer (`LIQUID_GLASS_APPS_PLAN.md`).
 - [~] Appearance customisation, window glass rims, notifications, window
       snapping, live resize, Terminal themes, every-app polish
       (`HANDOFF_UI.md`).
-- [x] Trash (Delete moves, Empty Trash). [ ] Put Back/restore; Finder tabs; Quick Look.
+- [x] (legacy) Trash (Delete moves, Empty Trash). [ ] Put Back/restore; Finder tabs; Quick Look.
 - [ ] Multiple windows per app (two Finder/Terminal windows).
 - [ ] Notifications center (persist events, e.g. download done).
 - [ ] Screenshot shortcut that saves a .raw/.bmp into ~/Desktop.

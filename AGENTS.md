@@ -1,6 +1,6 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-27): APP-CAL-01 verified; installed delivery next
+## LATEST (2026-10-27): APP-CAL-01 complete and safely delivered
 
 Board bc2ad1, UI track desktop-polish; code c0f4ee3/6bbbcad/7603802.
 Native original-kernel UI; blue Liquid Glass, fonts/icons and Jonas credit
@@ -23,9 +23,15 @@ light/dark and minimum-size captures visually read. APPS.md, DESKTOP.md,
 DESKTOP_PLAN.md, What's New and TODO.md updated. Limits: last 48 frames,
 not FPS/CPU%, no Monitor row scrolling; high-RAM allocator stays HW-13.
 
-Next: fast-forward tested code/docs to main, safely rebuild installed
-images/app when no user VM is running, verify saved-data/settings hashes,
-private delivered check + ready-to-test note, then finish card and wrapup.
+Tested code/docs fast-forwarded to main and Jonas's checkout as a9bb7da;
+installed ARM/Intel images and native app rebuilt with zero warnings and
+no user VM running. Saved-data extents, legacy disk and launch settings
+match the before hashes (installed-preserved.json); installed kernels/app
+match tested artifacts byte-for-byte (installed-artifacts.json). Private
+saved-data VZ boot passes, installed-image app flow passes 20/20, and the
+installed checkout's host suite passes. build/READY_TO_TEST.json in the
+main checkout has concrete clicks. Final commit only finishes records;
+no tested code changed. Card complete; next ready card APP-FINDER-01.
 Original BUG-1006 remains open; Time Machine cancelled. Nothing pushed.
 
 ## LATEST (2026-10-27): DNS continuation started; backup cancelled

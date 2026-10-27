@@ -186,8 +186,10 @@ live resize, Terminal themes.
     2026-10-27 (APP-TEXTEDIT-01: soft word wrap, word/char counts, save
     notification; editor core now in ui/textedit.c/h with 255-column
     lines); Calendar/Calculator/Activity Monitor/About implemented and
-    verified 2026-10-27 (APP-CAL-01, build/app-cal-01/; installed delivery
-    pending). Other app cards: APP-FINDER-01, APP-SET-01, APP-TERM-01.
+    safely delivered 2026-10-27 (APP-CAL-01, build/app-cal-01/: 20 live
+    light/dark flows, full matrix, saved-data/settings hash equality,
+    installed-image app/native checks; build/READY_TO_TEST.json in main).
+    Other app cards: APP-FINDER-01, APP-SET-01, APP-TERM-01.
   - [ ] Leftovers: drop the unused `.raw` wallpapers from `mkfs.sh` and make
     Spotlight list desktop pictures; desktop "Change Wallpaper..." opens
     Settings > Wallpaper.

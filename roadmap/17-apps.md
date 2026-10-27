@@ -148,7 +148,7 @@ editor still 64 x 79 with no word wrap (APP-TEXTEDIT-01), no delete or rename
 inside Notes (Finder does it), sync shares the tested shutdown save path.
 
 ### APP-CAL-01 — Calendar, Calculator, Activity Monitor, About polish (D7)
-- Phase: P0 · Size: M · Status: doing
+- Phase: P0 · Size: M · Status: done
 - Depends: —
 - Files: DESKTOP_PLAN.md D7, kernel/src/ui/compositor.c, kernel/src/ui/calculator.c/h (new), kernel/src/ui/app_metrics.c/h (new), tests/test_app_polish.c (new), tests/qemu_app_polish.py (new), kernel/Makefile, scripts/test.sh, APPS.md, DESKTOP.md, scripts/mkfs.sh
 
@@ -157,12 +157,12 @@ Glass identity and use existing fonts/icons/controls; no replacement theme.
 - [x] 1. Extract the Calculator input/history/layout model into ui/calculator.c/h and add bounded frame-history/date helpers in ui/app_metrics.c/h; wire host tests in scripts/test.sh. Test: test_app_polish normal + ASan/UBSan (arithmetic/error recovery/history/key map/layout bounds/ring rollover/today across month/year). Trap: no FP, large stack buffers or fabricated CPU usage. — done 2026-10-27 (test: build/app-cal-01/model.log and model-sanitized.log, 29 checks plus 5000-key state fuzz; UI replaces the old compositor handlers in step 2)
 - [x] 2. Wire Calculator's model, larger display/history and transient key feedback; Calendar glass header/event chips/exact-date today circle; About hero/version card/Jonas credit in compositor.c. Test: new qemu_app_polish.py basic flow under HVF, screenshots light/dark read. Trap: shared draw/hit geometry, finite highlight lifetime and no "today" in the wrong month. — done 2026-10-27 (test: qemu_app_polish.py --basic, 8 light/dark interaction flows PASS in build/app-cal-01/basic-confirm; all six app captures read in basic-confirm-contact.png; host suite passes; ARM build zero warnings; badge/operator contrast checked above 4.5:1)
 - [x] 3. Activity Monitor: functional Processes/Memory/Frames segmented tabs, zebra rows, bounded memory bars and real renderer-time sparkline from perf_record_frame; sample/update only while the window is visible. Guard the four apps' minimum layout sizes in both pointer resize paths; clip Calendar chips to available rows. Test: host ring/ratio tests and qemu_app_polish.py tab/sample/minimum-size assertions + light/dark screenshots. Trap: process ticks are bookkeeping, not measured CPU-percent; do not repaint idle hidden/minimized monitors or change other apps' resize limits. — done 2026-10-27 (test: build/app-cal-01/step3-confirm.log 20 light/dark flows PASS, including guest-symbol proof of no minimized refresh and resumed updates; monitor-confirm-contact.png six crops read, Calendar minimum capture read; step3-host.log PASS, step3-arm.log zero warnings)
-- [~] 4. Complete full normal/sanitized host suites, both zero-warning dev builds, private TCG/HVF/Intel and native regression, inspect final screenshots; update APPS.md/DESKTOP.md/What's New/TODO/AGENTS, finish card and fast-forward main. Test: strict checklist + roadmap check and logs under build/app-cal-01/. Trap: retain all unresolved bugs and honest platform/telemetry limits. — all verification/docs complete (step3-host.log, final-sanitized.log, final-{arm,intel}.log, smoke-{tcg,hvf,intel}.log, native-smoke/report.json, native-host.log, apps-check.log, native-apps/report.json; native-contact.png and native dark Frames capture read). Final card status/fast-forward after step 5 delivery.
-- [ ] 5. If no user VM is running, deliver main with the preserving builders, hash-check installed user-data/settings, run a delivered-image private check and ready_to_test.py. Otherwise leave delivery pending with exact shutdown instructions. Trap: never stop another VM or replace saved guest data.
+- [x] 4. Complete full normal/sanitized host suites, both zero-warning dev builds, private TCG/HVF/Intel and native regression, inspect final screenshots; update APPS.md/DESKTOP.md/What's New/TODO/AGENTS, finish card and fast-forward main. Test: strict checklist + roadmap check and logs under build/app-cal-01/. Trap: retain all unresolved bugs and honest platform/telemetry limits. — done 2026-10-27 (test: step3-host.log, final-sanitized.log, final-{arm,intel}.log, smoke-{tcg,hvf,intel}.log, native-smoke/report.json, native-host.log, apps-check.log, native-apps/report.json; native-contact.png and native dark Frames capture read; tested code/docs integrated as a9bb7da, final records follow)
+- [x] 5. If no user VM is running, deliver main with the preserving builders, hash-check installed user-data/settings, run a delivered-image private check and ready_to_test.py. Otherwise leave delivery pending with exact shutdown instructions. Trap: never stop another VM or replace saved guest data. — done 2026-10-27 (test: no user VM running; preserving installed ARM/Intel/app builds zero warnings; installed-preserved.json matches installed-before.json for both user-data regions, legacy disk and launch settings; installed-artifacts.json proves kernel/app byte identity to tested builds; installed-native-boot/report.json PASS on saved-data copy, installed-apps/report.json 20/20 PASS, installed-host.log PASS; main checkout build/READY_TO_TEST.json written)
 
 **Done when.**
-- [ ] D7's four surfaces work in light/dark, Calculator input/history and Calendar date/navigation/event flows are verified, Monitor tabs show measured frame times and honest memory/task data, About retains version and Jonas credit. Test: host + live receipts from steps 1-4.
-- [ ] Definition of Done in 00-how-to-work.md is met; safe delivery or an explicit running-VM handoff is recorded. Test: step 4/5 receipts, strict checklist and roadmap status.
+- [x] D7's four surfaces work in light/dark, Calculator input/history and Calendar date/navigation/event flows are verified, Monitor tabs show measured frame times and honest memory/task data, About retains version and Jonas credit. — done 2026-10-27 (test: steps 1-4 receipts and installed-apps/report.json 20/20)
+- [x] Definition of Done in 00-how-to-work.md is met; safe delivery or an explicit running-VM handoff is recorded. — done 2026-10-27 (test: steps 4/5 matrix, preservation and delivery receipts; roadmap check 698 cards/0 errors and strict checklist no PROBLEM)
 
 **Goal.** As D7: Calendar today circle + chips + glass header; Calculator
 key highlight, bigger display, history; Activity Monitor sparkline,
@@ -172,6 +172,15 @@ credits to Jonas Lee.
 **Tests.** As D7.
 **Pitfalls.** —
 **Refs.** DESKTOP_PLAN.md.
+
+**Log.** 2026-10-27 done (board bc2ad1): code c0f4ee3, 6bbbcad,
+7603802; regression/docs a9bb7da, then final delivery records. Evidence
+build/app-cal-01/ in the UI worktree. Installed images/app rebuilt safely;
+saved user data/settings and legacy disk unchanged. No new dependencies,
+version bump or push. Limits: Monitor retains 48 renderer samples, not
+CPU utilization/FPS, no row scrolling; real high-RAM allocation remains
+HW-13. Original intermittent BUG-1006 remains open independently of the
+verified DNS retry-window fix. Next ready daily card: APP-FINDER-01.
 
 ### APP-SET-01 — Settings, Login and Preview polish (D8)
 - Phase: P0 · Size: M · Status: todo

@@ -48,6 +48,7 @@ __pycache__/
 
 # Apple wallpapers downloaded for personal use - never commit (copyright Apple)
 wallpapers/local/
+/lighttahoe.png
 
 # Local AI session exports (personal, large)
 *-custom-kernel.json

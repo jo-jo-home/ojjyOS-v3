@@ -643,7 +643,7 @@ This section documents the Tahoe UI foundation added for the M2/M3 visual milest
 ### Visual System + Theme Tokens
 
 **What changed**
-- Added `VISUALS.md` to define the Tahoe Light palette from `lighttahoe.png`, dark mode rules, typography, icon style, compositor architecture, and acceptance tests.
+- Added `VISUALS.md` to define the Tahoe Light palette from `lighttahoe.png` (Apple's wallpaper; removed from the repo 2026-10-27), dark mode rules, typography, icon style, compositor architecture, and acceptance tests.
 - Added centralized theme tokens in `kernel/src/ui/theme.h` and `kernel/src/ui/theme.c`.
 
 **Why**

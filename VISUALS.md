@@ -2,11 +2,12 @@
 
 This document defines the Tahoe Light visual language, glass materials, compositor architecture, and wallpaper plan for M2/M3.
 
-Reference: `lighttahoe.png` (Tahoe Light) in repo root.
+Reference: Apple's macOS Tahoe Light wallpaper. It is Apple's picture, so it is not in the repo
+(removed 2026-10-27; a local copy lives outside git in `~/Developer/ojjyOS-kernel/apple-reference/`).
 
 ## 1) Visual Spec (Tahoe-like)
 
-### Palette (from `lighttahoe.png`)
+### Palette (from the Tahoe Light reference)
 
 - Tahoe Sky Top: `#0F84CC` - upper sky gradient, headers, spotlight tint.
 - Tahoe Sky Mid: `#5EB0E1` - mid sky, window highlights.

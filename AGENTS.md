@@ -23,15 +23,19 @@ presentation + privacy check".
 - GitHub description set with `gh repo edit` (it was "ojjyos v3"); this is
   live already. The README and images are live only after a push.
 - Privacy: gitleaks clean (130 commits); no history blob contains the Mac
-  account name or personal email. Open for Jonas: `lighttahoe.png` is
-  Apple's Tahoe Light wallpaper, public since 2026-02-01; 5 github.com web
-  commits carry the personal email in their metadata.
+  account name or personal email. `lighttahoe.png` (Apple's Tahoe Light
+  wallpaper, public since 2026-02-01) was removed from the tree on Jonas's
+  OK; a byte-identical copy is in `~/Developer/ojjyOS-kernel/apple-reference/`
+  and `/lighttahoe.png` is git-ignored. It still exists in old history
+  (erasing it = force push; only if Jonas asks). 5 github.com web commits
+  carry the personal email in their metadata (GitHub email-privacy setting).
 - New bug BUG-1007: Finder (PID 5) stays owned by `guest` after first login.
 
 Verified: host suite exit 0 (build/readme/host-tests.log, 698 cards
 0 errors, THIRD_PARTY OK); dev ARM build 0 warnings; README links/anchors
 resolved by script and rendered through GitHub's markdown API, then looked
-at. Next: Jonas decides on push and on lighttahoe.png / history.
+at. Both dev builds 0 warnings after the theme.c comment change. Pushed
+with Jonas's OK (see TODO.md box 8). Next: APP-FINDER-01 (also BUG-1007).
 
 ## LATEST (2026-10-27): APP-CAL-01 complete and safely delivered
 

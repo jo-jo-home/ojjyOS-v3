@@ -7,7 +7,7 @@
 static ThemeTokens theme_light_tokens = {
     .name = "Tahoe Light",
 
-    /* Palette derived from lighttahoe.png reference */
+    /* Palette derived from the Tahoe Light reference (VISUALS.md) */
     .sky_top = RGB(15, 132, 204),       /* #0F84CC */
     .sky_mid = RGB(94, 176, 225),       /* #5EB0E1 */
     .horizon = RGB(240, 224, 202),      /* #F0E0CA */

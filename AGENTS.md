@@ -1,5 +1,33 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27, later): QA test day on `main` = `9d90a23` — EVERYTHING GREEN
+
+Board id 188713, worktree `ojjyOS-v3-qa` / `qa-2026-10-27` (only records
+and the new `tools/qa_shots.py`; no OS code changed). Full matrix, logs
+and screenshots in `build/qa-2026-10-27/`:
+
+| Check | Result |
+|---|---|
+| Dev builds aarch64 / x86_64 | PASS, 0 warnings |
+| `bash scripts/test.sh` (host, 20 suites) | PASS |
+| ASan/UBSan host run | PASS |
+| `roadmap.py check` | 695 cards, 0 errors |
+| Smoke TCG / HVF (fresh private disk) | PASS / PASS |
+| Design tour HVF (18 shots) | PASS |
+| Apps tour + apps check HVF (22 shots) | PASS |
+| Web tour HVF (16 pages) | PASS (craigslist = known NET-03 gap) |
+| Native VZ `vz_boot.py` | PASS |
+| Native VZ `vz_smoke.py` | PASS |
+
+Every tour screenshot was read with the new `tools/qa_shots.py` (ink
+profiles + spot ASCII rendering; no blank captures, expected elements
+present, the TextEdit wrap paper verified at its exact geometry). **No
+failure and no visible glitch, so nothing needed a fix.** Known gaps
+recorded in `TODO.md`'s "QA 2026-10-27" section: craigslist needs TLS
+1.2 (NET-03), the editor has no click positioning, documents over 64
+lines open read-only. Installed images were rebuilt data-preserving
+from the same source as part of the day.
+
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 
 Board id 42b286, worktree `ojjyOS-v3-ui` / `desktop-polish`, all three

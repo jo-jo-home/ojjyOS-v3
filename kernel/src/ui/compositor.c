@@ -20,7 +20,8 @@
 #include "../proc.h"
 #include "../user.h"
 #include "netcmd.h"
-#include "calcmath.h"
+#include "calculator.h"
+#include "app_metrics.h"
 #include "notes.h"
 #include "textedit.h"
 #include "browser.h"
@@ -241,6 +242,7 @@ typedef struct {
 } CalendarEvent;
 
 #define CALENDAR_MAX_EVENTS 64
+#define CALENDAR_HEADER_H 60
 
 typedef struct {
     CalendarView view;
@@ -262,14 +264,6 @@ typedef struct {
 typedef struct {
     int unused;
 } WebState;
-
-typedef struct {
-    char display[24];
-    int64_t acc;
-    char op;                    /* 0, '+', '-', '*', '/' */
-    bool clear_next;
-    bool has_error;
-} CalculatorState;
 
 typedef struct {
     AppType type;
@@ -2020,7 +2014,7 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
         cal->day = now.day;
     }
 
-    int header_h = 40;
+    int header_h = CALENDAR_HEADER_H;
     int sidebar_w = 160;
     int agenda_w = 200;
 
@@ -2028,7 +2022,9 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
 
     int header_x = content_x + sidebar_w + 10;
     int header_w = content_w - sidebar_w - agenda_w - 20;
-    draw_rounded_rect_blend(header_x, content_y, header_w, header_h, 12, theme->dock_tint, 140);
+    uint8_t header_alpha;
+    Color header_fill = glass_fill(&header_alpha);
+    draw_glass_control(header_x, content_y, header_w, header_h, 12, header_fill, header_alpha, false);
 
     static const char *months[] = {
         "January", "February", "March", "April", "May", "June",
@@ -2099,12 +2095,13 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
                     if (day == cal->selected_day) {
                         draw_rounded_rect_blend(cx + 2, cy + 2, cell_w - 4, cell_h - 4, 10, theme->accent, 35);
                     }
-                    if (day == cal->day) {
-                        draw_rounded_rect_blend(cx + 6, cy + 6, 24, 18, 8, theme->accent_soft, 90);
-                    }
+                    bool today = app_date_is_today(cal->year, cal->month, day, &now);
+                    if (today) draw_rounded_rect_blend(cx + 3, cy + 3, 22, 22, 11,
+                                                      blend(theme->accent, theme->midnight, 95), 255);
                     char numstr[4];
                     utoa(day, numstr, 10);
-                    ui_text(cx + 8, cy + 6, numstr, TEXT_BODY, theme->text);
+                    int day_x = today ? cx + 14 - text_width(numstr, TEXT_BODY) / 2 : cx + 8;
+                    ui_text(day_x, cy + 6, numstr, TEXT_BODY, today ? COLOR_WHITE : theme->text);
 
                     int indices[4];
                     int count = calendar_events_for_day(cal, cal->year, cal->month, day, indices, 4);
@@ -2327,22 +2324,20 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 110);
 
     /* App icon on the right, title block on the left */
-    draw_icon_id(ICON_ABOUT, content_x + content_w - 108, content_y + 10, 88, 255);
+    draw_icon_id(ICON_ABOUT, content_x + content_w - 124, content_y + 4, 100, 255);
 
     int cx = content_x + 24;
     ui_text(cx, content_y + 8, "ojjyOS", TEXT_LARGE, theme->text);
-    ui_text(cx, content_y + 42, "Version 3.1.0  \xE2\x80\xA2  Tahoe", TEXT_BODY, theme->text_muted);
-    ui_text(cx, content_y + 58, "Created by Jonas Lee", TEXT_BODY_MEDIUM, theme->accent);
-
-    int rule_y = content_y + 80;
-    draw_rounded_rect_blend(cx, rule_y, content_w - 48 - 110, 1, 0, theme->text_muted, 60);
+    ui_text(cx, content_y + 50, "Created by Jonas Lee", TEXT_BODY_MEDIUM, theme->text);
+    ui_glass_control(cx, content_y + 92, content_w - 48, 36, 10, false);
+    ui_text_mid(cx + 12, content_y + 92, 36, "Version 3.1.0  \xE2\x80\xA2  Tahoe", TEXT_BODY_BOLD, theme->text);
 
     char buf[96];
 
-    ui_text(cx, content_y + 92, "A custom operating system with a", TEXT_BODY, theme->text);
-    ui_text(cx, content_y + 110, "macOS Tahoe-inspired user interface.", TEXT_BODY, theme->text);
-    ui_text(cx, content_y + 130, "Built from scratch - not based on", TEXT_BODY, theme->text_muted);
-    ui_text(cx, content_y + 148, "Linux, BSD, Windows or macOS.", TEXT_BODY, theme->text_muted);
+    ui_text(cx, content_y + 144, "A custom operating system with a", TEXT_BODY, theme->text);
+    ui_text(cx, content_y + 162, "macOS Tahoe-inspired user interface.", TEXT_BODY, theme->text);
+    ui_text(cx, content_y + 188, "Built from scratch - not based on", TEXT_BODY, theme->text_muted);
+    ui_text(cx, content_y + 206, "Linux, BSD, Windows or macOS.", TEXT_BODY, theme->text_muted);
 
     utoa(fb_get_width(), buf, 10);
     str_append(buf, sizeof(buf), " x ");
@@ -2350,118 +2345,23 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
     utoa(fb_get_height(), num, 10);
     str_append(buf, sizeof(buf), num);
     str_append(buf, sizeof(buf), " display");
-    ui_text(cx, content_y + 176, buf, TEXT_BODY, theme->text_muted);
+    text_draw_fit(surface(), cx, content_y + 238, buf, TEXT_BODY, theme->text_muted, content_w - 48);
 
     buf[0] = '\0';
     utoa(pmm_get_total_memory() / (1024 * 1024), num, 10);
     str_append(buf, sizeof(buf), num);
     str_append(buf, sizeof(buf), " MB memory");
-    ui_text(cx, content_y + 194, buf, TEXT_BODY, theme->text_muted);
+    text_draw_fit(surface(), cx, content_y + 258, buf, TEXT_BODY, theme->text_muted, content_w - 48);
 }
 
 /* ================================================================== */
 /* Calculator app                                                      */
 /* ================================================================== */
 
-static void calc_reset(CalculatorState *calc)
+static void calculator_input(CalculatorState *calc, int key)
 {
-    if (!calc) return;
-    strcpy(calc->display, "0");
-    calc->acc = 0;
-    calc->op = 0;
-    calc->clear_next = true;
-    calc->has_error = false;
-}
-
-/* Display text <-> fixed-point value (ui/calcmath.c: 6 decimals, no FP). */
-static int64_t calc_parse_display(const CalculatorState *calc)
-{
-    int64_t v = 0;
-    if (!calc || !calc_parse(calc->display, &v)) return 0;
-    return v;
-}
-
-static void calc_show(CalculatorState *calc, int64_t v)
-{
-    calc_format(v, calc->display, sizeof(calc->display));
-}
-
-static void calc_error(CalculatorState *calc, const char *msg)
-{
-    strncpy(calc->display, msg, sizeof(calc->display) - 1);
-    calc->display[sizeof(calc->display) - 1] = '\0';
-    calc->has_error = true;
-    calc->op = 0;
-    calc->clear_next = true;
-}
-
-static void calc_press_digit(CalculatorState *calc, char d)
-{
-    if (!calc || ((d < '0' || d > '9') && d != '.')) return;
-    if (calc->has_error) calc_reset(calc);
-    if (calc->clear_next || strcmp(calc->display, "0") == 0) {
-        if (d == '.') strcpy(calc->display, "0.");
-        else { calc->display[0] = d; calc->display[1] = '\0'; }
-        calc->clear_next = false;
-        return;
-    }
-    size_t len = strlen(calc->display);
-    if (d == '.') {
-        for (size_t i = 0; i < len; i++) if (calc->display[i] == '.') return;   /* one point */
-    }
-    if (len < 16) {
-        calc->display[len] = d;
-        calc->display[len + 1] = '\0';
-        int64_t probe;
-        if (!calc_parse(calc->display, &probe) && calc->display[len] != '.') calc->display[len] = '\0';
-    }
-}
-
-static void calc_eval_pending(CalculatorState *calc)
-{
-    if (!calc || calc->has_error) return;
-    int64_t cur = calc_parse_display(calc), result;
-    CalcStatus st = calc_apply(calc->op ? calc->op : '=', calc->acc, cur, &result);
-    if (st == CALC_DIV_ZERO) { calc_error(calc, "Can't divide by 0"); return; }
-    if (st == CALC_OVERFLOW) { calc_error(calc, "Too large"); return; }
-    calc->acc = result;
-    calc_show(calc, calc->acc);
-}
-
-static void calc_press_op(CalculatorState *calc, char op)
-{
-    if (!calc) return;
-    if (calc->has_error) calc_reset(calc);
-    if (!calc->clear_next || calc->op == 0) {
-        calc_eval_pending(calc);
-    }
-    calc->op = op;
-    calc->clear_next = true;
-}
-
-static void calc_press_eq(CalculatorState *calc)
-{
-    if (!calc) return;
-    if (calc->op != 0) {
-        calc_eval_pending(calc);
-        calc->op = 0;
-        calc->clear_next = true;
-    }
-}
-
-static void calc_press_neg(CalculatorState *calc)
-{
-    if (!calc || calc->has_error) return;
-    calc_show(calc, -calc_parse_display(calc));
-}
-
-static void calc_press_percent(CalculatorState *calc)
-{
-    if (!calc || calc->has_error) return;
-    int64_t v;
-    calc_apply('/', calc_parse_display(calc), 100 * CALC_SCALE, &v);
-    calc_show(calc, v);
-    calc->clear_next = true;
+    if (calculator_press(calc, key, timer_get_ticks()))
+        serial_printf("[CALC] key=%d display='%s' history='%s'\n", key, calc->display, calc->history);
 }
 
 static void draw_calculator_window(CalculatorState *calc, int content_x, int content_y, int content_w, int content_h)
@@ -2469,23 +2369,18 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
 
     /* LCD readout */
-    int lcd_x = content_x + 12;
-    int lcd_y = content_y + 10;
-    int lcd_w = content_w - 24;
-    int lcd_h = 44;
+    CalculatorLayout layout;
+    if (!calculator_layout(content_w, content_h, &layout)) return;
+    int lcd_x = content_x + layout.lcd_x;
+    int lcd_y = content_y + layout.lcd_y;
+    int lcd_w = layout.lcd_w;
+    int lcd_h = layout.lcd_h;
     gfx_round_rect_vgradient(surface(), lcd_x, lcd_y, lcd_w, lcd_h, 10, RGB(36, 42, 56), RGB(20, 24, 34), 245);
-
-    if (calc->op) {
-        static const char *const ops[4][2] = { { "/", "\xC3\xB7" }, { "*", "\xC3\x97" }, { "-", "\xE2\x88\x92" }, { "+", "+" } };
-        char op_str[4] = { calc->op, '\0', '\0', '\0' };
-        const char *shown = op_str;
-        for (int i = 0; i < 4; i++) if (op_str[0] == ops[i][0][0]) shown = ops[i][1];
-        ui_text_mid(lcd_x + 12, lcd_y, lcd_h, shown, TEXT_TITLE, theme->accent_soft);
-    }
+    text_draw_fit(surface(), lcd_x + 12, lcd_y + 8, calc->history, TEXT_SMALL, RGB(188, 209, 238), lcd_w - 24);
     /* Big right-aligned readout; long numbers step down to a smaller face */
     TextStyle ds = text_width(calc->display, TEXT_LARGE) <= lcd_w - 44 ? TEXT_LARGE : TEXT_HEADLINE;
     int dw = MIN(text_width(calc->display, ds), lcd_w - 44);
-    text_draw_fit(surface(), lcd_x + lcd_w - 14 - dw, text_y_center(lcd_y, lcd_h, ds), calc->display, ds, COLOR_WHITE, lcd_w - 44);
+    text_draw_fit(surface(), lcd_x + lcd_w - 14 - dw, text_y_center(lcd_y + 24, lcd_h - 24, ds), calc->display, ds, COLOR_WHITE, lcd_w - 44);
 
     static const char *labels[5][4] = {
         { "C",  "+/-", "%",  "/" },
@@ -2495,11 +2390,9 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
         { "0",  ".",   "BS", "=" }
     };
 
-    int grid_y = lcd_y + lcd_h + 10;
-    int grid_h = content_h - (lcd_h + 28);
-    int cell_w = (content_w - 24 - 3 * 6) / 4;
-    int cell_h = (grid_h - 4 * 6) / 5;
-    if (cell_h < 22) cell_h = 22;
+    int grid_y = content_y + layout.grid_y;
+    int cell_w = layout.key_w;
+    int cell_h = layout.key_h;
 
     for (int r = 0; r < 5; r++) {
         for (int c = 0; c < 4; c++) {
@@ -2515,11 +2408,13 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
                 draw_rounded_rect_blend(bx, by, cell_w, cell_h, 9, settings_get()->dark_mode ? RGB(96, 104, 118) : RGB(196, 206, 218), 235);
             else
                 draw_rounded_rect_blend(bx, by, cell_w, cell_h, 9, settings_get()->dark_mode ? RGB(60, 66, 80) : COLOR_WHITE, 220);
+            if (calc->pressed_key == r * 4 + c)
+                draw_rounded_rect_blend(bx, by, cell_w, cell_h, 9, c == 3 ? COLOR_WHITE : theme->accent, c == 3 ? 90 : 110);
             const char *shown = pretty[r][c];
             TextStyle ls = TEXT_TITLE;
             if (text_width(shown, ls) > cell_w - 8) shown = lbl, ls = TEXT_BODY_BOLD;
             int lx = bx + (cell_w - text_width(shown, ls)) / 2;
-            ui_text_mid(lx, by, cell_h, shown, ls, (c == 3) ? COLOR_WHITE : theme->text);
+            ui_text_mid(lx, by, cell_h, shown, ls, (c == 3) ? RGB(52, 32, 9) : theme->text);
         }
     }
 }
@@ -6372,7 +6267,7 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
     } else if (type == APP_WEB) {
         browser_open();
     } else if (type == APP_CALCULATOR) {
-        calc_reset(&state->calc);
+        calculator_reset(&state->calc);
     }
 
     if (type > APP_DEMO && type < APP_COUNT) {
@@ -6415,13 +6310,13 @@ static int app_open_window(AppType type, const char *title)
     if (type == APP_TEXTEDIT) { w = 560; h = 360; }
     if (type == APP_NOTES) { w = 640; h = 400; }
     if (type == APP_PREVIEW) { w = 480; h = 320; }
-    if (type == APP_CALENDAR) { w = 720; h = 440; }
-    if (type == APP_ABOUT) { w = 460; h = 300; }
+    if (type == APP_CALENDAR) { w = 860; h = 480; }
+    if (type == APP_ABOUT) { w = 500; h = 350; }
     if (type == APP_WEB) {
         w = MIN(1240, (int)comp_width - 60);
         h = MIN(820, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 24);
     }
-    if (type == APP_CALCULATOR) { w = 300; h = 360; }
+    if (type == APP_CALCULATOR) { w = 320; h = 400; }
     if (type == APP_MONITOR) { w = 540; h = 380; }
 
     /* Keep new windows fully on screen (cascade offsets + large apps such as
@@ -7267,26 +7162,10 @@ void compositor_handle_key(KeyCode keycode, char ascii, uint8_t modifiers)
                 }
             }
         } else if (state->type == APP_CALCULATOR) {
-            CalculatorState *calc = &state->calc;
-            if ((ascii >= '0' && ascii <= '9') || ascii == '.') {
-                calc_press_digit(calc, ascii);
-            } else if (ascii == '%') {
-                calc_press_percent(calc);
-            } else if (ascii == '+' || ascii == '-' || ascii == '*' || ascii == '/') {
-                calc_press_op(calc, ascii);
-            } else if (ascii == '=' || keycode == KEY_ENTER) {
-                calc_press_eq(calc);
-            } else if (ascii == 'c' || ascii == 'C' || keycode == KEY_ESCAPE) {
-                calc_reset(calc);
-            } else if (keycode == KEY_BACKSPACE) {
-                size_t len = strlen(calc->display);
-                if (len > 1 && !calc->clear_next && !calc->has_error) {
-                    calc->display[len - 1] = '\0';
-                } else {
-                    strcpy(calc->display, "0");
-                    calc->clear_next = true;
-                }
-            }
+            if (keycode == KEY_ENTER) ascii = '\n';
+            else if (keycode == KEY_ESCAPE) ascii = 'c';
+            else if (keycode == KEY_BACKSPACE) ascii = '\b';
+            calculator_input(&state->calc, calculator_key_for_char(ascii));
         }
     }
 }
@@ -8143,55 +8022,11 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                         }
                     }
                 } else if (state->type == APP_CALCULATOR) {
-                    CalculatorState *calc = &state->calc;
                     int content_x = win->x + 12;
                     int content_y = win->y + 40;
-                    int content_w = win->w - 24;
-                    int content_h = win->h - 52;
-                    int lcd_x = content_x + 12;
-                    int lcd_y = content_y + 10;
-                    int lcd_h = 44;
-                    int grid_y = lcd_y + lcd_h + 10;
-                    int grid_h = content_h - (lcd_h + 28);
-                    int cell_w = (content_w - 24 - 3 * 6) / 4;
-                    int cell_h = (grid_h - 4 * 6) / 5;
-                    if (cell_h < 22) cell_h = 22;
-
-                    for (int r = 0; r < 5; r++) {
-                        for (int c = 0; c < 4; c++) {
-                            int bx = lcd_x + c * (cell_w + 6);
-                            int by = grid_y + r * (cell_h + 6);
-                            if (x >= bx && x <= bx + cell_w && y >= by && y <= by + cell_h) {
-                                if (r == 0 && c == 0) calc_reset(calc);
-                                else if (r == 0 && c == 1) calc_press_neg(calc);
-                                else if (r == 0 && c == 2) calc_press_percent(calc);
-                                else if (r == 0 && c == 3) calc_press_op(calc, '/');
-                                else if (r == 1 && c == 0) calc_press_digit(calc, '7');
-                                else if (r == 1 && c == 1) calc_press_digit(calc, '8');
-                                else if (r == 1 && c == 2) calc_press_digit(calc, '9');
-                                else if (r == 1 && c == 3) calc_press_op(calc, '*');
-                                else if (r == 2 && c == 0) calc_press_digit(calc, '4');
-                                else if (r == 2 && c == 1) calc_press_digit(calc, '5');
-                                else if (r == 2 && c == 2) calc_press_digit(calc, '6');
-                                else if (r == 2 && c == 3) calc_press_op(calc, '-');
-                                else if (r == 3 && c == 0) calc_press_digit(calc, '1');
-                                else if (r == 3 && c == 1) calc_press_digit(calc, '2');
-                                else if (r == 3 && c == 2) calc_press_digit(calc, '3');
-                                else if (r == 3 && c == 3) calc_press_op(calc, '+');
-                                else if (r == 4 && c == 0) calc_press_digit(calc, '0');
-                                else if (r == 4 && c == 1) calc_press_digit(calc, '.');
-                                else if (r == 4 && c == 2) {
-                                    size_t len = strlen(calc->display);
-                                    if (len > 1 && !calc->clear_next && !calc->has_error) {
-                                        calc->display[len - 1] = '\0';
-                                    } else {
-                                        strcpy(calc->display, "0");
-                                        calc->clear_next = true;
-                                    }
-                                } else if (r == 4 && c == 3) calc_press_eq(calc);
-                            }
-                        }
-                    }
+                    CalculatorLayout layout;
+                    if (calculator_layout(win->w - 24, win->h - 52, &layout))
+                        calculator_input(&state->calc, calculator_hit(&layout, x - content_x, y - content_y));
                 } else if (state->type == APP_CALENDAR) {
                     CalendarState *cal = &state->calendar;
                     int content_x = win->x + 12;
@@ -8200,7 +8035,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     int content_h = win->h - 52;
                     int sidebar_w = 160;
                     int agenda_w = 200;
-                    int header_h = 40;
+                    int header_h = CALENDAR_HEADER_H;
 
                     int header_x = content_x + sidebar_w + 10;
                     int header_w = content_w - sidebar_w - agenda_w - 20;
@@ -8690,6 +8525,8 @@ void compositor_tick(uint64_t now_ms)
     if (netcmd_busy()) netcmd_poll(terminal_net_print);
     browser_poll();
     notes_autosave_tick(now_ms);
+    for (int i = 0; i < window_count; i++)
+        if (app_states[i].type == APP_CALCULATOR && calculator_expire(&app_states[i].calc, now_ms)) mark_dirty();
     pointer_pump();
     {
         /* Network status shows in the menu bar, Control Center and Settings:

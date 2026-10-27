@@ -95,6 +95,8 @@ COMMON_C_SOURCES = src/main.c \
                    src/ui/browser_pages.c \
                    src/ui/netcmd.c \
                    src/ui/calcmath.c \
+                   src/ui/calculator.c \
+                   src/ui/app_metrics.c \
                    src/ui/notes.c \
                    src/ui/textedit.c
 

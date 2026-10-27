@@ -13,8 +13,15 @@ history/input/key feedback and shared draw/hit layout in ui/calculator.c/h;
 bounded real-frame history, exact-date check and safe ratio in
 ui/app_metrics.c/h. New test_app_polish.c passes 29 checks + 5000-key fuzz
 normally and under ASan/UBSan (build/app-cal-01/model*.log).
-Next: wire the models into the four apps, live light/dark checks, full
-matrix and data-preserving delivery. No push.
+Step 2 wired: Calendar 60px glass header, proper full-date today circle,
+event chips; Calculator 72px readout/equation line and shared hit layout,
+180ms keyboard/mouse feedback; About hero/version card with readable Jonas
+credit. New qemu_app_polish.py --basic passes 8 light/dark flows including
+decimals/history, error recovery, actual mouse targets, feedback expiry,
+Calendar navigation/Today/New Event. Six app crops visually read in
+build/app-cal-01/basic-confirm-contact.png; ARM build zero warnings and
+host suite pass. Next: Monitor tabs/measured frame graph and app-size
+guards, then full matrix and safe delivery. No push.
 
 ## LATEST (2026-10-27): DNS continuation started; backup cancelled
 

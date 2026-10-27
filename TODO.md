@@ -20,6 +20,18 @@ section 0 fixes before anything else here.
 
 ## >>> Completed-work audit (2026-10-27, board 1674cc)
 
+## Bugs 2026-10-27 — DNS follow-up
+
+Working in the clean review worktree because net-web has an existing
+uncommitted edit. No Time Machine work: Jonas cancelled it and confirmed
+the empty portfolio directories are intentional. No push until final OK.
+
+- [ ] 1. Reproduce BUG-1006 with packet evidence and test DNS retry deadlines in `tests/test_net.c`; retain failing-before output in `build/bug-1006/`. Trap: a web tour's DONE is not a successful-load assertion; do not infer that a proven resolver bug caused the earlier six failures without packet evidence.
+- [ ] 2. Fix only demonstrated DNS defects in `kernel/src/net/net.c`, with new host regressions and parser fuzz where relevant; normal/sanitized `test_net` must pass. Trap: preserve the four-attempt/10-second policy, not a longer timeout or hidden retry.
+- [ ] 3. Verify both warning-free dev builds, full normal/sanitized host suite, private TCG/HVF smokes and DNS/browser replay; inspect screenshots, update bug/plan/context and fast-forward main. Trap: keep unresolved external failures open, preserve installed guest data and existing worktree edits.
+
+### Prior audit results
+
 TIM-04 timer/peer/era/fractional fixes and date serial receipt verified on
 the combined source. Full receipts: `REVIEW_COMPLETED_WORK.md`,
 `build/review/`. Normal/sanitized host, warning-free ARM/Intel builds,

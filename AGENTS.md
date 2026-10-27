@@ -1,5 +1,16 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27): DNS continuation started; backup cancelled
+
+Jonas confirmed the empty portfolio directories are intentional and
+cancelled Time Machine. No backup/configuration or portfolio edits made.
+Continuing BUG-1006 in `ojjyOS-v3-review` (net-web's existing netcmd edit
+is not ours). Baseline `d155a71`; checklist in TODO.md "Bugs 2026-10-27".
+Investigate with DNS packet evidence and failing host deadline tests before
+any fix; do not confuse a separate proven retry defect with the original
+external-site failures. Next: DNS proof/fix/regression, then select the
+first ready daily card (currently APP-CAL-01). Only ask push at the end.
+
 ## LATEST (2026-10-27): completed-work audit — fixes and full matrix verified
 
 Board `1674cc`, worktree `ojjyOS-v3-review` / `verify-completed-work`,

@@ -2,11 +2,11 @@
 
 Do not edit by hand: change `Status:` inside the card and regenerate.
 
-**1 / 695 cards done.** Ready to start now: APP-TEXTEDIT-01, DOC-03, QA-22, QA-30, QA-40, TIM-04, APP-CAL-01, APP-FINDER-01, APP-SET-01, APP-TERM-01, SHL-02, SHL-03, SHL-04, QA-20, DOC-01, DS-03, DS-12, KDB-01, KDB-04, NET-91, QA-01, QA-06, QA-08, QA-23, SEC-01 …
+**4 / 695 cards done.** Ready to start now: QA-30, QA-40, TIM-04, APP-CAL-01, APP-FINDER-01, APP-SET-01, APP-TERM-01, SHL-02, SHL-03, SHL-04, QA-20, DOC-01, DS-03, DS-12, KDB-01, KDB-04, NET-91, QA-01, QA-06, QA-08, QA-23, SEC-01, TIM-01, BOOT-01, DRV-CORE-05 …
 
 | Phase | Cards | todo | doing | done | blocked |
 |---|---|---|---|---|---|
-| P0 | 18 | 16 | 1 | 1 | 0 |
+| P0 | 18 | 13 | 1 | 4 | 0 |
 | P1 | 67 | 67 | 0 | 0 | 0 |
 | P2 | 187 | 187 | 0 | 0 | 0 |
 | P3 | 89 | 89 | 0 | 0 | 0 |
@@ -27,12 +27,12 @@ Do not edit by hand: change `Status:` inside the card and regenerate.
 | APP-NOTES-01 | Notes polish (D6) | S | done | — | 17-apps.md |
 | APP-SET-01 | Settings, Login and Preview polish (D8) | M | todo | — | 17-apps.md |
 | APP-TERM-01 | Terminal themes and colours (D5) | M | todo | — | 17-apps.md |
-| APP-TEXTEDIT-01 | TextEdit polish (D6) | S | todo | — | 17-apps.md |
-| DOC-03 | Third-party register (`THIRD_PARTY.md`) | S | todo | — | 26-quality-tooling.md |
+| APP-TEXTEDIT-01 | TextEdit polish (D6) | S | done | — | 17-apps.md |
+| DOC-03 | Third-party register (`THIRD_PARTY.md`) | S | done | — | 26-quality-tooling.md |
 | NET-02 | HTTPS certificate verification (X.509 + chain + CertificateVerify) | L | doing | — | 13-networking.md |
 | NET-03 | TLS 1.2 client (sites that do not speak TLS 1.3) | M | todo | NET-02 | 13-networking.md |
 | QA-20 | Split `compositor.c` into modules (no behaviour change) | L | todo | — | 26-quality-tooling.md |
-| QA-22 | Repository hygiene | S | todo | — | 26-quality-tooling.md |
+| QA-22 | Repository hygiene | S | done | — | 26-quality-tooling.md |
 | QA-30 | Bug tracking process | S | todo | — | 26-quality-tooling.md |
 | QA-40 | Release process and checklist | S | todo | — | 26-quality-tooling.md |
 | QA-41 | Release ojjyOS 3.2 | M | todo | SHL-02, SHL-03, SHL-04, APP-TERM-01, APP-FINDER-01, APP-TEXTEDIT-01, APP-NOTES-01, APP-CAL-01, APP-SET-01, NET-02, TIM-04, QA-40 | 26-quality-tooling.md |

@@ -67,7 +67,7 @@ sections incl. Downloads, column sorting, glass toolbar.
 **Refs.** DESKTOP_PLAN.md.
 
 ### APP-TEXTEDIT-01 — TextEdit polish (D6)
-- Phase: P0 · Size: S · Status: doing
+- Phase: P0 · Size: S · Status: done
 - Depends: —
 - Files: DESKTOP_PLAN.md D6, kernel/src/ui/textedit.c/h (new), kernel/src/ui/compositor.c, kernel/Makefile, scripts/test.sh, tests/test_textedit.c (new), tests/qemu_textedit.py (new), tests/qemu_notes.py (read-only fixture)
 
@@ -81,10 +81,10 @@ are accepted for read-only documents but do nothing.
 **Steps.**
 - [x] 1. Move `TextEditState` and the pure editing ops (clear/selection, insert/delete line, insert char, join-on-backspace) into new `kernel/src/ui/textedit.c/h`; `TEXTEDIT_LINE_MAX` 80 -> 256 so paragraphs are editable; load/save/key mapping/drawing stay in `compositor.c` (save needs Spotlight + notification hooks). Test: `bash scripts/test.sh` + both dev builds 0 warnings. Trap: `AppWindowState` grows ~270 KB over 12 windows (BSS) — watch the boot tests; no big buffers on the kernel stack. — done 2026-10-27 (test: `bash scripts/test.sh` and the ASan/UBSan run pass incl. the new test_textedit; both dev builds (`OJJY_BUILD_DIR="$PWD/build/dev-<arch>" ARCH=<arch> bash scripts/build.sh`) exit 0 with 0 warnings, logs build/app-textedit-01-{arm,x86}.log)
 - [x] 2. Soft wrap layout in `textedit.c`: greedy word wrap (break after the last space in the window), hard break for words wider than the view, minimum width 16 columns, one row per (also empty) line, and visual movement (`textedit_move_visual` with a goal column, cursor row mapping). Test: new `tests/test_textedit.c` — layout invariants + cursor mapping + a deterministic fuzz loop. Trap: every logical line keeps at least one row; rows must cover each line exactly once. — done 2026-10-27 (test: tests/test_textedit.c 66/66 on the host and under ASan/UBSan: wrap cases, worst-case 64x255 sizing, cursor-row mapping, 500-case fuzz invariants; `textedit_click` dropped — no click positioning exists yet, an unused API would be dead code)
-- [ ] 3. Wrap-aware `draw_textedit_window`: rows from the layout, `scroll` counts visual rows, cursor bar and single-line selection rendered per row. Test: host suite + dev builds; screenshots in the live test. Trap: clamp `scroll` against the row count, not `line_count`.
+- [x] 3. Wrap-aware `draw_textedit_window`: rows from the layout, `scroll` counts visual rows, cursor bar and single-line selection rendered per row. Test: host suite + dev builds; screenshots in the live test. Trap: clamp `scroll` against the row count, not `line_count`. — done 2026-10-27 (test: `tests/qemu_textedit.py` ink analysis proves the rows on screen — a 142-char paragraph renders as 3 rows at 18 px pitch with a short tail row, band ink [383, 346, 124, 0, 0] (TCG build/app-textedit-01-tcg, HVF build/app-textedit-01-hvf, screenshots examined per-row)
 - [x] 4. Word/character counts (`textedit_counts`) in the status bar; wire Home/End/PageUp/PageDown; backspace join refuses to merge lines whose combined length would not fit (the old check could truncate the tail). Test: `tests/test_textedit.c` counts + join cases. — done 2026-10-27 (test: counts + join cases pass; two old editor bugs fixed on the way, both caught by the new tests: Backspace mid-line truncated everything right of the caret, and Enter at a line end could re-show stale grid bytes; Shift+Left now extends the selection instead of moving it)
-- [ ] 5. Save notification: `textedit_save(edit, notify)` — TextEdit explicit saves push "Saved <name>" (or the failure) through `notifications_push` and log `[TEXTEDIT] Saved '<name>' N bytes, W words, C chars`; Notes autosave stays silent (no toast per second). Test: live test asserts the serial line.
-- [ ] 6. Live test `tests/qemu_textedit.py`: type a long paragraph without Enter and verify by pixel-ink row count in the paper that it wraps (>= 3 rows), save via Cmd+S, assert the counts log, screenshots looked at; `qemu_notes.py` read-only check moves to a 65+-line fixture file (the old > 79-column file is editable now). TCG + HVF. Evidence: `build/app-textedit-01-*`.
+- [x] 5. Save notification: `textedit_save(edit, notify)` — TextEdit explicit saves push "Saved <name>" (or the failure) through `notifications_push` and log `[TEXTEDIT] Saved '<name>' N bytes, W words, C chars`; Notes autosave stays silent (no toast per second). Test: live test asserts the serial line. — done 2026-10-27 (test: tests/qemu_textedit.py TCG+HVF: Cmd+S logs `[TEXTEDIT] Saved 'Untitled.txt' 143 bytes, 26 words, 142 chars`, exactly the typed text, and 161 bytes / 29 words after the second line; Notes autosave stays quiet in tests/qemu_notes.py)
+- [x] 6. Live test `tests/qemu_textedit.py`: type a long paragraph without Enter and verify by pixel-ink row count in the paper that it wraps (>= 3 rows), save via Cmd+S, assert the counts log, screenshots looked at; `qemu_notes.py` read-only check moves to a 65+-line fixture file (the old > 79-column file is editable now). TCG + HVF. Evidence: `build/app-textedit-01-*`. — done 2026-10-27 (test: qemu_textedit.py PASS on TCG (build/app-textedit-01-tcg) and HVF (build/app-textedit-01-hvf); qemu_notes.py 10/10 PASS on TCG (build/app-notes-01-tcg-legal, 92-line fixture 4539 bytes read-only) and HVF (build/app-notes-01-hvf-legal); smoke PASS on TCG + HVF + Intel (build/app-textedit-01-smoke-{tcg,hvf,x86}); screenshots read row by row)
 
 **Goal.** Soft word wrap, word/character count, save notification.
 **Done when.** D6 acceptance: long lines wrap at word boundaries inside
@@ -93,6 +93,22 @@ notifies; the read-only rule becomes "> 64 lines or lines > 255 cols".
 **Tests.** tests/test_textedit.c, tests/qemu_textedit.py, full matrix.
 **Pitfalls.** —
 **Refs.** DESKTOP_PLAN.md.
+**Log.** Done 2026-10-27 (commits 33f5043, 4bc13fb + card ticks): editor
+core in `ui/textedit.c/h` (255-column lines), greedy word wrap with
+visual-row Up/Down/Page movement and goal column, Home/End, word+char
+counts in the status bar, `textedit_save(edit, notify)` with
+`notifications_push` + `[TEXTEDIT]` serial log (Notes autosave silent).
+Four old editor bugs fixed: mid-line Backspace truncated the rest of
+the line; Enter at a line end could re-show stale grid bytes;
+Shift+Left moved the selection instead of extending it; a full-line
+join truncated the tail. Verified: tests/test_textedit.c 66 checks +
+500-case fuzz (host + ASan/UBSan), qemu_textedit.py TCG+HVF (ink-row
+wrap proof + exact count logs), qemu_notes.py 10/10 TCG+HVF with the
+new 92-line read-only fixture, smoke TCG+HVF+Intel, both dev builds 0
+warnings. Evidence: build/app-textedit-01-*, build/app-notes-01-*-legal.
+Limits: no click positioning yet (the editor had none before; a
+`textedit_click` helper is future work with a mouse card), 64-line cap
+unchanged, status line falls back to counts-only on very narrow panes.
 
 ### APP-NOTES-01 — Notes polish (D6)
 - Phase: P0 · Size: S · Status: done

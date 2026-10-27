@@ -1,5 +1,54 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
+
+Board id 42b286, worktree `ojjyOS-v3-ui` / `desktop-polish`, all three
+published to `main` by fast-forward.
+
+**APP-TEXTEDIT-01.** The shared editor core (TextEdit + Notes) moved to
+`kernel/src/ui/textedit.c/h` and `TEXTEDIT_LINE_MAX` rose 80 -> 256, so
+paragraphs are editable and the read-only rule is now "> 64 lines or
+lines > 255 cols". Soft word wrap: greedy break after the last space in
+the window, hard break for wide words, min width 16, one row per empty
+line; `scroll`/Up/Down/PageUp/PageDown work in visual rows with a
+remembered goal column; Home/End wired (they were accepted but missing).
+Status bar shows word + character counts; explicit saves push a
+notification and log `[TEXTEDIT] Saved '<name>' N bytes, W words, C
+chars` (Notes autosave stays silent). Four old editor bugs fixed, all
+caught by the new host tests: mid-line Backspace truncated everything
+right of the caret; Enter at a line end could re-show stale grid bytes;
+Shift+Left moved the selection instead of extending it; a join that
+would not fit truncated the tail (now refused). Verified:
+`tests/test_textedit.c` (66 checks + 500-case fuzz, host + ASan/UBSan),
+`tests/qemu_textedit.py` TCG+HVF (ink-row wrap proof, exact count logs),
+smoke TCG+HVF+Intel, both dev builds 0 warnings. Evidence
+`build/app-textedit-01-*`.
+
+**DOC-03.** `THIRD_PARTY.md` (92 lines) registers every third-party
+asset: Inter + JetBrains Mono (SIL OFL 1.1, sources + licence files),
+the generated font data derived from them, the Apple wallpapers policy
+(`wallpapers/local/` only, never committed or shipped), and
+packages/CA roots/tz/dictionary/Unicode placeholders per D-023. It ships
+read-only in the image as `/System/Legal/THIRD_PARTY.txt` (doubles as
+the editor's read-only fixture — the Notes live test's old >79-column
+fixture is editable now) and `tools/check_third_party.py` validates it
+from `scripts/test.sh`.
+
+**QA-22.** Build products live under `build/` now: kernel objects in
+`build/obj-<arch>/` (per-arch, `make clean` also sweeps the legacy
+in-src objects), host tools build into `build/tools/` and `mkfs.sh`
+calls them there (`tools/` keeps sources only). New
+`scripts/clean-icloud-dupes.sh` lists the "name 2.ext" conflict copies
+and deletes them only with `--yes`, only untracked, only for
+build-output extensions (removed the 4 stale ones here);
+`.gitignore` gained the missing duplicate patterns. Proof: both arches
+built twice 0 warnings, then `git status --porcelain` empty and zero
+`*.o`/`*.d` under `kernel/src`. Limits: boot/'s `ojjy-boot.obj`/`.efi`
+and the protected `.elf` samples still build in place (both gitignored;
+the samples must sit inside sysroot for packing).
+
+Next ready P0 cards: QA-30, QA-40, TIM-04, APP-CAL-01, APP-FINDER-01.
+
 ## LATEST (2026-10-26, evening): APP-NOTES-01 done — Notes sidebar, New Note, autosave
 
 First card taken with the new workflow (board id 809980, Track D worktree

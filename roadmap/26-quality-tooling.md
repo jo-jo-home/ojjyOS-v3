@@ -47,13 +47,38 @@ directories as code moves into them, update Makefiles and docs (AGENTS.md
 **Refs.** D-018.
 
 ### QA-22 — Repository hygiene
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: .gitignore, kernel/src/**/*.o, *.d, "* 2.*" files
+- Files: .gitignore, kernel/Makefile, tools/Makefile, scripts/mkfs.sh, scripts/clean-icloud-dupes.sh (new), kernel/src/**/*.o, *.d, "* 2.*" files
 
 **Context.** Build products (`*.o`, `*.d`) appear inside `kernel/src`,
 iCloud conflict copies (`tcp 2.d`, `http 2.o`, `uifont 2.o`) accumulate,
 and `tools/mkojfs` (a built binary) shows as modified in git status.
+(The tools were untracked on 2026-10-26; they still BUILD into `tools/`.)
+**Steps.**
+- [ ] `kernel/Makefile`: objects + dep files under `../build/obj-<arch>/`
+      (mkdir in the rule), per-arch dirs so builds never mix; `clean`
+      removes the obj dirs plus the legacy in-src `*.o`/`*.d`.
+      Test: both dev builds 0 warnings; `bash scripts/test.sh`.
+      Trap: Makefile recipes need TABs; `kernel.bin` stays where
+      `scripts/build.sh` copies it from.
+- [ ] `tools/Makefile` builds into `../build/tools/`; `scripts/mkfs.sh`
+      calls mkojfs/mkicon/mkarray from there.
+      Test: `bash scripts/mkfs.sh` from a clean tools dir; full builds.
+      Trap: mkfs.sh also runs from `scripts/build.sh` — absolute paths.
+- [ ] New `scripts/clean-icloud-dupes.sh`: lists `* <digit>.*` conflict
+      copies; `--yes` deletes only UNTRACKED duplicates of build-output
+      extensions (.o .d .bin .elf .efi .obj .img) — never sources,
+      documents or tracked files. Run it (with --yes) in this worktree.
+      Test: run in the worktree; deletion list reviewed first.
+      Trap: never delete Jonas's files outside build products.
+- [ ] `.gitignore`: extend the iCloud-duplicate patterns to cover every
+      build-output extension that appears with a " N" suffix.
+      Test: `git check-ignore` matches the real conflict copies.
+- [ ] Full-build hygiene proof: build both arches twice, then
+      `git status --porcelain` must be empty and no `*.o`/`*.d` may
+      remain inside `kernel/src`. Evidence `build/qa-22-*`.
+
 **Goal.** Builds write objects only under `build/`; `.gitignore` covers
 build products and iCloud duplicates; remove tracked binaries (rebuild
 `tools/mkojfs` from source in the build); a `scripts/clean-icloud-dupes.sh`
@@ -287,15 +312,37 @@ the Help viewer and as a static site.
 **Refs.** —
 
 ### DOC-03 — Third-party register (`THIRD_PARTY.md`)
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: THIRD_PARTY.md (new)
+- Files: THIRD_PARTY.md (new), tools/check_third_party.py (new), scripts/mkfs.sh, scripts/test.sh
+
+**Context (2026-10-26).** The repo ships third-party font data (Inter,
+JetBrains Mono, both SIL OFL 1.1, licences in `fonts/`) and keeps Apple
+wallpapers in git-ignored `wallpapers/local/`, but there is no single
+register of what is third-party, under which licence, and from where.
+**Steps.**
+- [ ] Write `THIRD_PARTY.md`: `fonts/` entries (Inter, JetBrains Mono,
+      sources + OFL 1.1), the generated bitmap/font data derived from
+      them, the Apple wallpapers policy (local only, never shipped or
+      committed), and `packages/`/CA roots/tz data/dictionaries/Unicode
+      data as explicit "not shipped yet" future sections (D-023: ported
+      programs only as optional ojjypkg packages).
+      Test: file exists and is reviewed.
+      Trap: no absolute local paths, no personal data.
+- [ ] Ship it read-only in the OS image as
+      `/System/Legal/THIRD_PARTY.txt` (`scripts/mkfs.sh`) and add
+      `tools/check_third_party.py` asserting the `fonts/` + `packages/`
+      sections and the wallpapers note; wire it into `scripts/test.sh`.
+      Test: `bash scripts/test.sh` runs it; a broken register fails it.
+      Trap: keep the file > 64 lines — it doubles as the editor's
+      read-only fixture for APP-TEXTEDIT-01's live tests.
 
 **Goal.** List every third-party asset/data/package with licence and
 source: Inter and JetBrains Mono (OFL), Unicode data, future CA roots,
 tz data, dictionaries, ported packages; note Apple wallpapers are local
 only and never shipped.
-**Done when.** File exists; QA-40 checks it.
+**Done when.** File exists (and ships in the image); the check runs in
+`scripts/test.sh`; QA-40 can rely on it.
 **Tests.** Script checking that `fonts/` and `packages/` entries appear.
 **Pitfalls.** —
 **Refs.** —

@@ -123,7 +123,7 @@ ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
                  src/arch/aarch64/psci.c
 
 ASM_SOURCES = src/arch/aarch64/entry.S src/arch/aarch64/user_entry.S
-ASM_OBJECTS = $(ASM_SOURCES:.S=.o)
+ASM_OBJECTS = $(addprefix $(OBJ_DIR)/,$(ASM_SOURCES:.S=.o))
 else
 TARGET_TRIPLE = x86_64-unknown-none-elf
 CFLAGS = --target=$(TARGET_TRIPLE) $(COMMON_CFLAGS) \
@@ -152,32 +152,14 @@ ARCH_C_SOURCES = src/gdt.c \
                  src/drivers/blockdev_x86.c
 
 ASM_SOURCES = src/entry.asm
-ASM_OBJECTS = $(ASM_SOURCES:.asm=.o)
+ASM_OBJECTS = $(addprefix $(OBJ_DIR)/,$(ASM_SOURCES:.asm=.o))
 endif
 
 C_SOURCES = $(COMMON_C_SOURCES) $(ARCH_C_SOURCES)
-C_OBJECTS = $(C_SOURCES:.c=.o)
+# Build products live under build/, never next to the sources (QA-22).
+OBJ_DIR = ../build/obj-$(ARCH)
+C_OBJECTS = $(addprefix $(OBJ_DIR)/,$(C_SOURCES:.c=.o))
 OBJECTS = $(C_OBJECTS) $(ASM_OBJECTS)
-
-# All objects across both arches (for clean)
-ALL_CLEAN_OBJECTS = $(COMMON_C_SOURCES:.c=.o) \
-                    src/user_unsupported.o src/arch/aarch64/user_arch.o src/arch/aarch64/user_entry.o \
-                    src/gdt.o src/idt.o src/paging.o src/timer.o src/serial.o \
-                    src/drivers/ps2_keyboard.o src/drivers/ps2_mouse.o \
-                    src/drivers/ata.o src/drivers/rtc.o src/drivers/block_cache.o \
-                    src/drivers/acpi.o src/drivers/acpi_aml.o src/drivers/blockdev_x86.o src/entry.o \
-                    src/arch/aarch64/arch64.o src/arch/aarch64/gicv2.o \
-                    src/arch/aarch64/timer_a64.o src/arch/aarch64/pl011.o \
-                    src/arch/aarch64/pl031.o src/arch/aarch64/virtio.o \
-                    src/arch/aarch64/virtio_input.o src/arch/aarch64/virtio_blk.o \
-                    src/arch/aarch64/virtio_net.o src/arch/aarch64/virtio_rng.o \
-                     src/arch/aarch64/virtio_gpu.o \
-                     src/arch/aarch64/xhci.o \
-                     src/arch/aarch64/usb_hid.o \
-                    src/arch/aarch64/virtio_console.o \
-                    src/arch/aarch64/platform.o src/arch/aarch64/pci.o \
-                    src/arch/aarch64/psci.o src/arch/aarch64/entry.o
-ALL_CLEAN_DEPS = $(ALL_CLEAN_OBJECTS:.o=.d)
 
 # Output
 TARGET = kernel.bin
@@ -196,19 +178,45 @@ $(TARGET): $(OBJECTS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Compile C files
-%.o: %.c
+$(OBJ_DIR)/src/%.o: src/%.c
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
 # Assemble x86_64 NASM files
-%.o: %.asm
+$(OBJ_DIR)/src/%.o: src/%.asm
+	@mkdir -p $(dir $@)
 	$(NASM) $(NASMFLAGS) -o $@ $<
 
 # Assemble aarch64 GNU assembly files via clang
-%.o: %.S
+$(OBJ_DIR)/src/%.o: src/%.S
+	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 clean:
-	rm -f $(ALL_CLEAN_OBJECTS) $(ALL_CLEAN_DEPS) $(TARGET)
+	rm -rf ../build/obj-aarch64 ../build/obj-x86_64
+	rm -f $(TARGET)
+	rm -f $(ALL_CLEAN_OBJECTS) $(ALL_CLEAN_DEPS)
 
 # Pull in header dependencies (ignore missing files on first build)
 -include $(DEPS)
+
+# Legacy in-src objects from before the build moved under build/ (QA-22):
+# clean still removes them, so an older checkout tidies up too.
+ALL_CLEAN_OBJECTS = $(COMMON_C_SOURCES:.c=.o) \
+                    src/user_unsupported.o src/arch/aarch64/user_arch.o src/arch/aarch64/user_entry.o \
+                    src/gdt.o src/idt.o src/paging.o src/timer.o src/serial.o \
+                    src/drivers/ps2_keyboard.o src/drivers/ps2_mouse.o \
+                    src/drivers/ata.o src/drivers/rtc.o src/drivers/block_cache.o \
+                    src/drivers/acpi.o src/drivers/acpi_aml.o src/drivers/blockdev_x86.o src/entry.o \
+                    src/arch/aarch64/arch64.o src/arch/aarch64/gicv2.o \
+                    src/arch/aarch64/timer_a64.o src/arch/aarch64/pl011.o \
+                    src/arch/aarch64/pl031.o src/arch/aarch64/virtio.o \
+                    src/arch/aarch64/virtio_input.o src/arch/aarch64/virtio_blk.o \
+                    src/arch/aarch64/virtio_net.o src/arch/aarch64/virtio_rng.o \
+                     src/arch/aarch64/virtio_gpu.o \
+                     src/arch/aarch64/xhci.o \
+                     src/arch/aarch64/usb_hid.o \
+                    src/arch/aarch64/virtio_console.o \
+                    src/arch/aarch64/platform.o src/arch/aarch64/pci.o \
+                    src/arch/aarch64/psci.o src/arch/aarch64/entry.o
+ALL_CLEAN_DEPS = $(ALL_CLEAN_OBJECTS:.o=.d)

@@ -1,25 +1,34 @@
 # ojjyOS v3 Tools Makefile
+#
+# Host tools are BUILT PRODUCTS (QA-22): binaries go to ../build/tools,
+# never into this source directory.
 
 CC = cc
 CFLAGS = -Wall -Wextra -O2
 
+BUILD = ../build/tools
 TOOLS = mkojfs mkicon mkwallpaper mkarray
+BINS = $(addprefix $(BUILD)/,$(TOOLS))
 
 .PHONY: all clean
 
-all: $(TOOLS)
+all: $(BINS)
 
-mkojfs: mkojfs.c
+$(BUILD)/mkojfs: mkojfs.c
+	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
-mkicon: mkicon.c
+$(BUILD)/mkicon: mkicon.c
+	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
-mkwallpaper: mkwallpaper.c
+$(BUILD)/mkwallpaper: mkwallpaper.c
+	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $< -lm
 
-mkarray: mkarray.c
+$(BUILD)/mkarray: mkarray.c
+	@mkdir -p $(BUILD)
 	$(CC) $(CFLAGS) -o $@ $<
 
 clean:
-	rm -f $(TOOLS)
+	rm -rf $(BUILD)

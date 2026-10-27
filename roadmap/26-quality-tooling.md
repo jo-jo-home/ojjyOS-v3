@@ -56,25 +56,29 @@ iCloud conflict copies (`tcp 2.d`, `http 2.o`, `uifont 2.o`) accumulate,
 and `tools/mkojfs` (a built binary) shows as modified in git status.
 (The tools were untracked on 2026-10-26; they still BUILD into `tools/`.)
 **Steps.**
-- [ ] `kernel/Makefile`: objects + dep files under `../build/obj-<arch>/`
+- [x] `kernel/Makefile`: objects + dep files under `../build/obj-<arch>/`
       (mkdir in the rule), per-arch dirs so builds never mix; `clean`
       removes the obj dirs plus the legacy in-src `*.o`/`*.d`.
       Test: both dev builds 0 warnings; `bash scripts/test.sh`.
       Trap: Makefile recipes need TABs; `kernel.bin` stays where
       `scripts/build.sh` copies it from.
-- [ ] `tools/Makefile` builds into `../build/tools/`; `scripts/mkfs.sh`
+      — done 2026-10-27 (test: `ARCH=aarch64` + `ARCH=x86_64` full builds exit 0 with 0 warnings, twice each (build/qa-22-{arm,x86}-build{1,2}.log); `bash scripts/test.sh` passes; after `make clean`, `find kernel/src -name '*.o' -o -name '*.d'` is empty)
+- [x] `tools/Makefile` builds into `../build/tools/`; `scripts/mkfs.sh`
       calls mkojfs/mkicon/mkarray from there.
       Test: `bash scripts/mkfs.sh` from a clean tools dir; full builds.
       Trap: mkfs.sh also runs from `scripts/build.sh` — absolute paths.
-- [ ] New `scripts/clean-icloud-dupes.sh`: lists `* <digit>.*` conflict
+      — done 2026-10-27 (test: mkfs ran inside both full builds; `build/tools/` holds the four binaries; the stale `tools/mk*` binaries from the old layout are deleted, `tools/` holds sources only)
+- [x] New `scripts/clean-icloud-dupes.sh`: lists `* <digit>.*` conflict
       copies; `--yes` deletes only UNTRACKED duplicates of build-output
-      extensions (.o .d .bin .elf .efi .obj .img) — never sources,
+      extensions (.o .d .bin .elf .efi .obj .a .lib .img) — never sources,
       documents or tracked files. Run it (with --yes) in this worktree.
       Test: run in the worktree; deletion list reviewed first.
       Trap: never delete Jonas's files outside build products.
-- [ ] `.gitignore`: extend the iCloud-duplicate patterns to cover every
+      — done 2026-10-27 (test: list mode found exactly the 4 stale copies (`netcmd 2.o`, `tcp 2.d`, `http 2.o`, `uifont 2.o`) and ignored planted `Note 2.txt`/`src 2.c`; `--yes` then deleted those 4 untracked build products)
+- [x] `.gitignore`: extend the iCloud-duplicate patterns to cover every
       build-output extension that appears with a " N" suffix.
       Test: `git check-ignore` matches the real conflict copies.
+      — done 2026-10-27 (test: `git check-ignore 'kernel/src/net/tcp 2.d'` matches via `* [0-9].d`; new `.elf/.a/.lib/.img` and two-digit patterns added)
 - [ ] Full-build hygiene proof: build both arches twice, then
       `git status --porcelain` must be empty and no `*.o`/`*.d` may
       remain inside `kernel/src`. Evidence `build/qa-22-*`.

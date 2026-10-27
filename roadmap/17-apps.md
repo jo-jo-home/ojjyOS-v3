@@ -67,13 +67,63 @@ sections incl. Downloads, column sorting, glass toolbar.
 **Refs.** DESKTOP_PLAN.md.
 
 ### APP-TEXTEDIT-01 — TextEdit polish (D6)
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: DESKTOP_PLAN.md D6
+- Files: DESKTOP_PLAN.md D6, kernel/src/ui/textedit.c/h (new), kernel/src/ui/compositor.c, kernel/Makefile, scripts/test.sh, tests/test_textedit.c (new), tests/qemu_textedit.py (new), tests/qemu_notes.py (read-only fixture)
+
+**Context (2026-10-26).** The shared editor grid (TextEdit + Notes) is
+64 lines x 79 columns: a file that does not fit opens read-only and cut,
+typing stops silently at the end of a full line, and a long line runs
+past the window edge. The status bar shows only Line/Column, saving
+gives no feedback beyond the status text, and Home/End/PageUp/PageDown
+are accepted for read-only documents but do nothing.
+
+**Steps.**
+- [ ] Move `TextEditState` and the pure editing ops (clear/selection,
+      insert/delete line, insert char, join-on-backspace) into new
+      `kernel/src/ui/textedit.c/h`; `TEXTEDIT_LINE_MAX` 80 -> 256 so
+      paragraphs are editable; load/save/key mapping/drawing stay in
+      `compositor.c` (save needs Spotlight + notification hooks).
+      Files: textedit.c/h, compositor.c, kernel/Makefile, scripts/test.sh.
+      Test: `bash scripts/test.sh` + both dev builds 0 warnings.
+      Trap: `AppWindowState` grows ~270 KB over 12 windows (BSS) — watch
+      the boot tests; no big buffers on the kernel stack.
+- [ ] Soft wrap layout in `textedit.c`: greedy word wrap (break after the
+      last space in the window), hard break for words wider than the
+      view, minimum width 16 columns, one row per (also empty) line, and
+      visual helpers `textedit_move_visual` (goal column), cursor
+      row/col mapping and `textedit_click`.
+      Test: new `tests/test_textedit.c` — layout invariants + cursor
+      mapping + a deterministic fuzz loop.
+      Trap: every logical line keeps at least one row (the cursor may sit
+      on any line); rows must cover each line exactly once.
+- [ ] Wrap-aware `draw_textedit_window`: rows from the layout, `scroll`
+      counts visual rows, cursor bar and single-line selection rendered
+      per row.
+      Test: host suite + dev builds; screenshots in the live test.
+      Trap: clamp `scroll` against the row count, not `line_count`.
+- [ ] Word/character counts (`textedit_counts`) in the status bar; wire
+      Home/End/PageUp/PageDown; backspace join refuses to merge lines
+      whose combined length would not fit (the old check could truncate
+      the tail).
+      Test: `tests/test_textedit.c` counts + join cases.
+- [ ] Save notification: `textedit_save(edit, notify)` — TextEdit
+      explicit saves push "Saved <name>" (or the failure) through
+      `notifications_push` and log `[TEXTEDIT] Saved '<name>' N bytes, W
+      words, C chars`; Notes autosave stays silent (no toast per second).
+      Test: live test asserts the serial line.
+- [ ] Live test `tests/qemu_textedit.py`: type a long paragraph without
+      Enter and verify by pixel-ink row count in the paper that it wraps
+      (>= 3 rows), save via Cmd+S, assert the counts log, screenshots
+      looked at; `qemu_notes.py` read-only check moves to a 65+-line
+      fixture file (the old > 79-column file is editable now).
+      TCG + HVF. Evidence: `build/app-textedit-01-*`.
 
 **Goal.** Soft word wrap, word/character count, save notification.
-**Done when.** D6 acceptance.
-**Tests.** As D6.
+**Done when.** D6 acceptance: long lines wrap at word boundaries inside
+the window, the status bar shows words + characters, an explicit save
+notifies; the read-only rule becomes "> 64 lines or lines > 255 cols".
+**Tests.** tests/test_textedit.c, tests/qemu_textedit.py, full matrix.
 **Pitfalls.** —
 **Refs.** DESKTOP_PLAN.md.
 

@@ -236,7 +236,7 @@ depending on window focus; makes VZ tests as scriptable as QEMU's.
 ## Releases, bugs and docs
 
 ### QA-30 — Bug tracking process
-- Phase: P0 · Size: S · Status: doing
+- Phase: P0 · Size: S · Status: done
 - Depends: —
 - Files: bugs/README.md, bugs/OPEN.md, AGENTS.md
 
@@ -245,12 +245,13 @@ in the same session or live only in a chat/card log; there is no single
 place Jonas can look at what is known-broken.
 
 **Steps.**
-- [ ] 1. Write `bugs/README.md` (one-line-per-bug format: `BUG-NNNN |
+- [x] 1. Write `bugs/README.md` (one-line-per-bug format: `BUG-NNNN |
       symptom | steps | area | severity | card-or--`) and
       `bugs/OPEN.md`, seeded with today's known gaps (craigslist needs
       TLS 1.2 -> NET-03; no caret click in the editor; >64-line files
       open read-only). Reference the tracker from AGENTS.md's rules.
       Test: files exist and AGENTS.md points at them.
+      — done 2026-10-27 (test: bugs/README.md + bugs/OPEN.md exist with the three seeded bugs (BUG-1001..1003) and AGENTS.md's start-here checklist now has rule 2b pointing at them; format validated by reading both files)
 
 **Goal.** Lightweight tracker in the repo (one line per bug with ID,
 symptom, steps, area, severity, linked card) until Jonas moves to GitHub
@@ -259,6 +260,14 @@ issues; AI sessions add bugs they find but don't fix.
 **Tests.** —
 **Pitfalls.** —
 **Refs.** —
+**Log.** Done 2026-10-27 (commit "QA-30: in-repo bug tracker"): one
+line per bug in `bugs/OPEN.md` (ID/symptom/steps/area/severity/card),
+rules for AI sessions in `bugs/README.md` (add what you don't fix,
+remove in the fixing commit), AGENTS.md start-here rule 2b references
+it. Seeded with BUG-1001 (craigslist/TLS 1.2, NET-03), BUG-1002 (no
+caret click in the editor), BUG-1003 (64-line read-only cap). Limits:
+IDs are manual (next free number); moves to GitHub issues when Jonas
+wants.
 
 ### QA-40 — Release process and checklist
 - Phase: P0 · Size: S · Status: doing

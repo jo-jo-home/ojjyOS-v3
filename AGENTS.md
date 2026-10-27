@@ -786,6 +786,9 @@ defects and the current implementation:
 2. Check git state and preserve user work. Use the current build scripts,
    never an old destructive image builder. Shut down a VM before updating
    its image. Do not delete backups or saved disks automatically.
+2b. **Found a bug you do not fix in the same session?** Add ONE line to
+   `bugs/OPEN.md` (format: `bugs/README.md`, roadmap card QA-30) and
+   mention it in your LATEST block — never leave it only in chat.
 3. Run `bash scripts/test.sh` and both full builds. For live testing, use
    `tests/qemu_smoke.py` with a new output directory; it always copies the
    source disk. `--fresh-data` resets only that new private test copy.

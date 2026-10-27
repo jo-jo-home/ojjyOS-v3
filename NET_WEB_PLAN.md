@@ -185,6 +185,26 @@ reason. (If the host has no internet, record that and rely on host tests +
 
 ## N4 — Wall clock + NTP
 
+DONE 2026-10-27 (card TIM-04, commit `54d3385`): `kernel/src/clock.c/h`
+holds the correction; both platform `rtc_read_time()` implementations
+apply it before returning (signature unchanged, so the menu clock and
+Auto appearance are corrected for free). SNTP client: after the DHCP
+lease (hooked in `net.c`, no main.c change) it resolves time.apple.com
+(fallback pool.ntp.org), validates hard (mode 4, VN 3-4, stratum 1-15,
+non-zero transmit, originate echo = our transaction, plausible window,
+10-year skew cap unless our own clock is implausible, 2036-era
+rollover), resyncs every 6 h, backs off exponentially offline with a
+`[CLOCK]` give-up log. Terminal `date` prints the corrected time (+
+one `[CLOCK] date` serial line for headless tests), `ntp` forces a
+sync. Tests: `tests/test_clock.c` (41 checks: conversions incl. leap
+day + weekday, NTP fixed point, packet build, 9 rejection cases, first
+big-correction-from-1970, era rollover both ways, the whole state
+machine over stubbed DNS/UDP), ASan/UBSan clean; live in
+`tests/qemu_net.py` (`date` always gated, NTP under `--internet`);
+smoke TCG+HVF re-run. Evidence `build/tim-04-*`. Known limits: QEMU's
+RTC already carries host time, so visible offsets are small; the 6 h
+resync is not persisted across boots (TIM-05's RTC write-back would).
+
 - New `kernel/src/clock.c/h`: `clock_now_unix()` = firmware/RTC time at
   boot + monotonic timer + NTP correction offset. Route
   `rtc_read_time()` through it on every platform without changing its

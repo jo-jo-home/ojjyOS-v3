@@ -1,5 +1,52 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27, night): THREE more cards done — QA-30 bug tracker, QA-40 release runbook, TIM-04 SNTP clock
+
+Board id `b774d3`, worktree `ojjyOS-v3-net` / `net-web` (brought to
+`main` = `a2f4bb4` first; no other session was active). Also committed
+the regenerated `sysroot/System/Web/release.html` left over from
+APP-TEXTEDIT-01 so builds leave `git status` clean.
+
+**QA-30.** `bugs/OPEN.md` is the in-repo bug tracker (one line per
+bug: ID/symptom/steps/area/severity/card) with session rules in
+`bugs/README.md`; AGENTS.md's start-here checklist (rule 2b) now
+requires filing bugs a session finds but does not fix. Seeded with
+BUG-1001 (craigslist/TLS 1.2 -> NET-03), BUG-1002 (no caret click in
+the editor), BUG-1003 (64-line read-only cap).
+
+**QA-40.** `docs/release.md` is the copy-pasteable release runbook:
+freeze, full matrix (host + ASan/UBSan, both dev builds 0 warnings,
+smoke TCG/HVF/Intel, tours, VZ incl. build-vmapp.sh + Swift checks),
+SEC-02 security pass, DS-15 design gallery, version sync in the four
+places of AGENTS.md §8, What's New via `mkfs.sh`, data-preserving
+delivery with hash verification, local tag, ready-to-test note and a
+release summary — plus the "3.2 runbook" section. RELEASE.md and
+AGENTS.md (rule 2c) point at it.
+
+**TIM-04 (Track N's N4).** New `kernel/src/clock.c/h`: the NTP
+correction is applied inside both platform `rtc_read_time()`
+implementations (signatures unchanged — the menu clock, Auto
+appearance and everything else reading the RTC picks synced time up
+for free). After the DHCP lease (hook inside `net.c`, no main.c
+change) the SNTP client resolves time.apple.com (fallback
+pool.ntp.org) and validates replies hard: mode/stratum/version, the
+originate-echo transaction check, non-zero transmit, a plausible-time
+window, a 10-year skew cap with an exception for implausible clocks
+(the 1970 no-RTC boot), and 2036-era rollover. Resync every 6 h;
+offline it backs off exponentially and logs a clean give-up. Terminal
+gains `date` (corrected time + one `[CLOCK] date` serial line) and
+`ntp` (forces a sync). Verified: `tests/test_clock.c` 41 checks host
++ ASan/UBSan; `tests/qemu_net.py` PASS under HVF **with a real
+`[CLOCK] NTP offset +963 ms from time.apple.com` over the internet**;
+smoke TCG + HVF; both dev builds 0 warnings; `tests/test_net.c` stubs
+the two hooks so its captured frames stay clean. Evidence
+`build/tim-04-*`. Limits: resync not persisted across boots (TIM-05
+would write the RTC back); QEMU's RTC already carries host time, so
+visible offsets are small.
+
+Next ready P0 cards: APP-CAL-01, APP-FINDER-01, APP-SET-01, APP-TERM-01,
+SHL-02/03/04.
+
 ## LATEST (2026-10-27): HW-12 DONE — native launch menu delivered safely
 
 Board `76a30d`, worktree `ojjyOS-v3-hw-12` / `hw-12`. HW-10 split into

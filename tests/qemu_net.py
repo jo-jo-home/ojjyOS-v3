@@ -82,6 +82,20 @@ def run(args):
         assert found[1] == '404', found[0]
         found = command('curl http://10.0.2.2:1/', r'\[NET\] curl failed: ([^\n]*)')
         print('closed port:', found[1], flush=True)
+
+        # Corrected wall clock (TIM-04): `date` echoes one serial line;
+        # with internet the DHCP-time NTP sync must have landed too.
+        found = command('date', r'\[CLOCK\] date UTC (\d{4})-(\d{2})-(\d{2})')
+        print('date:', found[0], flush=True)
+        assert found[1] == '2026', f'date shows a wrong year: {found[0]}'
+        vm.screenshot(out / '05-date.png')
+        if args.internet:
+            found = command('ntp', r'\[CLOCK\] NTP offset ([+-]\d+) ms from (\S+)')
+            print('ntp:', found[0], flush=True)
+            found = command('date', r'\[CLOCK\] date UTC (\d{4})-\d\d-\d\d \d\d:\d\d:\d\d  \(NTP')
+            assert found[1] == '2026', 'corrected date year'
+            vm.screenshot(out / '06-ntp-date.png')
+
         vm.type('net off\n'); time.sleep(.5)
         found = command(f'curl {base}/', r'network is off')
         vm.type('net on\n')

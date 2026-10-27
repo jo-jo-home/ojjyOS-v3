@@ -8,7 +8,7 @@ HW-13/14. Tests use private images; installed guest data is not changed.
 - [x] Fix confirmed defects with deterministic host regressions. — done 2026-10-27 (test: build/review/clock-final.log, 61 checks; before-fix logs reproduce failures)
 - [x] Run normal/sanitized host suites, both zero-warning builds and native guards. — done 2026-10-27 (test: build/review/host-final.log, sanitized-final.log, build-arm-final.log, build-intel-final.log, native-guards.log: 2137 Swift checks and 7 Python pixel gates)
 - [x] Run private ARM TCG/HVF/Intel and VZ smoke, launch and app/network tours. — done 2026-10-27 (test: build/review/smoke-{tcg,hvf,intel}.log, native-smoke.log, native-launch/report.json, vz-boot-{2048,3072,4096,6144,8192}/report.json, textedit.log, notes.log, design.log, apps.log, apps-check.log, web.log; network local check and external limitations below)
-- [ ] Record results/limits, update context, privacy-scan and push approved main.
+- [x] Record results/limits, update context, privacy-scan and push approved main. — done 2026-10-27 (test: strict checklist and roadmap check pass; gitleaks 1 commit / no leaks plus zero personal-path/account/email matches; git ls-remote origin refs/heads/main verified code commit 569bb221d40d3855d046d9d78b967ceea96ad1ca after fast-forward push)
 
 ## Investigation
 
@@ -21,6 +21,12 @@ later poll respects its deadline. Add controlled-uptime repeated-exchange
 tests before changing implementation.
 
 ## Results
+
+Published code commit: `569bb22` on public GitHub `main`, verified remotely.
+Final read-only documentation repair audit returned current after requiring
+the web-tour DNS failures to be disclosed. No release/deploy was performed.
+This completion-record follow-up changes documentation only; code/tests
+remain byte-identical to the tested and reviewed product tree.
 
 Confirmed fixes:
 

@@ -23,8 +23,11 @@ No network-success gate was weakened. Known craigslist gap remains. Filed
 BUG-1004 (relative build directory), BUG-1005 (Terminal overflow) and
 BUG-1006 (six web-tour DNS failures; cause not established).
 Installed images/settings and other worktrees' edits are untouched; no
-release/version bump or HW-13/14 work. Next: docs/privacy checks and the
-push Jonas already authorized. Local Pillow venv is build/review/venv.
+release/version bump or HW-13/14 work. Code commit `569bb22` was pushed
+with Jonas's approval and verified on public GitHub main; docs audit is
+current, gitleaks/personal-path scans clean. This follow-up only records
+completion; no tested code changed. Next: BUG-1006 DNS diagnosis or the
+next requested roadmap card. Local Pillow venv is build/review/venv.
 
 ## LATEST (2026-10-27, night): THREE more cards done — QA-30 bug tracker, QA-40 release runbook, TIM-04 SNTP clock
 

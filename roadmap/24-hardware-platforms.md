@@ -16,13 +16,13 @@ and what doesn't, serial/log excerpts and photos, dated.
 
 ### HW-10 — `ojjyOS.app` (VZ host app) features
 - Phase: P2 · Size: M · Status: todo
-- Depends: —
+- Depends: HW-12, HW-13, HW-14, SMP-01
 - Files: vmapp/main.swift, scripts/build-vmapp.sh, tests/test_vmapp.swift
 
 **Context.** The app boots the custom kernel on VZ with fixed 2880×1800,
 USB HID input, virtio devices (NATIVE_VM_PLAN.md).
-**Goal.** Preferences window (CPUs, memory, disk size growth, display
-size, shared folder, sound on/off, network NAT/bridged), automatic display
+**Goal.** Remaining preferences (more CPUs after SMP-01, disk size growth,
+shared folder, sound on/off, bridged network), automatic display
 resize (pairs with DRV-VIRTIO-04), pause/save state (VZ save/restore on
 supported macOS), multiple VM profiles (e.g. "Daily", "Test"), start at
 login option, clean "Shut Down" button sending ACPI power to the guest.
@@ -31,6 +31,102 @@ them.
 **Tests.** Native guard tests + `vz_smoke.py`.
 **Pitfalls.** Never touch a disk while the VM runs (lock files exist).
 **Refs.** Apple Virtualization framework docs.
+
+### HW-12 — Launch menu in ojjyOS.app
+- Phase: P2 · Size: M · Status: todo
+- Depends: —
+- Files: vmapp/main.swift, tests/test_vmapp.swift, tests/vz_boot.py, vmapp/probe.swift
+
+**Context.** Part 1 of the launch series. The native Mac host starts immediately
+with one CPU, 2 GiB, 2880x1800 scanout, NAT and fixed 1440x900 input geometry.
+HW-10's larger host feature set is intentionally not part of this card.
+**Goal.** Blue Liquid Glass launch window before starting the VM; persistent,
+safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
+**Steps.**
+1. Parse/default/clamp settings and CLI overrides; atomic temp+rename writes.
+2. Add native launch/settings window with RAM, fixed CPU, tested Retina sizes,
+   network, full screen, show-at-start, Start/Restore Defaults/Quit.
+3. Apply configuration and matching aspect/scaling/control coordinates; retain
+   DiskLease and errors. `--control` and `--start` bypass the launch window.
+4. Extend probe/boot tools with `--memory` MB and `--screen` logical WxH;
+   live-test memory and every offered screen; inspect light/dark launch captures.
+5. Run complete Definition of Done, update context, fast-forward and safely deliver.
+**Done when.**
+- RAM offers 2/3/4/6/8 GB only inside VZ min/max and <= half host RAM;
+  one removable constant says "ojjyOS uses about 2.2 GB until its memory update".
+- CPU shows disabled 1 and "More cores come with SMP-01". Default screen
+  1440x900 Retina means 2880x1800 scanout; other sizes have inspected live proof.
+- Option at launch restores the menu when show-at-start is off. VM > Launch
+  Settings… (Cmd+,) reuses it; running VM only saves for next shutdown/start.
+- Missing/broken/bad settings log and default/clamp, never crash. JSON schema:
+  `{"version":1,"memoryMB":2048,"cpus":1,"screen":"1440x900","network":true,"fullScreen":false,"showAtStart":true}`.
+- `--memory <MB>` and `--screen <WxH>` override file without overwriting it;
+  builders/tests preserve this ignored user file. Native guards cover parsing,
+  defaults/clamping, unknown keys, broken JSON, round-trip and atomic writes.
+- Live private-disk VZ 2048/3072 MB boots show distinct [PMM] totals;
+  screenshots for every offered screen and light/dark menu in `build/hw-12-*`.
+**Tests.** `scripts/test-vmapp.sh`, `tests/vz_boot.py`, `tests/vz_smoke.py`,
+both zero-warning dev builds, normal and sanitized host suites, strict checklist.
+**Pitfalls.** No SMP or kernel memory changes here. VZ RAM starts 0x70000000;
+current PMM/EL0 maps cap at 4 GiB physical (~2.2 GB usable). Screen GET_DISPLAY_INFO
+drives guest size; host input must agree. Never touch installed disks during tests
+or a running VM; build scripts must not replace launch settings.
+**Refs.** NATIVE_VM_PLAN.md; launch-2 uses HW-13, launch-3 uses HW-14.
+
+### HW-13 — ojjyOS uses all the memory it gets
+- Phase: P2 · Size: L · Status: todo
+- Depends: HW-12
+- Files: kernel/src/memory.c, kernel/src/memory.h, kernel/src/arch/aarch64/user_arch.c, kernel/src/ui/compositor.c, tests/
+
+**Context.** Launch series part 2 (launch-2). HW-12 supplies configurable RAM,
+but MAX_MEMORY_GB/static bitmap and low-4-GiB EL0 mapping limit actual use.
+Apple VZ RAM starts at 0x70000000, leaving only about 2.2 GB below that ceiling.
+**Goal.** PMM tracks all RAM from the UEFI memory map; pages above 4 GiB
+are really allocated/used and About ojjyOS displays the real usable memory.
+**Steps.**
+- [ ] Inspect UEFI maps for multiple RAM sizes and both platforms; plan bounded
+  runtime PMM metadata rather than growing BSS into firmware allocations.
+- [ ] Extend PMM and ARM kernel/user mappings for real RAM above 4 GiB;
+  distinguish RAM from VZ PCI BARs and keep protected app isolation intact.
+- [ ] Test allocations, writes/reads/frees and protected pages above 4 GiB;
+  correct About memory and remove HW-12's single temporary memory-note constant.
+- [ ] Run host+sanitized/build/live matrix, log evidence and safely deliver.
+**Done when.**
+- [ ] Multiple VZ RAM settings produce corresponding real PMM totals and
+  demonstrably used pages above 4 GiB; About matches, no placeholder claim.
+- [ ] Existing ARM/QEMU/Intel/protected-app regressions pass; all context current.
+**Tests.** PMM/mapping host tests and fuzz boundaries, ASan/UBSan, both dev
+builds, private-disk VZ 2/3/4/6/8 GB as host permits, QEMU TCG/HVF/Intel smokes.
+**Pitfalls.** Physical address != RAM size; sparse maps/overflow/holes/reserved
+regions matter. VZ BARs above 4 GiB stay Device. No huge static bitmap/BSS.
+Do not weaken isolation or silently map device memory as user RAM.
+**Refs.** NATIVE_VM_PLAN.md; HW-12 launch settings; memory-map UEFI specification.
+
+### HW-14 — QEMU script and ojjy Control use the launch settings
+- Phase: P2 · Size: S · Status: todo
+- Depends: HW-12
+- Files: scripts/run-qemu.sh, ../ojjy-control/, tests/
+
+**Context.** Launch series part 3 (launch-3). Native app owns the version-1
+`build/launch-settings.json`; QEMU and ojjy Control still have separate defaults.
+**Goal.** All three read/write the same file without losing user settings.
+**Steps.**
+- [ ] Read HW-12 schema/validation and ojjy Control AGENTS.md; document override
+  precedence and QEMU scanout vs logical size for HVF/TCG/Intel.
+- [ ] Wire QEMU RAM/screen/network/fullscreen and Control editor to the same
+  file with safe defaults, host clamps and atomic writes; preserve unknown keys.
+- [ ] Test missing/corrupt/partial files, overrides and cross-tool round trips;
+  live boot QEMU and verify Control changes appear in the native launch menu.
+**Done when.**
+- [ ] No competing settings store; native app, QEMU and Control agree after
+  restart; automated tests bypass menus and never modify installed user data.
+- [ ] Cross-project tests/context/checklists pass and evidence is recorded.
+**Tests.** QEMU runner argument tests, Control unit/UI tests, native guard
+round trips and private-disk QEMU/VZ smoke; strict checklists for both repos.
+**Pitfalls.** Control is a separate private repo: claim/commit/update context
+there too. Avoid absolute personal paths, shell injection, JSON truncation and
+concurrent-writer loss; CPU stays 1 until SMP-01. Never reset user disks.
+**Refs.** HW-12, HW-13, NATIVE_VM_PLAN.md; ojjy Control project context.
 
 ### HW-11 — Research: Rosetta for Linux inside ojjyOS
 - Phase: P7 · Size: S · Status: todo

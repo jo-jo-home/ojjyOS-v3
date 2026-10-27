@@ -28,6 +28,15 @@ recorded in `TODO.md`'s "QA 2026-10-27" section: craigslist needs TLS
 lines open read-only. Installed images were rebuilt data-preserving
 from the same source as part of the day.
 
+## LATEST (2026-10-27): launch series split; HW-12 workspace
+
+Board `76a30d`, worktree `ojjyOS-v3-hw-12`, branch `hw-12`. HW-10 now
+depends on HW-12 (native launch menu), HW-13 (real high RAM), HW-14 (shared
+QEMU/Control settings) and SMP-01. No kernel changes in part 1. Other
+active QA session owns its own worktree; main has an existing release.html
+edit, which is not ours. Roadmap validation precedes implementation.
+Next: baseline suites, then HW-12 checkbox execution plan and native settings.
+
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 
 Board id 42b286, worktree `ojjyOS-v3-ui` / `desktop-polish`, all three

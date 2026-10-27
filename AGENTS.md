@@ -35,7 +35,8 @@ Verified: host suite exit 0 (build/readme/host-tests.log, 698 cards
 0 errors, THIRD_PARTY OK); dev ARM build 0 warnings; README links/anchors
 resolved by script and rendered through GitHub's markdown API, then looked
 at. Both dev builds 0 warnings after the theme.c comment change. Pushed
-with Jonas's OK (see TODO.md box 8). Next: APP-FINDER-01 (also BUG-1007).
+with Jonas's OK: GitHub main = 2f29447 (+ this records commit), live page
+checked. Next: APP-FINDER-01 (also BUG-1007).
 
 ## LATEST (2026-10-27): APP-CAL-01 complete and safely delivered
 

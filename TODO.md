@@ -34,7 +34,7 @@ Jonas's OK; nothing of OpenCode's existed yet).
 - [x] 6. Host suite passes, `checklist.py --strict` clean, context (AGENTS.md LATEST, this list) updated, local commit as Jonas; ask Jonas before any push. — done 2026-10-27 (test: build/readme/host-tests.log exit 0, 698 cards 0 errors, THIRD_PARTY OK; checklist --strict run before commit)
 - [x] 7. Jonas decides: remove `lighttahoe.png` (Apple's wallpaper) from the tree (git rm + local ignored copy, VISUALS.md/theme.c references updated). — done 2026-10-27 (Jonas: "delete lighttahoe.png and push"; byte-identical copy sha256 6427fb62… in `~/Developer/ojjyOS-kernel/apple-reference/`, outside git; `/lighttahoe.png` git-ignored; VISUALS.md, ARCHITECTURE.md, theme.c comment updated; test: build/readme/build-{arm,x86}-2.log 0 warnings, host-tests-2.log exit 0)
 - [ ] 7b. Optional, only if Jonas asks: erase `lighttahoe.png` from history (rewrites every commit since b452019 incl. GitHub-signed ones = force push to public main); Jonas can turn on GitHub "Keep my email addresses private" for future web commits.
-- [ ] 8. Push `readme-2026` to main only after Jonas says yes (public repo; README/images are not live until pushed).
+- [x] 8. Push `readme-2026` to main only after Jonas says yes (public repo; README/images are not live until pushed). — done 2026-10-27 (Jonas: "delete lighttahoe.png and push"; `git push` 2f4bfd9..2f29447 fast-forward; test: `git ls-remote` = 2f29447, GitHub API: README has 2026 copyright, LICENSE 2026, docs/images/ has 4 JPEGs, lighttahoe.png 404; live repo page shows hero + screenshots)
 
 ## >>> Completed-work audit (2026-10-27, board 1674cc)
 

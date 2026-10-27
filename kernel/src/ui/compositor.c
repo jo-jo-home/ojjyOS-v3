@@ -22,6 +22,7 @@
 #include "netcmd.h"
 #include "calcmath.h"
 #include "notes.h"
+#include "textedit.h"
 #include "browser.h"
 #include "draw.h"
 #include "wallpaper.h"
@@ -202,26 +203,8 @@ typedef struct {
     int history_pos;
 } TerminalState;
 
-#define TEXTEDIT_MAX_LINES 64
-#define TEXTEDIT_LINE_MAX  80
-
-typedef struct {
-    char lines[TEXTEDIT_MAX_LINES][TEXTEDIT_LINE_MAX];
-    int line_count;
-    int scroll;                  /* First visible line */
-    int cursor_line;
-    int cursor_col;
-    char file_path[128];
-    char status[48];
-    bool dirty;
-    bool read_only;              /* file does not fit the grid: never written back */
-    bool sel_active;
-    int sel_line;
-    int sel_start;
-    int sel_end;
-    bool sel_dragging;
-} TextEditState;
-
+/* The editor grid itself (TextEdit + Notes) lives in ui/textedit.c/h; the
+ * clipboard is a UI-wide singleton the compositor owns. */
 static char text_clipboard[TEXTEDIT_LINE_MAX];
 static uint8_t last_modifiers;
 
@@ -410,7 +393,6 @@ static bool calendar_load(CalendarState *cal);
 static void calendar_save(CalendarState *cal);
 static int days_in_month(int year, int month);
 static int weekday_of_date(int year, int month, int day);
-static void textedit_normalize_selection(TextEditState *edit);
 static void raise_window_to_top(int idx);
 static int destroy_window_internal(int id);
 static void launch_app_index(int index, uint64_t now_ms);
@@ -1810,16 +1792,27 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
     gfx_shadow(surface(), content_x, py, content_w, ph, 8, 8, 2, COLOR_BLACK, dark ? 60 : 30);
     draw_rounded_rect_blend(content_x, py, content_w, ph, 8, paper, 250);
 
+    /* Soft wrap: the document is laid out into rows of at most `cols`
+     * columns, broken at spaces. The compositor remembers the view size
+     * so the cursor keys step over the same rows the eye sees. */
+    int cols = (content_w - 28) / FONT_WIDTH;
+    if (cols < TEXTEDIT_WRAP_MIN_COLS) cols = TEXTEDIT_WRAP_MIN_COLS;
+    edit->view_cols = cols;
+    int row_count;
+    const TextEditWrapRow *rows = textedit_wrap_rows(edit, cols, &row_count);
+    int cursor_row = textedit_cursor_row(edit, rows, row_count);
+
     int visible = (ph - 16) / EDIT_LINE_H;
     if (visible < 1) visible = 1;
-    int max_scroll = edit->line_count - visible;
+    edit->view_rows = visible;
+    int max_scroll = row_count - visible;
     if (max_scroll < 0) max_scroll = 0;
     if (edit->scroll > max_scroll) edit->scroll = max_scroll;
     if (edit->scroll < 0) edit->scroll = 0;
-    /* Keep the cursor line in view while typing */
-    if (edit->cursor_line < edit->scroll) edit->scroll = edit->cursor_line;
-    if (edit->cursor_line >= edit->scroll + visible) {
-        edit->scroll = edit->cursor_line - visible + 1;
+    /* Keep the cursor row in view while typing */
+    if (cursor_row < edit->scroll) edit->scroll = cursor_row;
+    if (cursor_row >= edit->scroll + visible) {
+        edit->scroll = cursor_row - visible + 1;
     }
 
     int tx = content_x + 14, line_y = py + 8;
@@ -1828,38 +1821,65 @@ static void draw_textedit_window(TextEditState *edit, int content_x, int content
         for (int r = 0; r < visible; r++)
             draw_rounded_rect_blend(content_x + 8, line_y + r * EDIT_LINE_H + EDIT_LINE_H - 1, content_w - 16, 1, 0,
                                     dark ? COLOR_WHITE : RGB(200, 190, 150), dark ? 20 : 120);
-    for (int i = edit->scroll; i < edit->line_count && i < edit->scroll + visible; i++) {
-        if (i == edit->cursor_line && !edit->sel_active)
+    char row_text[TEXTEDIT_LINE_MAX + 1];
+    for (int r = edit->scroll; r < row_count && r < edit->scroll + visible; r++) {
+        const TextEditWrapRow *row = &rows[r];
+        if (r == cursor_row && !edit->sel_active)
             draw_rounded_rect_blend(content_x + 6, line_y - 1, content_w - 12, EDIT_LINE_H, 4,
                                     theme->accent, dark ? 30 : 18);
-        if (edit->sel_active && edit->sel_line == i) {
+        if (edit->sel_active && edit->sel_line == row->line) {
             textedit_normalize_selection(edit);
-            int start = edit->sel_start;
-            int end = edit->sel_end;
+            /* The selection is a column range on one logical line; show
+             * the part of it that falls inside this visual row. */
+            int start = MAX(edit->sel_start, row->start);
+            int end = MIN(edit->sel_end, row->start + row->len);
             if (start < end) {
-                draw_rounded_rect_blend(tx + start * FONT_WIDTH - 1, line_y, (end - start) * FONT_WIDTH + 2, EDIT_LINE_H - 2,
+                draw_rounded_rect_blend(tx + (start - row->start) * FONT_WIDTH - 1, line_y, (end - start) * FONT_WIDTH + 2, EDIT_LINE_H - 2,
                                         3, theme->accent, 90);
             }
         }
-        fb_draw_string(tx, line_y + 1, edit->lines[i], ink, paper);
-        if (i == edit->cursor_line)
-            draw_rounded_rect_blend(tx + edit->cursor_col * FONT_WIDTH, line_y, 2, EDIT_LINE_H - 2, 1, theme->accent, 255);
+        int len = row->len;
+        if (len > TEXTEDIT_LINE_MAX) len = TEXTEDIT_LINE_MAX;
+        if (len > 0) memcpy(row_text, edit->lines[row->line] + row->start, (size_t)len);
+        row_text[len] = '\0';
+        fb_draw_string(tx, line_y + 1, row_text, ink, paper);
+        if (r == cursor_row)
+            draw_rounded_rect_blend(tx + (edit->cursor_col - row->start) * FONT_WIDTH, line_y, 2, EDIT_LINE_H - 2, 1, theme->accent, 255);
         line_y += EDIT_LINE_H;
     }
-    if (edit->line_count == 0)       /* empty document: caret at the start */
-        draw_rounded_rect_blend(tx, line_y, 2, EDIT_LINE_H - 2, 1, theme->accent, 255);
     fb_reset_clip();
 
-    char status[96];
+    /* Status bar: editor status, cursor position, word and character
+     * count (D6). Falls back to just the counts when the full line would
+     * not fit the paper. */
+    int words, chars;
+    textedit_counts(edit, &words, &chars);
+    char status[128];
+    char num[8];
     status[0] = '\0';
     str_append(status, sizeof(status), edit->status);
     str_append(status, sizeof(status), "   Line ");
-    char num[8];
     utoa(edit->cursor_line + 1, num, 10);
     str_append(status, sizeof(status), num);
     str_append(status, sizeof(status), ", Column ");
     utoa(edit->cursor_col + 1, num, 10);
     str_append(status, sizeof(status), num);
+    str_append(status, sizeof(status), "   ");
+    utoa(words, num, 10);
+    str_append(status, sizeof(status), num);
+    str_append(status, sizeof(status), " words, ");
+    utoa(chars, num, 10);
+    str_append(status, sizeof(status), num);
+    str_append(status, sizeof(status), " chars");
+    if (text_width(status, TEXT_SMALL) > content_w - 24) {
+        status[0] = '\0';
+        utoa(words, num, 10);
+        str_append(status, sizeof(status), num);
+        str_append(status, sizeof(status), " words, ");
+        utoa(chars, num, 10);
+        str_append(status, sizeof(status), num);
+        str_append(status, sizeof(status), " chars");
+    }
     ui_text_mid(content_x + 4, content_y + content_h - 22, 22, status, TEXT_SMALL, theme->text_muted);
 }
 
@@ -5776,121 +5796,6 @@ static void open_path(const char *path)
     }
 }
 
-static void textedit_clear(TextEditState *edit)
-{
-    edit->line_count = 1;
-    edit->cursor_line = 0;
-    edit->cursor_col = 0;
-    memset(edit->lines, 0, sizeof(edit->lines));
-    edit->dirty = false;
-    edit->read_only = false;
-    edit->sel_active = false;
-    edit->sel_line = 0;
-    edit->sel_start = 0;
-    edit->sel_end = 0;
-    edit->sel_dragging = false;
-}
-
-static void textedit_clear_selection(TextEditState *edit)
-{
-    if (!edit) return;
-    edit->sel_active = false;
-}
-
-static void textedit_normalize_selection(TextEditState *edit)
-{
-    if (!edit || !edit->sel_active) return;
-    if (edit->sel_start > edit->sel_end) {
-        int tmp = edit->sel_start;
-        edit->sel_start = edit->sel_end;
-        edit->sel_end = tmp;
-    }
-}
-
-static void textedit_delete_selection(TextEditState *edit)
-{
-    if (!edit || !edit->sel_active) return;
-    if (edit->sel_line < 0 || edit->sel_line >= edit->line_count) return;
-
-    textedit_normalize_selection(edit);
-    int line = edit->sel_line;
-    int start = edit->sel_start;
-    int end = edit->sel_end;
-    int len = (int)strlen(edit->lines[line]);
-    if (start < 0) start = 0;
-    if (end > len) end = len;
-    if (start >= end) {
-        textedit_clear_selection(edit);
-        return;
-    }
-
-    for (int i = end; i <= len; i++) {
-        edit->lines[line][start + (i - end)] = edit->lines[line][i];
-    }
-    edit->cursor_line = line;
-    edit->cursor_col = start;
-    edit->dirty = true;
-    strcpy(edit->status, "Edited");
-    textedit_clear_selection(edit);
-}
-
-static void textedit_copy_selection(TextEditState *edit)
-{
-    if (!edit || !edit->sel_active) return;
-    textedit_normalize_selection(edit);
-    int line = edit->sel_line;
-    int start = edit->sel_start;
-    int end = edit->sel_end;
-    int len = (int)strlen(edit->lines[line]);
-    if (start < 0) start = 0;
-    if (end > len) end = len;
-    if (start >= end) return;
-
-    int copy_len = end - start;
-    if (copy_len >= (int)sizeof(text_clipboard)) copy_len = (int)sizeof(text_clipboard) - 1;
-    memcpy(text_clipboard, &edit->lines[line][start], copy_len);
-    text_clipboard[copy_len] = '\0';
-}
-
-static void textedit_delete_line(TextEditState *edit, int line)
-{
-    if (!edit) return;
-    if (line < 0 || line >= edit->line_count) return;
-    for (int i = line + 1; i < edit->line_count; i++) {
-        strncpy(edit->lines[i - 1], edit->lines[i], TEXTEDIT_LINE_MAX - 1);
-        edit->lines[i - 1][TEXTEDIT_LINE_MAX - 1] = '\0';
-    }
-    if (edit->line_count > 1) {
-        edit->line_count--;
-    }
-    if (edit->cursor_line >= edit->line_count) {
-        edit->cursor_line = edit->line_count - 1;
-    }
-    if (edit->cursor_line < 0) edit->cursor_line = 0;
-    edit->cursor_col = 0;
-    edit->dirty = true;
-    strcpy(edit->status, "Edited");
-}
-
-static void textedit_insert_line(TextEditState *edit, int line, const char *text)
-{
-    if (!edit || !text) return;
-    if (edit->line_count >= TEXTEDIT_MAX_LINES) return;
-    if (line < 0) line = 0;
-    if (line > edit->line_count) line = edit->line_count;
-
-    for (int i = edit->line_count; i > line; i--) {
-        strncpy(edit->lines[i], edit->lines[i - 1], TEXTEDIT_LINE_MAX - 1);
-        /* Guarantee termination when the shifted line is full-width */
-        edit->lines[i][TEXTEDIT_LINE_MAX - 1] = '\0';
-    }
-    strncpy(edit->lines[line], text, TEXTEDIT_LINE_MAX - 1);
-    edit->lines[line][TEXTEDIT_LINE_MAX - 1] = '\0';
-    edit->line_count++;
-    edit->dirty = true;
-    strcpy(edit->status, "Edited");
-}
-
 static void textedit_load_file(TextEditState *edit, const char *path)
 {
     if (!edit || !path) return;
@@ -5968,11 +5873,19 @@ static bool textedit_key_allowed(const TextEditState *edit, KeyCode key)
            key == KEY_HOME || key == KEY_END || key == KEY_PAGEUP || key == KEY_PAGEDOWN;
 }
 
-static void textedit_save(TextEditState *edit)
+/* Writes the document back. `notify` is true for TextEdit's explicit
+ * saves (Cmd+S, File > Save): those push a notification and log a
+ * [TEXTEDIT] line with the counts. Notes autosaves stay quiet — a toast
+ * per second of typing would be noise. */
+static void textedit_save(TextEditState *edit, bool notify)
 {
     if (!edit) return;
     if (edit->read_only) {
         strcpy(edit->status, "Read-only: not saved");
+        if (notify) {
+            notifications_push("TextEdit: file is read-only, not saved");
+            serial_printf("[TEXTEDIT] Read-only, not saved: '%s'\n", edit->file_path[0] ? vfs_basename(edit->file_path) : "Untitled");
+        }
         return;
     }
     if (edit->file_path[0] == '\0') {
@@ -5982,6 +5895,7 @@ static void textedit_save(TextEditState *edit)
     VfsFile *file = vfs_open(edit->file_path, VFS_O_CREATE | VFS_O_WRITE | VFS_O_TRUNC);
     if (!file) {
         strcpy(edit->status, "Save failed");
+        if (notify) notifications_push("TextEdit: save failed");
         return;
     }
 
@@ -5996,6 +5910,16 @@ static void textedit_save(TextEditState *edit)
     strcpy(edit->status, "Saved");
     edit->dirty = false;
     search_index_init();
+    if (notify) {
+        int words, chars;
+        textedit_counts(edit, &words, &chars);
+        char message[48];
+        strcpy(message, "Saved ");
+        str_append(message, sizeof(message), vfs_basename(edit->file_path));
+        notifications_push(message);
+        serial_printf("[TEXTEDIT] Saved '%s' %d bytes, %d words, %d chars\n",
+                      vfs_basename(edit->file_path), textedit_byte_count(edit), words, chars);
+    }
 }
 
 /* Tab completion: command names for the first word, file names after. */
@@ -6150,165 +6074,49 @@ static void textedit_handle_key(TextEditState *edit, char ascii, KeyCode key, ui
     if (!edit) return;
 
     bool shift = (modifiers & INPUT_MOD_SHIFT) != 0;
+    bool ctrl = (modifiers & INPUT_MOD_CTRL) != 0;
 
-    if ((modifiers & INPUT_MOD_CTRL) && key == KEY_LEFT) {
-        int col = edit->cursor_col;
-        if (col > 0) {
-            while (col > 0 && edit->lines[edit->cursor_line][col - 1] == ' ') {
-                col--;
-            }
-            while (col > 0 && edit->lines[edit->cursor_line][col - 1] != ' ') {
-                col--;
-            }
-            edit->cursor_col = col;
-        }
+    /* Word-wise jumps (Ctrl+arrows). */
+    if (ctrl && (key == KEY_LEFT || key == KEY_RIGHT)) {
+        textedit_move_horiz(edit, key == KEY_RIGHT ? 1 : -1, true, shift);
         return;
     }
 
-    if ((modifiers & INPUT_MOD_CTRL) && key == KEY_RIGHT) {
-        int len = (int)strlen(edit->lines[edit->cursor_line]);
-        int col = edit->cursor_col;
-        while (col < len && edit->lines[edit->cursor_line][col] != ' ') {
-            col++;
-        }
-        while (col < len && edit->lines[edit->cursor_line][col] == ' ') {
-            col++;
-        }
-        edit->cursor_col = col;
+    /* Up/Down/Page move over visual rows from the wrap layout, keeping
+     * the goal column; the compositor stores the view size while
+     * drawing (16 columns until the window has been drawn once). */
+    if (key == KEY_UP || key == KEY_DOWN) {
+        textedit_move_visual(edit, edit->view_cols, key == KEY_DOWN ? 1 : -1);
+        if (!shift) textedit_clear_selection(edit);
+        return;
+    }
+    if (key == KEY_PAGEUP || key == KEY_PAGEDOWN) {
+        int page = MAX(1, edit->view_rows);
+        textedit_move_visual(edit, edit->view_cols, key == KEY_PAGEDOWN ? page : -page);
+        if (!shift) textedit_clear_selection(edit);
         return;
     }
 
-    if (key == KEY_LEFT) {
-        if (edit->cursor_col > 0) {
-            edit->cursor_col--;
-        }
-        if (shift) {
-            if (!edit->sel_active) {
-                edit->sel_active = true;
-                edit->sel_line = edit->cursor_line;
-                edit->sel_start = edit->cursor_col;
-                edit->sel_end = edit->cursor_col + 1;
-            } else {
-                edit->sel_end = edit->cursor_col;
-            }
-        } else {
-            textedit_clear_selection(edit);
-        }
+    if (key == KEY_LEFT || key == KEY_RIGHT) {
+        textedit_move_horiz(edit, key == KEY_RIGHT ? 1 : -1, false, shift);
         return;
     }
-
-    if (key == KEY_RIGHT) {
-        if (edit->cursor_col < (int)strlen(edit->lines[edit->cursor_line])) {
-            edit->cursor_col++;
-        }
-        if (shift) {
-            if (!edit->sel_active) {
-                edit->sel_active = true;
-                edit->sel_line = edit->cursor_line;
-                edit->sel_start = edit->cursor_col - 1;
-                edit->sel_end = edit->cursor_col;
-            } else {
-                edit->sel_end = edit->cursor_col;
-            }
-        } else {
-            textedit_clear_selection(edit);
-        }
+    if (key == KEY_HOME || key == KEY_END) {
+        textedit_move_line_edge(edit, key == KEY_END, shift);
         return;
     }
-
-    if (key == KEY_UP) {
-        if (edit->cursor_line > 0) {
-            edit->cursor_line--;
-            int max_col = (int)strlen(edit->lines[edit->cursor_line]);
-            if (edit->cursor_col > max_col) edit->cursor_col = max_col;
-        }
-        if (!shift) {
-            textedit_clear_selection(edit);
-        }
-        return;
-    }
-
-    if (key == KEY_DOWN) {
-        if (edit->cursor_line + 1 < edit->line_count) {
-            edit->cursor_line++;
-            int max_col = (int)strlen(edit->lines[edit->cursor_line]);
-            if (edit->cursor_col > max_col) edit->cursor_col = max_col;
-        }
-        if (!shift) {
-            textedit_clear_selection(edit);
-        }
-        return;
-    }
-
     if (key == KEY_BACKSPACE) {
-        if (edit->sel_active) {
-            textedit_delete_selection(edit);
-            return;
-        }
-        if (edit->cursor_col > 0) {
-            edit->cursor_col--;
-            edit->lines[edit->cursor_line][edit->cursor_col] = '\0';
-            edit->dirty = true;
-            strcpy(edit->status, "Edited");
-        } else if (edit->cursor_line > 0) {
-            int prev = edit->cursor_line - 1;
-            int prev_len = (int)strlen(edit->lines[prev]);
-            if (prev_len < TEXTEDIT_LINE_MAX - 1) {
-                str_append(edit->lines[prev], TEXTEDIT_LINE_MAX, edit->lines[edit->cursor_line]);
-                textedit_delete_line(edit, edit->cursor_line);
-                edit->cursor_line = prev;
-                edit->cursor_col = prev_len;
-            }
-        }
+        textedit_backspace(edit);
         return;
     }
-
     if (key == KEY_ENTER) {
-        if (edit->line_count < TEXTEDIT_MAX_LINES - 1) {
-            char tail[TEXTEDIT_LINE_MAX];
-            tail[0] = '\0';
-            bool have_tail = edit->cursor_col < (int)strlen(edit->lines[edit->cursor_line]);
-            if (have_tail) {
-                strncpy(tail, &edit->lines[edit->cursor_line][edit->cursor_col], sizeof(tail) - 1);
-                tail[sizeof(tail) - 1] = '\0';
-                edit->lines[edit->cursor_line][edit->cursor_col] = '\0';
-                /* Split: insert the tail as a new line after the cursor
-                 * line (insert_line bumps line_count exactly once) */
-                textedit_insert_line(edit, edit->cursor_line + 1, tail);
-                edit->cursor_line++;
-                edit->cursor_col = 0;
-            } else {
-                /* New empty line at the cursor position */
-                edit->cursor_line++;
-                edit->cursor_col = 0;
-                if (edit->cursor_line >= edit->line_count) {
-                    edit->line_count = edit->cursor_line + 1;
-                }
-            }
-            edit->dirty = true;
-            strcpy(edit->status, "Edited");
-        }
+        textedit_newline(edit);
         textedit_clear_selection(edit);
         return;
     }
 
     if (ascii >= 32 && ascii <= 126) {
-        if (edit->sel_active) {
-            textedit_delete_selection(edit);
-        }
-        int len = (int)strlen(edit->lines[edit->cursor_line]);
-        /* Insert (shift right) only while the line has room; when the
-         * line is full the old code shifted nothing and silently
-         * OVERWROTE the character at the cursor */
-        if (edit->cursor_col < TEXTEDIT_LINE_MAX - 1 && len < TEXTEDIT_LINE_MAX - 1) {
-            for (int i = len; i >= edit->cursor_col; i--) {
-                edit->lines[edit->cursor_line][i + 1] = edit->lines[edit->cursor_line][i];
-            }
-            edit->lines[edit->cursor_line][edit->cursor_col++] = ascii;
-            edit->dirty = true;
-            strcpy(edit->status, "Edited");
-        }
-        textedit_clear_selection(edit);
+        textedit_insert_char(edit, ascii);
     }
 }
 
@@ -6325,7 +6133,7 @@ static TextEditState *notes_editor(void)
 static void notes_save_open(TextEditState *edit)
 {
     if (!edit || !edit->dirty || !edit->file_path[0] || edit->read_only) return;
-    textedit_save(edit);
+    textedit_save(edit, false);
     if (edit->dirty) {
         serial_printf("[NOTES] Save failed for '%s'\n", vfs_basename(edit->file_path));
         return;
@@ -6861,7 +6669,7 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode, uint8_t 
     switch (keycode) {
         case KEY_S:
             if (notes) notes_save_open(edit);
-            else textedit_save(edit);
+            else textedit_save(edit, true);
             return true;
         case KEY_N:
             if (!notes) return false;
@@ -6875,7 +6683,7 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode, uint8_t 
             return true;
         case KEY_C:
             if (edit->sel_active) {
-                textedit_copy_selection(edit);
+                textedit_copy_selection(edit, text_clipboard, sizeof(text_clipboard));
                 strcpy(edit->status, "Copied");
             } else {
                 strncpy(text_clipboard, edit->lines[edit->cursor_line],
@@ -6886,7 +6694,7 @@ static bool handle_app_shortcut(AppWindowState *state, KeyCode keycode, uint8_t 
             return true;
         case KEY_X:
             if (edit->sel_active) {
-                textedit_copy_selection(edit);
+                textedit_copy_selection(edit, text_clipboard, sizeof(text_clipboard));
                 textedit_delete_selection(edit);
                 strcpy(edit->status, "Cut");
             } else {
@@ -7773,7 +7581,7 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     } else if (item == 3) {
                         if (active_window_index >= 0 && active_window_index < window_count) {
                             AppWindowState *st = &app_states[active_window_index];
-                            if (st->type == APP_TEXTEDIT) textedit_save(&st->textedit);
+                            if (st->type == APP_TEXTEDIT) textedit_save(&st->textedit, true);
                             else if (st->type == APP_NOTES) notes_save_open(&st->notes);
                         }
                     } else if (item == 4) {

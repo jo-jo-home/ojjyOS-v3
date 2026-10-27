@@ -44,7 +44,8 @@ items = [("Tahoe Light", "light", b"L" * 1500, b"l" * 300), ("Tahoe Dark", "dark
 open(sys.argv[2], "wb").write(w.build_pack(items))' tools/import_wallpapers.py "$OUT/sample.pack"
 "$HOST_CC" "${FLAGS[@]}" tests/test_calc.c kernel/src/ui/calcmath.c kernel/src/string.c -o "$OUT/test_calc"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_notes.c kernel/src/ui/notes.c kernel/src/fs/{ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_notes"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_calc test_notes test_gfx test_jpeg; do
+"$HOST_CC" "${FLAGS[@]}" -Itests tests/test_textedit.c kernel/src/ui/textedit.c kernel/src/string.c -o "$OUT/test_textedit"
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_calc test_notes test_textedit test_gfx test_jpeg; do
     echo "Running $test"
     "$OUT/$test"
 done

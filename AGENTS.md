@@ -789,6 +789,8 @@ defects and the current implementation:
 2b. **Found a bug you do not fix in the same session?** Add ONE line to
    `bugs/OPEN.md` (format: `bugs/README.md`, roadmap card QA-30) and
    mention it in your LATEST block — never leave it only in chat.
+2c. **Cutting a release?** Follow `docs/release.md` (card QA-40) —
+   freeze, full matrix, reviews, version sync, delivery, tag.
 3. Run `bash scripts/test.sh` and both full builds. For live testing, use
    `tests/qemu_smoke.py` with a new output directory; it always copies the
    source disk. `--fresh-data` resets only that new private test copy.

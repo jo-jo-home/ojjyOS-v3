@@ -4,6 +4,10 @@
 
 This guide covers building and running **ojjyOS v3.1.0** both **natively on Apple Silicon (`aarch64`) via QEMU + HVF** and on **`x86_64` via QEMU or VirtualBox**.
 
+> Cutting a release? The step-by-step release checklist lives in
+> [`docs/release.md`](docs/release.md) (roadmap card QA-40).
+
+
 ---
 
 ## 1) Native Apple Silicon (`aarch64`) on macOS via QEMU

@@ -1,107 +1,193 @@
-# ojjyOS v3 (v3.1.0)
+<div align="center">
 
-**Created by Jonas Lee** (`jo-jo-home` / `ojjy`)
+# ojjyOS
 
-**ojjyOS v3** is a custom 64-bit operating system built entirely from scratch by **Jonas Lee**, featuring a custom kernel, custom UEFI ELF64 bootloader, custom read-only and writable filesystems with disk persistence, and a **macOS Tahoe-inspired blue liquid-glass desktop environment**.
+**A 64-bit operating system written from scratch, with a blue Liquid Glass desktop inspired by macOS Tahoe.**
 
-- **100% Original Custom Kernel:** Not based on Linux, BSD, Windows, or macOS. Host operating systems are used strictly as build/VM hosts.
-- **Native Dual-Architecture Support (`aarch64` + `x86_64`):**
-  - **ARM64 guest on Apple Silicon (`aarch64`):** Native `ojjyOS.app` uses Apple's Virtualization.framework, Metal-backed display, GICv3, PCI virtio GPU/disk/network/console/RNG, xHCI USB keyboard/absolute pointer, virtual timer and PSCI. QEMU remains supported with HVF hardware acceleration or TCG emulation, virtio-MMIO input and optional ramfb. This is a VM, not bare-metal Mac support; the guest remains Jonas's custom kernel.
-  - **Intel/AMD (`x86_64`):** Runs in QEMU or VirtualBox via UEFI GOP, GDT/IDT/4-level paging, 8259 PIC + PIT, PS/2 keyboard & scroll mouse, PIIX4 ATA/IDE + LRU block cache, CMOS RTC, and ACPI S5 power management.
-- **macOS Tahoe Blue Glass Desktop:** Translucent blue glass windows, multi-sample wallpaper blur, First-Boot Account Setup Assistant, Tahoe Lock/Login Screen with salted SHA-256 credentials, traffic-light window controls (close, minimize, maximize/zoom), bottom-right drag resizing, Dock with hover magnification, interactive Menu Bar dropdowns (`ojjy`, `File`, `Edit`, `View`, `Window`), Desktop right-click context menu, Spotlight, Launchpad, Control Center, Mission Control, App Switcher, Desktop icons, and 11 built-in apps.
+Its own kernel, UEFI bootloader, drivers, filesystems, network stack and web engine. Not based on Linux, BSD, Windows or macOS.
+
+**Created by Jonas Lee** ([`ojjy`](https://github.com/jo-jo-home))
+
+![Version 3.1.0](https://img.shields.io/badge/version-3.1.0-1e6fd9?style=flat-square) ![Architectures: aarch64 and x86_64](https://img.shields.io/badge/arch-aarch64%20%7C%20x86__64-1e6fd9?style=flat-square) ![Kernel: 100% original](https://img.shields.io/badge/kernel-100%25%20original-0b4fa8?style=flat-square) ![Written in C](https://img.shields.io/badge/written%20in-C-555555?style=flat-square) ![License: all rights reserved](https://img.shields.io/badge/license-all%20rights%20reserved-lightgrey?style=flat-square)
+
+<br>
+
+<img src="docs/images/desktop-light.jpg" alt="ojjyOS desktop in light mode with Finder, Calendar and About ojjyOS open over the Dock" width="100%">
+
+</div>
+
+<br>
+
+## Highlights
+
+<table>
+<tr>
+<td width="33%" valign="top">
+
+### 🧠 Original kernel
+Dual-architecture kernel for **ARM64** (Apple Silicon) and **x86_64**, booted by its own UEFI loader. It includes a memory manager, kernel heap, interrupt handling and protected ARM64 programs running at EL0.
+
+</td>
+<td width="33%" valign="top">
+
+### 🪟 Liquid Glass desktop
+Translucent blue glass, light/dark/auto modes, Retina rendering with the Inter font, Dock, menu bar, Spotlight, Launchpad, Control Center, Mission Control and **11 built-in apps**.
+
+</td>
+<td width="33%" valign="top">
+
+### 🌐 Online from scratch
+Its own TCP/IP stack with DHCP, DNS and TCP, plus HTTP/1.1, a TLS 1.3 client, SNTP clock sync and **ojjyOS Web**, a tabbed browser with its own HTML/CSS layout engine.
+
+</td>
+</tr>
+</table>
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/desktop-dark.jpg" alt="Dark mode with Terminal running a protected program, Activity Monitor and Finder"></td>
+<td width="50%"><img src="docs/images/web.jpg" alt="ojjyOS Web browser showing its new-tab page"></td>
+</tr>
+<tr>
+<td align="center"><sub>Dark mode: Terminal, Activity Monitor and Finder</sub></td>
+<td align="center"><sub>ojjyOS Web, the built-in browser</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/images/launchpad.jpg" alt="Launchpad showing all eleven built-in apps"></td>
+<td width="50%" valign="middle">
+
+**Everything you see is drawn by ojjyOS itself:** the window manager, glass material, fonts, icons, animations and every app run on the custom kernel. The host Mac or PC only provides the virtual machine.
+
+The screenshots use the built-in **ojjyOS Waves** wallpaper.
+
+</td>
+</tr>
+<tr>
+<td align="center"><sub>Launchpad</sub></td>
+<td></td>
+</tr>
+</table>
 
 ---
 
-## Feature Matrix: Implemented vs. Tested vs. Planned
+## Contents
 
-Per project documentation standards, features are categorized into **Implemented**, **Tested**, and **Planned**:
-
-### Implemented & Verified (`v3.1.0`)
-- **Custom UEFI Bootloader (`boot/ojjy-boot.c`):**
-  - Dual-architecture UEFI application (`BOOTAA64.EFI` for `aarch64`, `BOOTX64.EFI` for `x86_64`).
-  - Parses ELF64 program headers (`PT_LOAD`), validates `e_machine` (`183` / `62`), zeroes BSS tail, sets up GOP 32-bpp BGRx framebuffer, queries UEFI memory map, and jumps to `e_entry`.
-- **Dual-Architecture Kernel Core:**
-   - **`aarch64` (`kernel/src/arch/aarch64/`):** EL3/EL2 $\rightarrow$ EL1 entry, owned page tables, exception diagnostics, ACPI-described GICv2/v3 and virtual timer PPI, PCI and virtio-MMIO transports, virtio GPU/block/net/console/RNG, polled xHCI USB HID, and PSCI shutdown/reboot. QEMU's UART/RTC are optional; VZ logs through virtio-console and advances firmware wall time with the architectural counter.
-  - **`x86_64` (`kernel/src/`):** 64-bit long mode entry (`entry.asm`), GDT/TSS, IDT (256 vectors + visual panic screen), 4-level paging with on-demand `paging_map()` (including high-MMIO framebuffers above 4 GB), 8259 PIC with automatic IRQ2 cascade unmasking, 1 kHz PIT timer, 16550 UART, PS/2 keyboard (with `0xE0` extended scancodes & Super/Cmd keys) and 3-button scroll mouse, ATA PIO (LBA28/LBA48) + 64-sector LRU block cache, CMOS RTC, and ACPI S5 power-off + 8042 reset.
-  - **Physical Memory Manager (`memory.c`):** Bitmap page allocator initialized from the UEFI memory map, dynamically reserving `[_kernel_start .. _kernel_end)` and the GOP framebuffer.
-- **Bounded ARM64 Protected Apps:** Authenticated `run <name>` loads separate
-  static ELF64 programs at EL0. Private page permissions, checked SVC calls,
-  fault recovery and a 100 ms timer budget are live-tested. Existing GUI apps
-  remain in the kernel; Intel reports unsupported. See [PROTECTED_APPS.md](PROTECTED_APPS.md).
-- **User Accounts & Salted SHA-256 Credentials (`kernel/src/users.c`):**
-  - **Salted FIPS 180-4 SHA-256 Password Hashing:** Domain-separated 32-bit salt + 256-bit SHA-256 digest with constant-time verification (`hash_equal_ct`), stored in `/Library/Accounts/users.db` and persisted across reboots.
-  - **First-Boot Account Setup Assistant & Tahoe Lock/Login Screen:** When no accounts exist (`users_count() == 0`) or **+ New Account** is clicked, presents a glass Setup Assistant card (`Full Name`, `Username`, `Password`, `Confirm`). When locked or logged out, presents the macOS Tahoe Lock Screen with clock, user avatar initials, `@username` badge, masked password field, **Sign In**, **Switch User**, and **+ New Account**.
-   - **Per-User Home Directories (`/Users/<username>`):** Automatically provisions `/Users/<username>/Desktop` and `/Users/<username>/Documents` with starter `Welcome.txt`, `Notes.txt`, and `Calendar.txt`. Apps bind to the logged-in user's home directory. These are not enforced user-access boundaries; file ownership checks and account-security hardening remain future work.
-- **Filesystems & Disk Persistence (`kernel/src/fs/`):**
-  - **VFS (`vfs.c`):** Unified mount table (`/`, `/Users`, `/Library`), path normalization (`.`, `..`, duplicate slashes), per-mount `fs_data` isolation.
-  - **OJFS (`ojfs.c`):** Custom read-only system filesystem embedded in the kernel (`/` with `/System` and `/Applications`).
-  - **RAMFS (`ramfs.c`):** Writable filesystem with first-fit free-list data pool allocator and node reuse on unlink, mounted independently at `/Users` and `/Library`.
-   - **Disk Persistence (`persist.c`):** Alternates two 8 MiB checkpoint slots in the data partition (LBA `67584`). CRC-32 protects the payload and commit header. Payload is flushed before its header; restore falls back to the previous valid checkpoint. Legacy v1 snapshots are structurally validated and migrated without overwriting the old snapshot first. Autosaves use bounded batches between input/render turns; explicit `sync`, shutdown, and restart wait for completion. Failed saves remain dirty and cancel shutdown/restart.
-- **macOS Tahoe Blue Glass Desktop (`kernel/src/ui/`):**
-  - **Window Management:** Close (red), Minimize to Dock (yellow), Maximize/Zoom (green) traffic lights, `Cmd+Q` close, titlebar drag, and bottom-right corner drag resize (`360x220` minimum).
-  - **Interactive Menu Bar & Desktop Context Menu:** Dropdown menus for `ojjy` (About, Settings, Activity Monitor, Lock Screen, Switch User, Restart, Shut Down), `File`, `Edit`, `View`, and `Window`, plus clickable active username pill (`Settings → Users & Accounts`) and right-click desktop context menu (New Folder on Desktop, New Text Note, Open Home in Finder, Open Terminal, Open Calculator, Toggle Dark/Light, Lock Screen).
-  - **Desktop & Overlays:** Desktop icons (`/Users/<user>/Desktop` + `ojjyHD` volume icon), Dock with magnification & bounce animations, Spotlight (`Cmd+Space`), Launchpad (`Cmd+L` with centered full app names), Control Center (`Cmd+C` with Wi-Fi/Bluetooth/Dark Mode/Reduced Transparency toggles and **Restart** / **Shut Down** buttons), Mission Control (`Cmd+M` live window cards), and App Switcher (`Cmd+Tab` with Super-release activation).
-  - **Accessibility & Preferences:** Persisted in `/Library/Preferences/system.conf` (Dark/Light mode, 12/24-hour clock, Dock size/magnification, mouse speed, keyboard shortcuts, **Reduced Transparency**, and **Reduced Motion**).
-  - **11 Built-In Applications:** **Finder**, **Terminal**, **TextEdit**, **Notes**, **Calendar**, **Settings** (including **Users & Accounts**), **Preview**, **Web** (offline hypertext browser over `/System/Web/*.page`), **Calculator**, **Activity Monitor** (live RAM bar, uptime, active user, and kernel driver IRQ/IO table), and **About ojjyOS** (crediting Jonas Lee).
-
-### Tested
-- **Freestanding Cross-Compilation (`clang`):** Every C and assembly translation unit compiles cleanly with `-Wall -Wextra` zero warnings and zero errors under both `ARCH=aarch64` (`aarch64-unknown-none-elf`) and `ARCH=x86_64` (`x86_64-unknown-none-elf`).
-- **Host Unit Test Suites (`tests/`):**
-  - `tests/test_fs.c` (37 assertions): OJFS validation, root & nested directory listing (all 11 `.app` bundles + `/System/Web/accounts.page`), file reads, VFS path normalization, and exact-`n` `strncpy` bounds.
-   - `tests/test_ramfs.c` (81 assertions): RAMFS allocation and file operations, accounts, heap allocation, process bookkeeping, and syscall dispatch.
-   - `tests/test_input.c`: Real evdev and PS/2 decoders, key mappings, left/right modifiers, delayed repeats, Backspace, queue overflow, and releases.
-   - `tests/test_virtqueue.c`: Negotiated queue depths (8/64/128), repeated ring wraps, and 16-bit index rollover.
-   - `tests/test_persist.c`: Checksums, fallback, torn writes, flush failures, concurrent edits during autosave, and legacy migration using real RAMFS and a fault-injected block device.
-   - `tests/test_image.py`: Data-preserving rebuilds, backups, migration, invalid layouts, and running-VM disk locks (real QEMU check when installed).
-   - `tests/qemu_smoke.py`: Opt-in live VM setup/login, typing/Backspace, command responsiveness, sync/shutdown, and cold-boot credential recovery. Always uses a private disk copy.
-- **Host Asset & Filesystem Builders (`tools/`):** `mkojfs`, `mkicon`, `mkwallpaper`, and `mkarray` build and generate `build/system.ojfs` and `kernel/src/fs/system_fs.h`.
-
-### Planned (Future Milestones)
-- **Preemptive Multitasking & Scheduler:** Kernel threads, per-process kernel stacks, and timer-driven context switching.
-- **Broader Protected Userspace:** Concurrent ARM64 tasks, GUI app conversion and Intel ring-3. The first bounded ARM64 EL0 runner is described in [PROTECTED_APPS.md](PROTECTED_APPS.md).
-- **Network Stack & Online Web Browser:** `virtio-net` / E1000 NIC driver $\rightarrow$ Ethernet/ARP/IPv4/UDP/TCP/DNS/HTTP so `Web.app` can fetch live pages alongside `/System/Web/*.page`.
-- **Audio Subsystem:** `virtio-sound` / Intel HDA output for system alert sounds.
-- **ARM64 Scroll Wheel Device:** QEMU's `virtio-tablet-device` does not expose a scroll wheel axis; adding a secondary `virtio-mouse-device` or keyboard page-scroll binding on `aarch64` is planned.
+- [Features](#features)
+- [What it can't do yet](#what-it-cant-do-yet)
+- [Quick start](#quick-start)
+- [Testing](#testing)
+- [Keyboard shortcuts and commands](#keyboard-shortcuts-and-commands)
+- [Project layout](#project-layout)
+- [Roadmap and docs](#roadmap-and-docs)
+- [Credits and license](#credits-and-license)
 
 ---
 
-## Running on Apple Silicon (native Mac app)
+## Features
 
-Requires Apple Silicon, macOS 13+, Command Line Tools and `lld` (`brew install lld`).
-No Xcode project or Linux guest is needed.
+### Kernel and boot
+
+- **Own UEFI bootloader** (`boot/ojjy-boot.c`), `BOOTAA64.EFI` and `BOOTX64.EFI`: parses the ELF64 kernel, loads its segments, passes the memory map and framebuffer, then jumps in.
+- **ARM64:** EL2 → EL1 entry, kernel-owned page tables, GICv2/GICv3, architectural timer, PSCI power control and exception diagnostics.
+- **x86_64:** long mode, GDT/TSS, IDT with a visual panic screen, 4-level paging, 8259 PIC + 1 kHz PIT, ACPI S5 power-off.
+- **Memory:** bitmap physical page allocator built from the UEFI memory map, plus a coalescing kernel heap with corruption and double-free detection.
+- **Protected programs (ARM64):** separate static ELF programs run at EL0 with private memory, checked system calls, crash recovery and a 100 ms watchdog. Try `run hello` in Terminal. See [PROTECTED_APPS.md](PROTECTED_APPS.md).
+- **Randomness:** ChaCha20 DRBG seeded from virtio-rng and timers.
+
+### Drivers
+
+| Apple Silicon (native app or QEMU) | Intel / AMD (QEMU or VirtualBox) |
+|---|---|
+| PCI and virtio-MMIO transports | UEFI GOP framebuffer |
+| virtio GPU (2D, Retina), block, network, console, RNG | PS/2 keyboard and scroll mouse |
+| virtio keyboard / tablet / wheel | ATA PIO (LBA28/48) + LRU block cache |
+| xHCI USB keyboard and pointer | CMOS real-time clock |
+| PL011 serial, PL031 RTC (QEMU) | 16550 serial, ACPI power-off, 8042 reset |
+
+### Storage and accounts
+
+- **Filesystems:** a VFS with **OJFS** (the read-only system image: apps, icons, web pages, programs) and **RAMFS** for `/Users` and `/Library`.
+- **Saved to disk:** both RAMFS trees are checkpointed into two CRC-32-protected slots on the data partition. Saves happen automatically, on `sync` and on shutdown, and boot falls back to the older slot if the newest one is damaged.
+- **Safe rebuilds:** rebuilding the disk image keeps your accounts and files and backs up the old disk first. Disks that are locked or unrecognised are refused, never reformatted.
+- **User accounts:** first-boot Setup Assistant, lock screen, multiple users, **PBKDF2-HMAC-SHA256** password hashes with random salts, and admin-only account creation. Non-admin users can't open other users' home folders.
+
+### Desktop
+
+- **Liquid Glass** windows, Dock, menus and menu bar, with light, dark and auto (by time of day) appearance, 8 accent colours, clear or tinted glass, and Reduce Transparency / Reduce Motion.
+- **Sharp on Retina screens:** renders at 2× of a 1440×900 desktop, using **Inter** for the interface and **JetBrains Mono** in Terminal, with anti-aliased shapes, shadows and smooth window/menu/Dock animations.
+- **Desktop features:** menu bar dropdowns, Dock with magnification, Spotlight (`Cmd+Space`), Launchpad, Control Center, Mission Control, App Switcher, desktop icons and a right-click menu.
+
+### Built-in apps
+
+| App | What it does |
+|---|---|
+| **Finder** | Sidebar, list/icon views, search, rename, copy/cut/paste, drag-to-move, Trash, preview pane |
+| **Terminal** | Shell with file, account, network (`ifconfig`, `ping`, `nslookup`, `curl`), clock and process commands |
+| **TextEdit** | Word wrap, selection, clipboard, word and character counts |
+| **Notes** | Notes sidebar, New Note (`Cmd+N`), autosave |
+| **Calendar** | Month view, Today, events and agenda |
+| **Calculator** | Mouse and keyboard input, equation history |
+| **Activity Monitor** | Processes, Memory and Frames tabs |
+| **Preview** | Picture viewer |
+| **Settings** | Appearance, Users & Accounts, Wallpaper, Dock & Menu Bar, Network and more |
+| **Web** | ojjyOS Web: tabs, address bar, bookmarks, history, downloads, find, zoom |
+| **About** | Version and credits |
+
+### Networking and the web
+
+- **Network stack written from scratch:** Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS and TCP.
+- **HTTP/1.1** with chunked transfer, gzip/deflate, cookies, redirects and POST.
+- **TLS 1.3 client** (x25519, ChaCha20-Poly1305, AES-GCM) on top of its own crypto: SHA-2, big-integer RSA and ECDSA P-256/P-384.
+- **Network time:** the clock syncs from `time.apple.com` (fallback `pool.ntp.org`) after DHCP and resyncs every 6 hours.
+- **ojjyOS Web engine:** HTML parser, CSS cascade (with `@layer`, `var()` and media queries), and block/inline/flex/grid/table/float layout. It decodes PNG, GIF, JPEG, WebP and SVG images.
+
+## What it can't do yet
+
+ojjyOS is a long-term project, and these are the honest gaps today:
+
+- **No multitasking yet.** Desktop apps run inside the kernel, there is no preemptive scheduler, and only one CPU core is used.
+- **No real on-disk filesystem yet.** Files live in RAM and are saved to disk as checkpoints.
+- **HTTPS certificates are not verified yet,** so don't use the browser for anything sensitive. TLS 1.2-only sites and JavaScript are not supported either.
+- **Virtual machines only:** it runs under Apple's Virtualization.framework, QEMU or VirtualBox, not directly on Mac or PC hardware.
+- **Memory:** about 2.2 GB is usable until the memory update, whatever you assign.
+- No sound, and no Wi-Fi or Bluetooth hardware (virtual machines don't provide it).
+
+Known bugs are tracked in [bugs/OPEN.md](bugs/OPEN.md).
+
+---
+
+## Quick start
+
+### Apple Silicon Mac: native app (recommended)
+
+Requires Apple Silicon, macOS 13 or later, the Command Line Tools and `lld` (`brew install lld`). No Xcode project or Linux VM is needed.
 
 ```bash
-# Quit an existing VM before rebuilding its disk. Saved accounts/files are preserved.
-ARCH=aarch64 bash scripts/build.sh
-bash scripts/build-vmapp.sh
-bash scripts/run-vm.sh
+git clone https://github.com/jo-jo-home/ojjyOS-v3.git
+cd ojjyOS-v3
+
+ARCH=aarch64 bash scripts/build.sh   # kernel, bootloader and disk image
+bash scripts/build-vmapp.sh          # ojjyOS.app (Apple Virtualization.framework)
+bash scripts/run-vm.sh               # or double-click build/ojjyOS.app
 ```
 
-You can also double-click `build/ojjyOS.app`. Its launch menu lets you choose
-2/3/4/6/8 GB RAM (within VZ limits and half your Mac's RAM), a tested Retina
-screen size, NAT network on/off and full-screen startup. Defaults are 2 GB,
-1440×900 logical / 2880×1800 scanout, network on, windowed. CPU stays at one
-ARM64 core until SMP-01. **ojjyOS uses about 2.2 GB until its memory update**;
-assigning more does not yet make all that RAM usable (HW-13 / launch-2).
+On first boot the Setup Assistant creates your account.
 
-**Start** (Return) saves and boots. **Restore Defaults** resets the controls;
-press Start or Save to keep them. **VM → Launch Settings…** (Cmd+,) reopens
-the same window. While running, it only saves changes for the next start;
-shut down inside ojjyOS, then use VM → Start. Disable **Show this menu when
-ojjyOS opens** to boot directly; hold Option while opening to recover the menu.
-Settings live in `build/launch-settings.json` next to the app and survive builds.
-Missing or invalid values log a warning and default/clamp, never reset guest data.
-Use **View → Enter Full Screen** to change host full screen during a session.
-The About panel credits Jonas Lee. This Mac app is only the VM host; ojjyOS is
-still the original custom kernel, not Linux or macOS inside the VM.
+<details>
+<summary><b>Launch menu, saved data and developer options</b></summary>
 
-The default saved disk is `build/aarch64/ojjyos3.img`, EFI variables are
-`build/aarch64/efi-vars.fd`, and logs are `build/aarch64/serial-vz.log`.
-**Shut down inside ojjyOS, then quit the Mac app before rebuilding or switching
-VM hosts.** Active disk/builder locks are refused, never bypassed. Force Stop
-requires confirmation and can lose unsaved guest changes.
+<br>
 
-For development, use a private image and separate variables/logs:
+The launch menu lets you choose 2/3/4/6/8 GB of RAM (within the VM's limits and half your Mac's RAM), a Retina screen size (1440×900, 1280×800 or 1600×900), network on/off and full-screen startup. The defaults are 2 GB, 1440×900, network on and windowed.
+
+- **Start** (Return) saves the settings and boots. **VM → Launch Settings…** (`Cmd+,`) reopens the menu. Hold **Option** while opening the app to get the menu back if you turned it off.
+- Settings live in `build/launch-settings.json` and survive rebuilds.
+- Your disk is `build/aarch64/ojjyos3.img`, and logs go to `build/aarch64/serial-vz.log`.
+- **Shut down inside ojjyOS, then quit the app before rebuilding.** Disks in use are locked and never overwritten.
+
+For development, use a private disk with separate variables and logs:
 
 ```bash
 bash scripts/run-vm.sh --image /absolute/path/test-disk.img \
@@ -109,166 +195,163 @@ bash scripts/run-vm.sh --image /absolute/path/test-disk.img \
   --start --memory 3072 --screen 1280x800
 ```
 
-`--start` and `--control` bypass the launch window; `--memory <MB>` and
-`--screen <logical WxH>` override the file for that run without saving overrides.
-Supported screens: 1440×900, 1280×800 and 1600×900, all with 2× Retina scanouts.
-QEMU and ojjy Control share this file in the later HW-14 / launch-3 card, not yet.
+</details>
 
-Current limits: no live guest display-mode changes (the view scales the selected
-scanout), no USB hubs/hot-plug enumeration, and no exhaustive manual focus-loss
-verification. The guest clock uses UTC; local timezone selection is not yet
-implemented. QEMU remains the Intel path and the ARM fallback/test platform.
-
-### Native host verification
+### macOS with QEMU
 
 ```bash
-bash scripts/test-vmapp.sh          # Mapping, file-alias and lock safeguards; no VM
-bash scripts/test-vmapp-ui.sh       # AppKit interactions and light/dark captures; no VM
-python3 -B tests/vz_launch.py --image build/aarch64/ojjyos3.img --output build/hw-12-new
-python3 -B tests/vz_boot.py --image build/aarch64/ojjyos3.img --output build/vz-boot-new
+brew install qemu nasm lld
+ARCH=aarch64 bash scripts/build.sh
+bash scripts/run-qemu.sh aarch64     # Apple Silicon: hardware virtualization (HVF)
+```
+
+<details>
+<summary><b>QEMU options</b></summary>
+
+<br>
+
+- `OJJY_ACCEL=tcg` uses software emulation instead of HVF.
+- `OJJY_RES=3200x1800` fits a 16:9 monitor; `OJJY_FULLSCREEN=1` starts in full screen.
+- `OJJY_DISPLAY=ramfb` switches back to the old 4:3 firmware display.
+- Intel builds: `ARCH=x86_64 bash scripts/build.sh` then `bash scripts/run-qemu.sh x86_64`.
+- Logs: `build/<arch>/serial.log`. Every rebuild keeps your saved data and backs up the old disk under `build/<arch>/backups/`.
+
+</details>
+
+### Debian / Linux
+
+```bash
+sudo apt update
+sudo apt install -y build-essential clang lld nasm gnu-efi mtools dosfstools \
+    gdisk qemu-system-arm qemu-system-x86 qemu-efi-aarch64 ovmf
+
+ARCH=x86_64 bash scripts/build.sh    # or ARCH=aarch64
+bash scripts/run-qemu.sh x86_64      # QEMU
+bash scripts/run.sh                  # VirtualBox (x86_64)
+```
+
+The VirtualBox runner keeps an existing VDI disk and never force-stops a running VM.
+
+<details>
+<summary><b>Optional: Apple's Tahoe wallpapers (personal use only)</b></summary>
+
+<br>
+
+`python3 tools/import_wallpapers.py --fetch` downloads Apple's official Tahoe wallpapers into the git-ignored `wallpapers/local/` folder, and later builds add them to your local disk image. They are Apple's pictures, so they are **never committed or shared**. Without them, ojjyOS uses its built-in ojjyOS Waves wallpaper.
+
+</details>
+
+---
+
+## Testing
+
+```bash
+bash scripts/mkfs.sh                 # generate the system filesystem if needed
+bash scripts/test.sh                 # host unit tests + roadmap and license checks
+
+# Same suite under AddressSanitizer / UndefinedBehaviorSanitizer:
+HOST_CC=/opt/homebrew/opt/llvm/bin/clang OJJY_SANITIZE=1 bash scripts/test.sh
+
+# Live test in a VM: setup, typing, persistence, shutdown, cold boot, recovery.
+# It always works on a private copy of the disk. Use a NEW output directory.
+python3 -B tests/qemu_smoke.py --arch aarch64 \
+  --image build/aarch64/ojjyos3.img --output build/smoke-arm --fresh-data
+
+# Native app checks (Apple Silicon):
+bash scripts/test-vmapp.sh
 python3 -B tests/vz_smoke.py --image build/aarch64/ojjyos3.img \
   --output build/vz-smoke-new --fresh-data --protected
 ```
 
-Choose a new output directory each time. These tests copy the disk and use private
-EFI stores; `--fresh-data` only clears that test copy. The smoke uses the app's
-explicit `--control <unix-socket>` test mode, with owner-only socket permissions
-and view-local input (no global desktop event injection). It accepts `key <HID
-usage> <0|1>`, `text <US ASCII>`, `move x y`, `click x y`, `screenshot <new.png>`,
-`status`, `fullscreen`, `hide`, `start`, and `quit`, one line per connection with a JSON
-reply. Coordinates use the selected logical guest desktop (1440×900 by default). Ordinary hardware input
-is disabled only in this explicitly controlled test view. Normal app launches
-accept normal keyboard/mouse input. Install Pillow for screenshot assertions.
-
-## QEMU ARM64 fallback (macOS)
-
-The runner defaults to HVF on Apple Silicon; `OJJY_ACCEL=tcg` selects emulation.
-
-### 1. Install QEMU on macOS
-```bash
-brew install qemu nasm lld
-```
-
-### 2. Build the `aarch64` Disk Image
-macOS builds use standalone UEFI definitions, clang/lld, and a Python GPT/FAT image builder; no Linux container or gnu-efi is required:
-```bash
-chmod +x scripts/*.sh
-ARCH=aarch64 ./scripts/build.sh
-```
-Outputs are isolated under `build/aarch64/` and `build/x86_64/`. Shut down a VM before rebuilding its disk. A rebuild preserves the data partition and creates a complete disk backup under that architecture's `backups/` directory. The first per-architecture build imports saved data from legacy `build/ojjyos3.img` if present, leaving the legacy image unchanged. Corrupt or unfamiliar layouts and locked disks are refused instead of reformatted. Backups are retained until you explicitly remove them.
-
-### 3. Launch in QEMU
-```bash
-./scripts/run-qemu.sh aarch64
-```
-`scripts/run-qemu.sh` locates firmware, uses one vCPU, and logs to `build/aarch64/serial.log`. Intel logs use `build/x86_64/serial.log`; Homebrew's split Intel firmware is combined into a private writable pflash image. On Apple Silicon the runner uses Apple's hardware virtualization (HVF, GICv3) and a `virtio-gpu` display at 2880x1800, a Retina-density (2x) rendering of a 1440x900 desktop; `OJJY_ACCEL=tcg` falls back to emulation at 1440x900. QEMU Zoom To Fit is on by default. `OJJY_RES=3200x1800` suits a 16:9 monitor, `OJJY_FULLSCREEN=1` starts full screen, and `OJJY_DISPLAY=ramfb` brings back the old 4:3 firmware display. The UI uses the Inter typeface (SIL OFL, `fonts/Inter-OFL-LICENSE.txt`) and JetBrains Mono for terminals.
-
-**Official Tahoe wallpapers (optional, personal use):** run `python3 tools/import_wallpapers.py --fetch` once; every later build bakes the 17 pictures into your local disk image (they stay in git-ignored `wallpapers/local/` and are never committed). Pick one in Settings > Wallpaper or in Preview. Without them you get the built-in ojjyOS Waves. The picture pack is build-owned at LBA 102400 onward; rebuilds preserve the user-data region before it, and refresh the pack from local assets.
-
-The VirtualBox runner preserves an existing VDI rather than recreating it and refuses to force-stop a running VM. A VDI has its own saved data; rebuilding a raw QEMU image does not update that VDI.
+The host suites cover the filesystems, persistence (with fault injection), input decoding, virtqueues, crypto, networking, image decoders, the web engine, accounts and the apps' logic. The `tests/qemu_*.py` scripts drive real VMs through the desktop, apps, browser and network. Release steps are in [docs/release.md](docs/release.md).
 
 ---
 
-## Building & Running on Debian (`x86_64` or `aarch64`)
+## Keyboard shortcuts and commands
 
-### Prerequisites (Debian 12/13)
-```bash
-sudo apt update
-sudo apt install -y \
-    build-essential \
-    clang \
-    lld \
-    nasm \
-    gnu-efi \
-    mtools \
-    dosfstools \
-    gdisk \
-    qemu-system-arm \
-    qemu-system-x86 \
-    qemu-efi-aarch64 \
-    ovmf
-```
+<details>
+<summary><b>Desktop shortcuts</b></summary>
 
-### Build
-```bash
-chmod +x scripts/*.sh
+<br>
 
-# Build for Apple Silicon / ARM64:
-ARCH=aarch64 ./scripts/build.sh
-
-# Or build for x86_64 (default on x86_64 hosts):
-ARCH=x86_64 ./scripts/build.sh
-```
-
-### Run in QEMU or VirtualBox
-```bash
-# Run in QEMU (aarch64 or x86_64):
-./scripts/run-qemu.sh aarch64
-./scripts/run-qemu.sh x86_64
-
-# Run in VirtualBox (x86_64):
-./scripts/run.sh
-```
-
----
-
-## Running the Host Unit Tests
-
-```bash
-bash scripts/mkfs.sh  # Generate the embedded system filesystem if needed
-bash scripts/test.sh
-
-# Optional ASan/UBSan; use a compiler runtime compatible with your macOS:
-HOST_CC=/opt/homebrew/opt/llvm/bin/clang OJJY_SANITIZE=1 bash scripts/test.sh
-
-# Optional live check against a fresh build (choose a NEW output directory):
-python3 tests/qemu_smoke.py --arch aarch64 \
-  --image build/aarch64/ojjyos3.img --output build/smoke-arm --fresh-data
-```
-
-`--fresh-data` resets only the newly created private smoke-test disk, never the
-source image. The smoke test also rebuilds that private disk and corrupts its
-newest checkpoint to verify recovery. Evidence stays in its output directory.
-
-Built-in GUI apps still execute in the kernel; Activity Monitor's task ticks are
-estimates, not scheduler measurements. Separately built ARM64 ELF samples can now
-run at EL0 via authenticated `run <name>`, with checked SVC calls, private RX/RW
-pages, app-fault recovery and a 100 ms watchdog. This is a synchronous bounded
-runner, not multitasking. Intel explicitly reports unsupported. See
-[PROTECTED_APPS.md](PROTECTED_APPS.md) for ABI, limits and test commands
-(`--protected` adds live boundary checks). Strong password derivation and enforced
-file authorization remain future work.
-
----
-
-## Keyboard Shortcuts & Console Commands
-
-### Desktop Shortcuts
 | Shortcut | Action |
-|----------|--------|
-| `Cmd+Space` | Toggle Spotlight search |
-| `Cmd+L` | Toggle Launchpad |
-| `Cmd+C` | Toggle Control Center (unless TextEdit/Notes or Finder is focused, where `Cmd+C` copies) |
-| `Cmd+M` | Toggle Mission Control (live window cards) |
-| `Cmd+Tab` | Open App Switcher (release `Cmd` or click an icon to activate) |
-| `Cmd+Q` | Close active window / quit active app |
-| `Ctrl+Cmd+Q` | Lock Screen immediately |
-| `Cmd+S` / `Cmd+O` | Save in TextEdit or Notes / Open the last file in TextEdit |
-| `Cmd+N` | New note (in Notes) |
-| `Esc` / `Shift+Esc` | Dismiss active overlay or menu (`Shift+Esc` returns to kernel console) |
+|---|---|
+| `Cmd+Space` | Spotlight search |
+| `Cmd+L` | Launchpad |
+| `Cmd+C` | Control Center (copies instead when TextEdit, Notes or Finder is focused) |
+| `Cmd+M` | Mission Control |
+| `Cmd+Tab` | App Switcher |
+| `Cmd+Q` | Close the active window / quit the app |
+| `Ctrl+Cmd+Q` | Lock screen |
+| `Cmd+S` / `Cmd+O` | Save in TextEdit or Notes / open the last file in TextEdit |
+| `Cmd+N` | New note (Notes) |
+| `Esc` / `Shift+Esc` | Close a menu or overlay / return to the kernel console |
 
-### Console & Terminal Commands
-- `ui` / `ui dark` — Launch the macOS Tahoe blue glass desktop
-- `run hello` / `run spin` — Run a bounded protected ARM64 ELF sample; login required
-- `whoami`, `users`, `adduser <user> <pass> [Full Name]`, `passwd <old> <new>`, `su <user> <pass>` / `login <user> <pass>`, `lock` / `logout` — User account & credential management
-- `ls`, `cd`, `pwd`, `cat`, `touch`, `mkdir`, `rm`, `mv`, `cp`, `echo`, `clear` — Filesystem operations
-- `sync` — Immediately checkpoint `/Users` and `/Library` RAMFS state to disk
-- `shutdown` / `reboot` — Save writable filesystems to disk and power off or restart via PSCI (`aarch64`) or ACPI S5 / 8042 (`x86_64`)
-- `diag`, `time`, `apps`, `about` — System diagnostics and credits
+</details>
+
+<details>
+<summary><b>Terminal commands</b></summary>
+
+<br>
+
+| Area | Commands |
+|---|---|
+| Files | `ls` `cd` `pwd` `cat` `touch` `mkdir` `rm` `mv` `cp` `echo` `clear` |
+| Accounts | `whoami` `users` `adduser` `passwd` `su` `lock` `logout` |
+| Network | `ifconfig` `ping` `nslookup` `curl` |
+| Clock | `date` `ntp` |
+| System | `ps` `top` `kill` `heap` `sync` `shutdown` `reboot` |
+| Programs | `run hello`, `run spin` (protected ARM64 samples, login required) |
+
+The fallback kernel console (`Shift+Esc`) also has `ui` / `ui dark`, `login`, `diag`, `time`, `apps` and `about`.
+
+</details>
 
 ---
 
-## License & Attribution
+## Project layout
 
-Copyright (c) 2024 Jonas Lee. All rights reserved.
-**Created by Jonas Lee.** See [LICENSE](LICENSE) and [BUGFIXES.md](BUGFIXES.md).
+```
+boot/        UEFI bootloader (both architectures)
+kernel/src/  the kernel
+  arch/aarch64/  ARM64 platform: entry, GIC, timer, PCI, virtio, xHCI/USB HID, PSCI
+  drivers/       x86 drivers, input core, ACPI, diagnostics
+  fs/            VFS, OJFS, RAMFS, persistence, app bundles
+  net/ crypto/   network stack, TLS 1.3, cryptography
+  web/ image/    browser engine and image decoders
+  ui/            compositor, desktop and all built-in apps
+programs/    protected ARM64 sample programs
+vmapp/       native macOS host app (Swift, Virtualization.framework)
+scripts/     build, image, run and test scripts
+tools/       host tools: filesystem, font, icon and image generators
+sysroot/     files packed into the read-only system image
+tests/       host unit tests and live VM tests
+roadmap/     five-year roadmap (one card per piece of work)
+```
+
+---
+
+## Roadmap and docs
+
+ojjyOS has a **five-year roadmap (2026 → 2031)** of about 700 cards, one per driver, app or subsystem step. It runs from a real scheduler, multiple cores and an on-disk filesystem to certificate checking, JavaScript in ojjyWeb, audio, and in the long run Linux and Windows app compatibility. Start at [roadmap/README.md](roadmap/README.md); [roadmap/STATUS.md](roadmap/STATUS.md) shows progress.
+
+| Doc | About |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the system fits together |
+| [DESKTOP.md](DESKTOP.md) · [APPS.md](APPS.md) · [VISUALS.md](VISUALS.md) | Desktop, apps and design |
+| [FILESYSTEM.md](FILESYSTEM.md) | Filesystems and disk layout |
+| [PROTECTED_APPS.md](PROTECTED_APPS.md) | EL0 programs and their system calls |
+| [RELEASE.md](RELEASE.md) · [docs/release.md](docs/release.md) | Release notes and release checklist |
+| [BUGFIXES.md](BUGFIXES.md) · [bugs/OPEN.md](bugs/OPEN.md) | Fixed and open bugs |
+| [THIRD_PARTY.md](THIRD_PARTY.md) | Third-party fonts and assets |
+
+---
+
+## Credits and license
+
+**ojjyOS is created by Jonas Lee.**
+
+- Fonts: [Inter](https://rsms.me/inter/) and [JetBrains Mono](https://www.jetbrains.com/lp/mono/), both under the SIL Open Font License 1.1. See [THIRD_PARTY.md](THIRD_PARTY.md).
+- macOS and Tahoe are trademarks of Apple Inc. ojjyOS is an independent project that is not affiliated with or endorsed by Apple, and it contains no Apple code.
+
+Copyright © 2026 Jonas Lee. All rights reserved. See [LICENSE](LICENSE).

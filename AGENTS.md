@@ -1,5 +1,38 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27): new GitHub README, 2026 copyright, repo description, privacy check
+
+Board c624c2 (taken over from OpenCode with Jonas's OK), worktree
+`ojjyOS-v3-readme` / branch `readme-2026` off `main` 2f4bfd9. Docs only:
+no kernel/app code changed. Checklist: TODO.md "README + GitHub
+presentation + privacy check".
+
+- `README.md` rewritten for GitHub: centred hero, badges, highlights,
+  screenshots, current features (network stack, TLS 1.3, SNTP, ojjyOS
+  Web, PBKDF2 accounts, native VZ app were missing or listed as planned),
+  an honest "What it can't do yet" list, quick start (native app / QEMU /
+  Debian), tests, collapsible shortcuts and commands, layout, docs, credits
+  and an Apple trademark disclaimer. "Created by Jonas Lee" kept.
+- Screenshots `docs/images/{desktop-light,desktop-dark,web,launchpad}.jpg`
+  (788 KB) come from a dev build with NO `wallpapers/` folder (serial
+  `[WALLPACK] 0 desktop pictures`), so they show the built-in ojjyOS
+  Waves only. Never use captures from checkouts that have
+  `wallpapers/local/`: those show Apple's pictures. Capture script:
+  QEMU HVF 2880x1800 on a fresh private disk copy, account "Jonas Lee"/jonas.
+- Copyright 2024 -> 2026 in README.md and LICENSE.
+- GitHub description set with `gh repo edit` (it was "ojjyos v3"); this is
+  live already. The README and images are live only after a push.
+- Privacy: gitleaks clean (130 commits); no history blob contains the Mac
+  account name or personal email. Open for Jonas: `lighttahoe.png` is
+  Apple's Tahoe Light wallpaper, public since 2026-02-01; 5 github.com web
+  commits carry the personal email in their metadata.
+- New bug BUG-1007: Finder (PID 5) stays owned by `guest` after first login.
+
+Verified: host suite exit 0 (build/readme/host-tests.log, 698 cards
+0 errors, THIRD_PARTY OK); dev ARM build 0 warnings; README links/anchors
+resolved by script and rendered through GitHub's markdown API, then looked
+at. Next: Jonas decides on push and on lighttahoe.png / history.
+
 ## LATEST (2026-10-27): APP-CAL-01 complete and safely delivered
 
 Board bc2ad1, UI track desktop-polish; code c0f4ee3/6bbbcad/7603802.

@@ -43,8 +43,8 @@ HW-10's larger host feature set is intentionally not part of this card.
 **Goal.** Blue Liquid Glass launch window before starting the VM; persistent,
 safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
 **Steps.**
-- [ ] Step 1: settings model/limits/CLI in vmapp/main.swift and host guards in
-  tests/test_vmapp.swift; test parse/default/clamp/unknown/broken/round-trip/
+- [x] Step 1: settings model/limits/CLI in vmapp/main.swift and vmapp/LaunchSettings.swift, host guards in tests/test_vmapp.swift — done 2026-10-27 (test: scripts/test-vmapp.sh, 2132 checks + five pixel gates; app build warnings-as-errors)
+  Test parse/default/clamp/unknown/broken/round-trip/
   atomic/fuzz and path aliases. Trap: never let settings overwrite disk/log/EFI.
 - [ ] Step 2: native AppKit launch window and startup/running-settings flows in
   vmapp/main.swift; build/test guards and light/dark captures. Trap: pending

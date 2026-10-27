@@ -37,7 +37,12 @@ active QA session owns its own worktree; main has an existing release.html
 edit, which is not ours. Roadmap validation precedes implementation.
 HW-12 is doing with four checkbox steps in roadmap/24-hardware-platforms.md:
 settings+guards, native window, live wiring/matrix, final regression/delivery.
-Baseline suites running in build/hw-12-baseline; next implement settings model.
+Baseline host suite passed after generating system.ojfs; Swift baseline 102
+guards passed, Python pixel gates needed Pillow (local build/hw-12-venv).
+Step 1 green: LaunchSettings.swift defines safe JSON/default/clamp, VZ/half-host
+limits, atomic temp+rename persistence; Options supports start/memory/screen.
+2132 Swift checks incl. 2000 JSON mutations and five pixel gates pass;
+app builds warnings-as-errors. Evidence build/hw-12-baseline. Next: AppKit window.
 
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 

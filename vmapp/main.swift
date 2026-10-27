@@ -3,23 +3,27 @@ import AppKit
 import Virtualization
 import Darwin
 
-struct HostError: Error, CustomStringConvertible {
-    let description: String
-    init(_ message: String) { description = message }
-}
 struct Options {
     var image: URL
     var variables: URL
     var serial: URL
     var control: String?
-    init(arguments: [String] = Array(CommandLine.arguments.dropFirst())) throws {
-        let build = Bundle.main.bundleURL.deletingLastPathComponent()
+    var startImmediately = false
+    var memoryMB: Int?
+    var screen: String?
+    var launchCapture: String?
+    var appearance: String?
+    var settingsURL: URL
+    init(arguments: [String] = Array(CommandLine.arguments.dropFirst()),
+         build: URL = Bundle.main.bundleURL.deletingLastPathComponent()) throws {
+        settingsURL = build.appendingPathComponent("launch-settings.json")
         image = build.appendingPathComponent("aarch64/ojjyos3.img")
         variables = build.appendingPathComponent("aarch64/efi-vars.fd")
         serial = build.appendingPathComponent("aarch64/serial-vz.log")
         var args = arguments
         while !args.isEmpty {
             let flag = args.removeFirst()
+            if flag == "--start" { startImmediately = true; continue }
             guard !args.isEmpty else { throw HostError("Missing value for \(flag)") }
             let value = args.removeFirst()
             switch flag {
@@ -27,6 +31,17 @@ struct Options {
             case "--vars": variables = URL(fileURLWithPath: value)
             case "--serial": serial = URL(fileURLWithPath: value)
             case "--control": control = value
+            case "--memory":
+                guard let mb = Int(value), mb > 0 else { throw HostError("Invalid memory MB: \(value)") }
+                memoryMB = mb
+            case "--screen":
+                guard LaunchScreen.parse(value) != nil else { throw HostError("Unsupported screen: \(value)") }
+                screen = value
+            // Test-only own-window capture. It never starts a VM or saves settings.
+            case "--capture-launch": launchCapture = value
+            case "--appearance":
+                guard ["light","dark"].contains(value) else { throw HostError("Appearance must be light or dark") }
+                appearance = value
             default: throw HostError("Unknown option: \(flag)")
             }
         }
@@ -38,6 +53,22 @@ struct Options {
             let identity = "\(attrs[.systemNumber]!)!\(attrs[.systemFileNumber]!)"
             guard identities.insert(identity).inserted else { throw HostError("Disk, EFI variables and serial log must not be hard links to the same file") }
         }
+        let settingsPath = settingsURL.resolvingSymlinksInPath().standardizedFileURL.path
+        guard !paths.contains(settingsPath) else { throw HostError("Launch settings must be separate from disk, EFI variables and serial log") }
+        if FileManager.default.fileExists(atPath:settingsPath) {
+            let attrs = try FileManager.default.attributesOfItem(atPath:settingsPath)
+            let identity = "\(attrs[.systemNumber]!)!\(attrs[.systemFileNumber]!)"
+            guard !identities.contains(identity) else { throw HostError("Launch settings must not alias disk, EFI variables or serial log") }
+        }
+    }
+    func applying(to settings: LaunchSettings, limits: LaunchLimits, log: (String) -> Void) -> LaunchSettings {
+        var result = settings
+        if let mb = memoryMB { result.memoryMB = mb }
+        if let mode = screen { result.screen = mode }
+        return result.validated(limits,log:log)
+    }
+    func showsLaunchMenu(_ settings: LaunchSettings, optionHeld: Bool) -> Bool {
+        launchCapture != nil || (!(startImmediately || control != nil) && (settings.showAtStart || optionHeld))
     }
 }
 

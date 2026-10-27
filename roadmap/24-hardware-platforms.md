@@ -56,8 +56,8 @@ safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
   before owned page tables (3 GB epoch alignment panic); extend only the
   high Device/MMIO window to 16 GiB in user_arch.c (8 GB BARs at 0x2800x0000).
   No PMM/high-RAM Normal mappings, allocator changes or removal of memory note.
-- [ ] Step 4: final normal/sanitized/Swift suites, both zero-warning builds,
-  VZ smoke and QEMU TCG/HVF regression; log evidence, mark done and deliver.
+- [~] Step 4: final normal/sanitized/Swift suites, both zero-warning builds (all green); pending rebase/retest onto parallel QA main and installed delivery.
+  VZ smoke and QEMU TCG/HVF/Intel regression passed; log evidence, mark done and deliver.
   Trap: installed data/settings and concurrent QA work must survive unchanged.
 **Done when.**
 - [x] RAM offers 2/3/4/6/8 GB only inside VZ min/max and <= half host RAM; — done 2026-10-27 (test: LaunchLimits guards and all five private VZ probes)

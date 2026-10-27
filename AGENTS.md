@@ -32,7 +32,7 @@ from the same source as part of the day.
 
 Board `76a30d`, worktree `ojjyOS-v3-hw-12`, branch `hw-12`. HW-10 now
 depends on HW-12 (native launch menu), HW-13 (real high RAM), HW-14 (shared
-QEMU/Control settings) and SMP-01. No kernel changes in part 1. Other
+QEMU/Control settings) and SMP-01. No high-RAM allocator work in part 1. Other
 active QA session owns its own worktree; main has an existing release.html
 edit, which is not ours. Roadmap validation precedes implementation.
 HW-12 is doing with four checkbox steps in roadmap/24-hardware-platforms.md:
@@ -63,7 +63,13 @@ Native three-boot protected/persistence and ARM TCG/HVF protected smoke pass.
 Evidence build/hw-12-*; exact final-source matrix/checklists still running.
 Async startup error recovery now reopens interactive settings (never automation).
 Reusable findings saved to apple-vz-custom-os-bringup skill v1.6.0.
-Next: commit step 3, final regression and data-preserving delivery.
+Step 3 committed as `6316c80` (pre-rebase). Exact final-source four-case VZ
+matrix, opaque light/dark/error captures, 2137 Swift + seven pixel gates,
+normal/sanitized host suites, both zero-warning builds and VZ/TCG/HVF/Intel
+smokes pass. Source/settings unchanged. Final delivery ff refused because
+parallel QA advanced main to ac5eb6c (docs/test tooling only); rebase preserves
+both LATEST blocks, then rerun required gates before installing. No force.
+Next: rebase/retest, finish step 4, preserve installed data/settings and ready note.
 
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 

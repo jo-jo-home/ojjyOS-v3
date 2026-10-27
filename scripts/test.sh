@@ -54,3 +54,5 @@ echo "Running test_wallpack"
 python3 -B tests/test_image.py
 echo "Running roadmap check"
 python3 -B roadmap/tools/roadmap.py check
+echo "Running third-party register check"
+python3 -B tools/check_third_party.py

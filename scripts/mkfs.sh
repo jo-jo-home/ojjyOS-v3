@@ -8,13 +8,16 @@ ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 TOOLS_DIR="$ROOT_DIR/tools"
 SYSROOT="$ROOT_DIR/sysroot"
 BUILD_DIR="$ROOT_DIR/build"
+TOOLS_BIN="$BUILD_DIR/tools"
 
 echo "=== Building ojjyOS Filesystem ==="
 
 # Create build directory
 mkdir -p "$BUILD_DIR"
 
-# Build tools (includes mkarray, which embeds the image into a C header)
+# Build tools (includes mkarray, which embeds the image into a C
+# header). Binaries land in build/tools — the tools/ source dir stays
+# clean (QA-22).
 echo "Building tools..."
 cd "$TOOLS_DIR"
 make clean
@@ -48,19 +51,19 @@ mkdir -p "$SYSROOT/Volumes"
 
 # Generate icons
 echo "Generating icons..."
-./mkicon about "$SYSROOT/Applications/About.app/icon.raw"
-./mkicon settings "$SYSROOT/Applications/Settings.app/icon.raw"
-./mkicon finder "$SYSROOT/Applications/Finder.app/icon.raw"
-./mkicon terminal "$SYSROOT/Applications/Terminal.app/icon.raw"
-./mkicon textedit "$SYSROOT/Applications/TextEdit.app/icon.raw"
-./mkicon notes "$SYSROOT/Applications/Notes.app/icon.raw"
-./mkicon preview "$SYSROOT/Applications/Preview.app/icon.raw"
-./mkicon calendar "$SYSROOT/Applications/Calendar.app/icon.raw"
-./mkicon web "$SYSROOT/Applications/Web.app/icon.raw"
-./mkicon calculator "$SYSROOT/Applications/Calculator.app/icon.raw"
-./mkicon monitor "$SYSROOT/Applications/Monitor.app/icon.raw"
-./mkicon folder "$SYSROOT/System/Library/Icons/Folder.raw"
-./mkicon file "$SYSROOT/System/Library/Icons/File.raw"
+"$TOOLS_BIN/mkicon" about "$SYSROOT/Applications/About.app/icon.raw"
+"$TOOLS_BIN/mkicon" settings "$SYSROOT/Applications/Settings.app/icon.raw"
+"$TOOLS_BIN/mkicon" finder "$SYSROOT/Applications/Finder.app/icon.raw"
+"$TOOLS_BIN/mkicon" terminal "$SYSROOT/Applications/Terminal.app/icon.raw"
+"$TOOLS_BIN/mkicon" textedit "$SYSROOT/Applications/TextEdit.app/icon.raw"
+"$TOOLS_BIN/mkicon" notes "$SYSROOT/Applications/Notes.app/icon.raw"
+"$TOOLS_BIN/mkicon" preview "$SYSROOT/Applications/Preview.app/icon.raw"
+"$TOOLS_BIN/mkicon" calendar "$SYSROOT/Applications/Calendar.app/icon.raw"
+"$TOOLS_BIN/mkicon" web "$SYSROOT/Applications/Web.app/icon.raw"
+"$TOOLS_BIN/mkicon" calculator "$SYSROOT/Applications/Calculator.app/icon.raw"
+"$TOOLS_BIN/mkicon" monitor "$SYSROOT/Applications/Monitor.app/icon.raw"
+"$TOOLS_BIN/mkicon" folder "$SYSROOT/System/Library/Icons/Folder.raw"
+"$TOOLS_BIN/mkicon" file "$SYSROOT/System/Library/Icons/File.raw"
 
 # Create manifest for About.app
 cat > "$SYSROOT/Applications/About.app/manifest.json" << 'EOF'
@@ -360,6 +363,12 @@ Make It Work Release
 Created by Jonas Lee
 EOF
 
+# Ship the third-party register read-only in the image (DOC-03): it is
+# legal information like macOS's Licences file, and doubles as a long
+# (65+ line) fixture for the editor's read-only path.
+mkdir -p "$SYSROOT/System/Legal"
+cp "$ROOT_DIR/THIRD_PARTY.md" "$SYSROOT/System/Legal/THIRD_PARTY.txt"
+
 # Create sample user files
 echo "Welcome to ojjyOS!" > "$SYSROOT/Users/guest/Desktop/Welcome.txt"
 echo "This is a test document." > "$SYSROOT/Users/guest/Documents/Test.txt"
@@ -367,13 +376,13 @@ echo "This is a test document." > "$SYSROOT/Users/guest/Documents/Test.txt"
 # Build OJFS image
 echo "Building OJFS image..."
 bash "$SCRIPT_DIR/build-programs.sh"
-./mkojfs "$BUILD_DIR/system.ojfs" "$SYSROOT"
+"$TOOLS_BIN/mkojfs" "$BUILD_DIR/system.ojfs" "$SYSROOT"
 
 # Create C header with embedded filesystem
 # (mkarray emits deterministic names - unlike the old xxd|sed pipeline,
 #  which broke whenever the repo path differed from the expected one)
 echo "Creating embedded filesystem header..."
-./mkarray "$BUILD_DIR/system.ojfs" "$ROOT_DIR/kernel/src/fs/system_fs.h" embedded_fs
+"$TOOLS_BIN/mkarray" "$BUILD_DIR/system.ojfs" "$ROOT_DIR/kernel/src/fs/system_fs.h" embedded_fs
 
 echo ""
 echo "=== Filesystem build complete ==="

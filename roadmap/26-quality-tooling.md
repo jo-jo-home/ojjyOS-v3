@@ -312,7 +312,7 @@ the Help viewer and as a static site.
 **Refs.** —
 
 ### DOC-03 — Third-party register (`THIRD_PARTY.md`)
-- Phase: P0 · Size: S · Status: doing
+- Phase: P0 · Size: S · Status: done
 - Depends: —
 - Files: THIRD_PARTY.md (new), tools/check_third_party.py (new), scripts/mkfs.sh, scripts/test.sh
 
@@ -321,7 +321,7 @@ JetBrains Mono, both SIL OFL 1.1, licences in `fonts/`) and keeps Apple
 wallpapers in git-ignored `wallpapers/local/`, but there is no single
 register of what is third-party, under which licence, and from where.
 **Steps.**
-- [ ] Write `THIRD_PARTY.md`: `fonts/` entries (Inter, JetBrains Mono,
+- [x] Write `THIRD_PARTY.md`: `fonts/` entries (Inter, JetBrains Mono,
       sources + OFL 1.1), the generated bitmap/font data derived from
       them, the Apple wallpapers policy (local only, never shipped or
       committed), and `packages/`/CA roots/tz data/dictionaries/Unicode
@@ -329,13 +329,15 @@ register of what is third-party, under which licence, and from where.
       programs only as optional ojjypkg packages).
       Test: file exists and is reviewed.
       Trap: no absolute local paths, no personal data.
-- [ ] Ship it read-only in the OS image as
+      — done 2026-10-27 (test: `tools/check_third_party.py` validates the sections and entries; sabotage test (removing the packages/ heading) fails it with exit 1)
+- [x] Ship it read-only in the OS image as
       `/System/Legal/THIRD_PARTY.txt` (`scripts/mkfs.sh`) and add
       `tools/check_third_party.py` asserting the `fonts/` + `packages/`
       sections and the wallpapers note; wire it into `scripts/test.sh`.
       Test: `bash scripts/test.sh` runs it; a broken register fails it.
       Trap: keep the file > 64 lines — it doubles as the editor's
       read-only fixture for APP-TEXTEDIT-01's live tests.
+      — done 2026-10-27 (test: `bash scripts/test.sh` runs the check ("register OK (92 lines)"); `strings build/system.ojfs` shows THIRD_PARTY.txt inside the packed image; 92 lines > 64 so it opens read-only in the editor)
 
 **Goal.** List every third-party asset/data/package with licence and
 source: Inter and JetBrains Mono (OFL), Unicode data, future CA roots,
@@ -345,6 +347,15 @@ only and never shipped.
 `scripts/test.sh`; QA-40 can rely on it.
 **Tests.** Script checking that `fonts/` and `packages/` entries appear.
 **Pitfalls.** —
+**Log.** Done 2026-10-27: register written (fonts + OFL sources, generated
+font data, wallpapers policy, packages/CA/tz/dictionary/Unicode
+placeholders per D-023) and shipped read-only in the image as
+`/System/Legal/THIRD_PARTY.txt` (92 lines, also the editor read-only
+fixture); `tools/check_third_party.py` wired into `scripts/test.sh`
+("register OK (92 lines)"; removing a section fails it, verified).
+Evidence: build/qa-22-arm-build1.log shows the file packed
+(`strings build/system.ojfs`). Limits: future sections are placeholders
+until that data actually ships.
 **Refs.** —
 
 ### DOC-04 — Subsystem architecture docs

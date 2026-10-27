@@ -137,13 +137,18 @@ final class LaunchWindow: NSObject, NSWindowDelegate {
         if isActive?() == true { window.orderOut(nil) } else { NSApp.terminate(nil) }
         return false
     }
-    func capture(_ path: String) throws {
+    func capture(_ path: String) throws -> Bool {
         window.displayIfNeeded()
-        guard let image = CGWindowListCreateImage(.null,.optionIncludingWindow,CGWindowID(window.windowNumber),.boundsIgnoreFraming),
-              let png = NSBitmapImageRep(cgImage:image).representation(using:.png,properties:[:]) else {
-            throw HostError("Cannot capture launch window")
+        guard let image = CGWindowListCreateImage(.null,.optionIncludingWindow,CGWindowID(window.windowNumber),.boundsIgnoreFraming) else { return false }
+        let bitmap = NSBitmapImageRep(cgImage:image)
+        let w = bitmap.pixelsWide, h = bitmap.pixelsHigh
+        guard w > 10, h > 10 else { return false }
+        for (x,y) in [(4,h/2),(w-5,h/2),(w/2,4),(w/2,h-5)] {
+            guard let color = bitmap.colorAt(x:x,y:y), color.alphaComponent >= 0.99 else { return false }
         }
+        guard let png = bitmap.representation(using:.png,properties:[:]) else { throw HostError("Cannot encode launch window") }
         guard !FileManager.default.fileExists(atPath:path) else { throw HostError("Screenshot target already exists") }
         try png.write(to:URL(fileURLWithPath:path),options:.atomic)
+        return true
     }
 }

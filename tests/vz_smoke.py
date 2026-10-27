@@ -24,18 +24,23 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMP = Path(tempfile.gettempdir()) / 'opencode'
 
 
-def pointer_hotspot(before, after, x, y):
+def pointer_hotspot(before, after, x, y, logical=(1440, 900)):
     if before.size != after.size:
         raise RuntimeError('Native host window was still resizing during pointer capture')
-    sx, sy = after.width / 1440, after.height / 900
-    region = (round((x-10)*sx), round((y-10)*sy), round((x+40)*sx), round((y+50)*sy))
+    # VZ preserves the guest aspect ratio. Full screen on a differently
+    # shaped Mac display adds bars, which are not guest logical pixels.
+    scale = min(after.width / logical[0], after.height / logical[1])
+    left = (after.width - logical[0]*scale)/2
+    top = (after.height - logical[1]*scale)/2
+    region = (round(left+(x-10)*scale), round(top+(y-10)*scale),
+              round(left+(x+40)*scale), round(top+(y+50)*scale))
     diff = ImageChops.difference(before, after).crop(region)
     # Ignore small CG color/dither changes and the soft shadow. The high-
     # contrast outline starts at the hotspot, not the bitmap's 2px margin.
     red, green, blue = diff.split()
     changed = ImageChops.lighter(ImageChops.lighter(red, green), blue).point(
         lambda value: 255 if value > 64 else 0).getbbox()
-    return ((region[0]+changed[0])/sx, (region[1]+changed[1])/sy) if changed else None
+    return ((region[0]+changed[0]-left)/scale, (region[1]+changed[1]-top)/scale) if changed else None
 
 
 class NativeVM:
@@ -156,8 +161,11 @@ class NativeVM:
 
 
 def digest(path):
+    result = hashlib.sha256()
     with path.open('rb') as file:
-        return hashlib.file_digest(file, 'sha256').hexdigest()
+        for chunk in iter(lambda: file.read(1024 * 1024), b''):
+            result.update(chunk)
+    return result.hexdigest()
 
 
 def run(args):
@@ -167,6 +175,15 @@ def run(args):
     if disk.exists():
         raise RuntimeError('Choose a new evidence directory')
     source, app = Path(args.image).resolve(), Path(args.app).resolve()
+    # A user's launch settings may select another resolution/fullscreen/network.
+    # Run a private bundle next to absent/default test settings instead of
+    # reading or rewriting the real build/launch-settings.json.
+    bundle = app.parents[2]
+    if bundle.suffix != '.app':
+        raise RuntimeError('--app must name the executable inside an .app bundle')
+    private_bundle = output / 'ojjyOS.app'
+    shutil.copytree(bundle, private_bundle)
+    app = private_bundle / 'Contents/MacOS/ojjyOS'
     before = digest(source)
     shutil.copyfile(source, disk)
     if args.fresh_data:

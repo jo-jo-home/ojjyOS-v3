@@ -46,8 +46,24 @@ app builds warnings-as-errors. Step 2 green: LaunchWindow.swift (native
 vibrancy, blue title/accent, RAM/screen/network/fullscreen/startup controls),
 Option recovery, Cmd+, and save-only pending settings while active. Seven
 AppKit interaction guards in tests/test_launch_window.swift pass; inspected
-build/hw-12-launch-{light,dark}-final.png. ARM dev build clean; Intel needs
-/opt/homebrew/bin on PATH for nasm (rerun underway). Next: real VM wiring/matrix.
+build/hw-12-launch-{light,dark}-final.png. Both dev builds clean (put
+/opt/homebrew/bin on PATH for nasm). Step 3 live testing uncovered two
+prerequisites, fixed without implementing HW-13: copy the 68-byte packed
+BootInfo header into kernel storage before switching page tables (3 GB
+boot_epoch access alignment panic, rtc_read_time LDUR at offset 60); widen
+only Device/MMIO entries 4–16 GiB because VZ 8 GB BARs move to 0x2800x0000.
+2048/3072/8192 private probe boots pass after fixes. New live lifecycle
+matrix validates pending-only saves, all three screens, network-off, full-screen
+startup and show-menu-off direct boot (build/hw-12-launch-verified/report.json).
+PMM totals 2045 vs 3069 MB; free 2028 vs 2286 MB, so HW-13 still needed.
+Full-screen startup must yield to AppKit's event loop; inline callbacks leave
+busy=1/stage=0 indefinitely. Tests account for letterboxing at unchanged 3px
+pointer tolerance. Final UI-test recaptures reject alpha-only show frames.
+Native three-boot protected/persistence and ARM TCG/HVF protected smoke pass.
+Evidence build/hw-12-*; exact final-source matrix/checklists still running.
+Async startup error recovery now reopens interactive settings (never automation).
+Reusable findings saved to apple-vz-custom-os-bringup skill v1.6.0.
+Next: commit step 3, final regression and data-preserving delivery.
 
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 

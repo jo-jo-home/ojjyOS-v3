@@ -77,9 +77,21 @@ bash scripts/build-vmapp.sh
 bash scripts/run-vm.sh
 ```
 
-You can also double-click `build/ojjyOS.app`. It uses one ARM64 vCPU, 2 GiB RAM,
-a fixed 2880×1800 Retina scanout (1440×900 logical desktop), NAT networking,
-and native USB keyboard/absolute-pointer input. Use **View → Enter Full Screen**.
+You can also double-click `build/ojjyOS.app`. Its launch menu lets you choose
+2/3/4/6/8 GB RAM (within VZ limits and half your Mac's RAM), a tested Retina
+screen size, NAT network on/off and full-screen startup. Defaults are 2 GB,
+1440×900 logical / 2880×1800 scanout, network on, windowed. CPU stays at one
+ARM64 core until SMP-01. **ojjyOS uses about 2.2 GB until its memory update**;
+assigning more does not yet make all that RAM usable (HW-13 / launch-2).
+
+**Start** (Return) saves and boots. **Restore Defaults** resets the controls;
+press Start or Save to keep them. **VM → Launch Settings…** (Cmd+,) reopens
+the same window. While running, it only saves changes for the next start;
+shut down inside ojjyOS, then use VM → Start. Disable **Show this menu when
+ojjyOS opens** to boot directly; hold Option while opening to recover the menu.
+Settings live in `build/launch-settings.json` next to the app and survive builds.
+Missing or invalid values log a warning and default/clamp, never reset guest data.
+Use **View → Enter Full Screen** to change host full screen during a session.
 The About panel credits Jonas Lee. This Mac app is only the VM host; ojjyOS is
 still the original custom kernel, not Linux or macOS inside the VM.
 
@@ -93,10 +105,16 @@ For development, use a private image and separate variables/logs:
 
 ```bash
 bash scripts/run-vm.sh --image /absolute/path/test-disk.img \
-  --vars /absolute/path/test-vars.fd --serial /absolute/path/test-serial.log
+  --vars /absolute/path/test-vars.fd --serial /absolute/path/test-serial.log \
+  --start --memory 3072 --screen 1280x800
 ```
 
-Current limits: no live guest display-mode changes (the view scales the fixed
+`--start` and `--control` bypass the launch window; `--memory <MB>` and
+`--screen <logical WxH>` override the file for that run without saving overrides.
+Supported screens: 1440×900, 1280×800 and 1600×900, all with 2× Retina scanouts.
+QEMU and ojjy Control share this file in the later HW-14 / launch-3 card, not yet.
+
+Current limits: no live guest display-mode changes (the view scales the selected
 scanout), no USB hubs/hot-plug enumeration, and no exhaustive manual focus-loss
 verification. The guest clock uses UTC; local timezone selection is not yet
 implemented. QEMU remains the Intel path and the ARM fallback/test platform.
@@ -105,6 +123,8 @@ implemented. QEMU remains the Intel path and the ARM fallback/test platform.
 
 ```bash
 bash scripts/test-vmapp.sh          # Mapping, file-alias and lock safeguards; no VM
+bash scripts/test-vmapp-ui.sh       # AppKit interactions and light/dark captures; no VM
+python3 -B tests/vz_launch.py --image build/aarch64/ojjyos3.img --output build/hw-12-new
 python3 -B tests/vz_boot.py --image build/aarch64/ojjyos3.img --output build/vz-boot-new
 python3 -B tests/vz_smoke.py --image build/aarch64/ojjyos3.img \
   --output build/vz-smoke-new --fresh-data --protected
@@ -116,7 +136,7 @@ explicit `--control <unix-socket>` test mode, with owner-only socket permissions
 and view-local input (no global desktop event injection). It accepts `key <HID
 usage> <0|1>`, `text <US ASCII>`, `move x y`, `click x y`, `screenshot <new.png>`,
 `status`, `fullscreen`, `hide`, `start`, and `quit`, one line per connection with a JSON
-reply. Coordinates use the 1440×900 logical guest desktop. Ordinary hardware input
+reply. Coordinates use the selected logical guest desktop (1440×900 by default). Ordinary hardware input
 is disabled only in this explicitly controlled test view. Normal app launches
 accept normal keyboard/mouse input. Install Pillow for screenshot assertions.
 

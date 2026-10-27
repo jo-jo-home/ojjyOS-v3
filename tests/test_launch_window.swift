@@ -29,3 +29,12 @@ func runLaunchWindowTests(_ panel: LaunchWindow) throws {
     try check(panel.window.isVisible && panel.notice.stringValue.contains("fixture write failure"),"write failure stays visible/recoverable")
     print("PASS: \(checks) launch-window interaction checks (no VM)")
 }
+
+func runLaunchFailureTests(_ host: VMHost) throws {
+    host.startFailed(HostError("Startup fixture failure"))
+    guard host.machine == nil, host.launchWindow?.window.isVisible == true,
+          host.launchWindow?.notice.stringValue.contains("Startup fixture failure") == true else {
+        throw HostError("Async startup failure did not restore retry settings")
+    }
+    print("PASS: startup-failure retry surface (no VM)")
+}

@@ -42,6 +42,23 @@ class CaptureGateTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             pointer_hotspot(self.before, self.image(100).resize((1400, 900)), 100, 100)
 
+    def test_widescreen_guest_in_letterboxed_fullscreen(self):
+        before = Image.new('RGB', (1600, 1000), 'black')
+        before.paste(Image.new('RGB', (1600, 900), (20, 90, 160)), (0, 50))
+        after = before.copy()
+        after.paste(self.cursor, (98, 148), self.cursor)
+        point = pointer_hotspot(before, after, 100, 100, (1600, 900))
+        self.assertIsNotNone(point)
+        self.assertLessEqual(abs(point[0]-100), 3)
+        self.assertLessEqual(abs(point[1]-100), 3)
+
+    def test_letterbox_does_not_hide_wrong_pointer(self):
+        before = Image.new('RGB', (1600, 1000), (20, 90, 160))
+        after = before.copy()
+        after.paste(self.cursor, (108, 148), self.cursor)
+        point = pointer_hotspot(before, after, 100, 100, (1600, 900))
+        self.assertTrue(point is None or abs(point[0]-100) > 3)
+
 
 if __name__ == '__main__':
     unittest.main()

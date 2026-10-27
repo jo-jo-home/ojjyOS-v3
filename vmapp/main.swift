@@ -144,6 +144,7 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     var window: NSWindow!
     let view = GuestView(frame: .zero)
     var machine: VZVirtualMachine?
+    private(set) var runningConfiguration: VZVirtualMachineConfiguration?
     var lease: DiskLease?
     var serialHandle: FileHandle?
     var controlServer: ControlServer?
@@ -160,6 +161,7 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
      * screen"). The delegate callbacks are the only completion signal. */
     var fullscreenBusy = 0, fullscreenStage = 0
     var fullscreenEventAt: TimeInterval = 0
+    var startupFullscreenTimer: Timer?
 
     /* A transition can be dropped mid-flight (will... without did...),
      * which would leave the busy count stuck forever. Nothing is actually
@@ -196,17 +198,36 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
                 launchSettings()
                 if let path = options.launchCapture {
                     DispatchQueue.main.asyncAfter(deadline:.now()+0.8) { [self] in
+                        #if OJJY_VMAPP_UI_TEST
                         do {
-                            #if OJJY_VMAPP_UI_TEST
                             if let panel = launchWindow { try runLaunchWindowTests(panel) }
-                            #endif
-                            try launchWindow?.capture(path); NSApp.terminate(nil)
+                            try runLaunchFailureTests(self)
+                            captureLaunchWindow(path + ".error.png") { [self] in
+                                launchSettings()
+                                captureLaunchWindow(path) { NSApp.terminate(nil) }
+                            }
                         }
                         catch { fputs("ojjyOS: \(error)\n",stderr); exit(1) }
+                        #else
+                        captureLaunchWindow(path) { NSApp.terminate(nil) }
+                        #endif
                     }
                 }
             } else { try start() }
         } catch { fail(error) }
+        #if OJJY_VMAPP_LAUNCH_TEST
+        beginLaunchIntegration(self)
+        #endif
+    }
+    func captureLaunchWindow(_ path: String, completion: @escaping () -> Void) {
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        Timer.scheduledTimer(withTimeInterval:1.0/60,repeats:true) { [weak self] timer in
+            do {
+                guard let self = self else { timer.invalidate(); return }
+                if try self.launchWindow?.capture(path) == true { timer.invalidate(); completion(); return }
+                guard ProcessInfo.processInfo.systemUptime < deadline else { throw HostError("Launch window surface remained transparent; no screenshot saved") }
+            } catch { fputs("ojjyOS: \(error)\n",stderr); exit(1) }
+        }
     }
     func makeMenus() {
         let bar = NSMenu()
@@ -230,7 +251,35 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         NSApp.orderFrontStandardAboutPanel(options:[.applicationName:"ojjyOS",.applicationVersion:"3.1.0",
             .credits:NSAttributedString(string:"Created by Jonas Lee\nA custom kernel, running natively on Apple Virtualization.framework.")])
     }
-    @objc func fullScreen() { window.toggleFullScreen(nil) }
+    @objc func fullScreen() {
+        startupFullscreenTimer?.invalidate(); startupFullscreenTimer = nil
+        window.toggleFullScreen(nil)
+    }
+    func applyStartupFullscreen(_ desired: Bool) {
+        startupFullscreenTimer?.invalidate()
+        let deadline = ProcessInfo.processInfo.systemUptime + 12
+        var lastAttempt: TimeInterval = 0, attempts = 0
+        // Starting VZ can finish during AppKit's window-show transition.
+        // A single toggle then emits willEnter but never didEnter (measured
+        // busy=1/stage=0 for 45s). Use the existing control-path completion
+        // rule and stale recovery asynchronously; never block AppKit's queue.
+        startupFullscreenTimer = Timer.scheduledTimer(withTimeInterval:0.1,repeats:true) { [weak self] timer in
+            guard let self = self, self.machine?.state == .running else { timer.invalidate(); return }
+            let now = ProcessInfo.processInfo.systemUptime
+            self.fullscreenQuiesce(2.5)
+            if self.fullscreenBusy == 0 && self.window.styleMask.contains(.fullScreen) == desired {
+                timer.invalidate(); return
+            }
+            if now > deadline {
+                self.logSettings("macOS did not complete startup full screen; use View → Enter Full Screen to retry")
+                timer.invalidate(); return
+            }
+            if self.fullscreenBusy == 0 && attempts < 3 && now-lastAttempt > 2 {
+                self.window.toggleFullScreen(nil); attempts += 1; lastAttempt = now
+                self.logSettings("Startup full-screen request \(attempts)")
+            }
+        }
+    }
     @objc func launchSettings() {
         if launchWindow == nil {
             let panel = LaunchWindow(limits:limits)
@@ -253,12 +302,18 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         }
         guard !limits.memoryChoices.isEmpty else { throw HostError("No supported RAM setting within half this Mac's memory") }
         activeSettings = options.applying(to:settings,limits:limits,log:logSettings)
+        let display = activeSettings.display
+        window.contentAspectRatio = NSSize(width:display.width,height:display.height)
+        if !window.styleMask.contains(.fullScreen) {
+            window.setContentSize(NSSize(width:1120,height:1120/display.aspect))
+        }
         window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view)
         NSApp.activate(ignoringOtherApps:true)
         view.virtualMachine = nil; machine = nil; serialHandle = nil; lease = nil; held.removeAll()
         lease = try DiskLease(options.image)
         let cfg = VZVirtualMachineConfiguration()
-        cfg.platform = VZGenericPlatformConfiguration(); cfg.cpuCount = 1; cfg.memorySize = 2 << 30
+        cfg.platform = VZGenericPlatformConfiguration(); cfg.cpuCount = 1
+        cfg.memorySize = UInt64(activeSettings.memoryMB) * 1024 * 1024
         let boot = VZEFIBootLoader()
         boot.variableStore = FileManager.default.fileExists(atPath:options.variables.path)
             ? VZEFIVariableStore(url:options.variables)
@@ -272,21 +327,29 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         console.attachment = VZFileHandleSerialPortAttachment(fileHandleForReading:nil,fileHandleForWriting:serialHandle!)
         cfg.serialPorts = [console]
         let gpu = VZVirtioGraphicsDeviceConfiguration()
-        gpu.scanouts = [VZVirtioGraphicsScanoutConfiguration(widthInPixels:2880,heightInPixels:1800)]
+        gpu.scanouts = [VZVirtioGraphicsScanoutConfiguration(widthInPixels:display.width*2,heightInPixels:display.height*2)]
         cfg.graphicsDevices = [gpu]
         cfg.keyboards = [VZUSBKeyboardConfiguration()]
         cfg.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
         cfg.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
         let network = VZVirtioNetworkDeviceConfiguration(); network.attachment = VZNATNetworkDeviceAttachment()
-        cfg.networkDevices = [network]
+        cfg.networkDevices = activeSettings.network ? [network] : []
+        logSettings("Starting with \(activeSettings.memoryMB) MB, \(display.id) Retina, network \(activeSettings.network ? "on" : "off")")
         try cfg.validate()
+        runningConfiguration = cfg
         let vm = VZVirtualMachine(configuration:cfg); vm.delegate = self
         machine = vm; view.virtualMachine = vm
         window.title = "ojjyOS · Starting"
         vm.start { [weak self] result in
             switch result {
-            case .success: self?.window.title = "ojjyOS"; print("VM started")
-            case .failure(let error): self?.fail(error)
+            case .success:
+                guard let self = self else { return }
+                self.window.title = "ojjyOS"; self.launchWindow?.window.orderOut(nil)
+                if self.activeSettings.fullScreen != self.window.styleMask.contains(.fullScreen) {
+                    self.applyStartupFullscreen(self.activeSettings.fullScreen)
+                }
+                print("VM started")
+            case .failure(let error): self?.startFailed(error)
             }
         }
     }
@@ -309,11 +372,20 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         window.title = "ojjyOS · \(error)"
         fputs("ojjyOS: \(error)\n",stderr)
     }
+    func startFailed(_ error: Error) {
+        fail(error)
+        // Async VZ startup errors arrive after Start closed the menu.
+        // Restore a retry surface for interactive launches, never automation.
+        if options.control == nil && !options.startImmediately {
+            launchSettings()
+            launchWindow?.notice.stringValue = "Could not start ojjyOS: \(error). Adjust settings and try Start again."
+        }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if let vm = machine, vm.state != .stopped && vm.state != .error { forceStop(); return .terminateCancel }
         return .terminateNow
     }
-    func applicationWillTerminate(_ notification: Notification) { controlServer?.close() }
+    func applicationWillTerminate(_ notification: Notification) { startupFullscreenTimer?.invalidate(); controlServer?.close() }
     func windowShouldClose(_ sender: NSWindow) -> Bool { NSApp.terminate(nil); return false }
     func windowWillEnterFullScreen(_ notification: Notification) { fullscreenBusy += 1; fullscreenEventAt = ProcessInfo.processInfo.systemUptime }
     func windowDidEnterFullScreen(_ notification: Notification) { fullscreenBusy -= 1; fullscreenStage += 1; fullscreenEventAt = ProcessInfo.processInfo.systemUptime }
@@ -344,11 +416,14 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         else if down { view.keyDown(with:event) } else { view.keyUp(with:event) }
     }
     func mouse(_ x: Double,_ y: Double,type: NSEvent.EventType) throws {
-        guard machine?.state == .running, x.isFinite,y.isFinite,x>=0,y>=0,x<1440,y<900 else { throw HostError("Coordinates must be within 1440×900 logical pixels") }
+        let display = activeSettings.display
+        guard machine?.state == .running, x.isFinite,y.isFinite,x>=0,y>=0,x<Double(display.width),y<Double(display.height) else {
+            throw HostError("Coordinates must be within \(display.width)×\(display.height) logical pixels")
+        }
         let bounds = view.bounds
-        let width = min(bounds.width,bounds.height*1.6), height = width/1.6
-        let top = (bounds.height-height)/2+y*height/900
-        let point = NSPoint(x:(bounds.width-width)/2+x*width/1440,y:view.isFlipped ? top : bounds.height-top)
+        let width = min(bounds.width,bounds.height*display.aspect), height = width/display.aspect
+        let top = (bounds.height-height)/2+y*height/Double(display.height)
+        let point = NSPoint(x:(bounds.width-width)/2+x*width/Double(display.width),y:view.isFlipped ? top : bounds.height-top)
         let location = view.convert(point,to:nil)
         guard let event = NSEvent.mouseEvent(with:type,location:location,modifierFlags:flags,
             timestamp:ProcessInfo.processInfo.systemUptime,windowNumber:window.windowNumber,context:nil,
@@ -471,7 +546,9 @@ final class ControlServer {
         if line == "status" { return try onMain { ["ok":true,"state":$0.machine?.state.rawValue ?? -1,
             "fullscreen":$0.window.styleMask.contains(.fullScreen),
             "visible":$0.window.isVisible,
-            "viewWidth":$0.view.bounds.width,"viewHeight":$0.view.bounds.height] } }
+            "viewWidth":$0.view.bounds.width,"viewHeight":$0.view.bounds.height,
+            "memoryMB":$0.activeSettings.memoryMB,"screen":$0.activeSettings.screen,
+            "network":$0.activeSettings.network,"pendingMemoryMB":$0.settings.memoryMB] } }
         if line == "hide" { try onMain { $0.window.orderOut(nil) }; return ["ok":true] }
         if line == "fullscreen" {
             // Settle any in-flight Space animation first: a toggle issued
@@ -545,7 +622,12 @@ final class ControlServer {
 do { try runVMHostTests() } catch { fputs("VM host tests failed: \(error)\n",stderr); exit(1) }
 #else
 do {
+    #if OJJY_VMAPP_LAUNCH_TEST
+    guard let testBuild = ProcessInfo.processInfo.environment["OJJY_LAUNCH_TEST_OUTPUT"] else { throw HostError("Private test output required") }
+    let options = try Options(build:URL(fileURLWithPath:testBuild))
+    #else
     let options = try Options()
+    #endif
     let delegate = VMHost(options)
     let app = NSApplication.shared
     app.setActivationPolicy(.regular); app.delegate = delegate

@@ -17,8 +17,11 @@ import time
 
 
 def digest(path):
+    result = hashlib.sha256()
     with path.open("rb") as file:
-        return hashlib.file_digest(file, "sha256").hexdigest()
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            result.update(chunk)
+    return result.hexdigest()
 
 
 def run(args):
@@ -33,7 +36,7 @@ def run(args):
     shutil.copyfile(source, disk)
     probe = output / "probe"
     with (output / "build.log").open("w") as log:
-        subprocess.run(["swiftc", "-O", str(root / "vmapp/probe.swift"), "-o", str(probe)],
+        subprocess.run(["swiftc", "-O", "-warnings-as-errors", str(root / "vmapp/LaunchSettings.swift"), str(root / "vmapp/probe.swift"), "-o", str(probe)],
                        stdout=log, stderr=subprocess.STDOUT, check=True)
         subprocess.run(["codesign", "--sign", "-", "--force", "--entitlements",
                         str(root / "vmapp/ojjyOS.entitlements"), str(probe)],
@@ -41,7 +44,8 @@ def run(args):
     started = time.time()
     with (output / "probe.log").open("w") as log:
         subprocess.run([str(probe), str(disk), str(output / "vars.fd"),
-                        str(output / "serial.log"), str(args.seconds)],
+                        str(output / "serial.log"), str(args.seconds),
+                        "--memory", str(args.memory), "--screen", args.screen],
                        stdout=log, stderr=subprocess.STDOUT, check=True, timeout=args.seconds + 30)
     text = (output / "serial.log").read_text(errors="replace")
     required = ["[PLATFORM] Apple Virtualization", "[VIRTIO-CONSOLE] Serial output attached",
@@ -67,6 +71,8 @@ def run(args):
     if digest(source) != before:
         raise RuntimeError("Source image changed while running the private-disk test")
     report = {"boot": "passed", "virtio_devices": 5, "usb_hid_enumerated": 2, "dhcp": "passed",
+              "memory_mb_requested": args.memory, "screen": args.screen,
+              "pmm_usable_mb": int(re.search(r"\[PMM\] Total usable memory: (\d+) MB", text)[1]),
               "clock_offset_seconds": round(epoch - started, 3),
               "timer_sample_ms": ms, "timer_irqs": irqs, "clock_progression": "passed",
               "source_sha256": before, "source_unchanged": True,
@@ -80,4 +86,6 @@ if __name__ == "__main__":
     parser.add_argument("--image", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--seconds", type=int, default=12)
+    parser.add_argument("--memory", type=int, default=2048)
+    parser.add_argument("--screen", choices=["1440x900", "1280x800", "1600x900"], default="1440x900")
     run(parser.parse_args())

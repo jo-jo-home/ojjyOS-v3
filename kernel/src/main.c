@@ -61,6 +61,11 @@
 
 /* Global boot info pointer */
 BootInfo *g_boot_info = NULL;
+/* UEFI can place this packed handoff above 4 GiB with >2 GiB VZ RAM.
+ * Retain the small header while firmware still maps it Normal: our current
+ * high window is Device, where unaligned boot_epoch loads would fault.
+ * PMM/high-RAM mappings remain unchanged (HW-13). */
+static BootInfo kernel_boot_info;
 
 /* Version info */
 #define OJJYOS_VERSION  "3.1.0"
@@ -848,6 +853,8 @@ static void draw_cursor(int x, int y)
  */
 void kernel_main(BootInfo *boot_info)
 {
+    kernel_boot_info = *boot_info;
+    boot_info = &kernel_boot_info;
     g_boot_info = boot_info;
 
 #ifndef __x86_64__

@@ -49,25 +49,29 @@ safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
 - [x] Step 2: native AppKit launch window and startup/running-settings flows in vmapp/main.swift + vmapp/LaunchWindow.swift — done 2026-10-27 (test: seven AppKit interaction checks, light/dark captures inspected, warnings-as-errors app build)
   Build/test guards and light/dark captures. Trap: pending
   settings must not change active VM input geometry or start a second VM.
-- [ ] Step 3: wire RAM/network/Retina/aspect/input/fullscreen, extend
-  vmapp/probe.swift and tests/vz_boot.py; private 2048/3072 boots and each screen
+- [x] Step 3: wire RAM/network/Retina/aspect/input/fullscreen, extend vmapp/probe.swift and tests/vz_boot.py — done 2026-10-27 (test: all five RAM probes, four-case tests/vz_launch.py, inspected screenshots in build/hw-12-launch-final-source)
+  Private 2048/3072 boots and each screen
   screenshot/input proof. Trap: physical scanout is twice logical coordinates.
+  Live-discovered prerequisites: retain the packed BootInfo header in main.c
+  before owned page tables (3 GB epoch alignment panic); extend only the
+  high Device/MMIO window to 16 GiB in user_arch.c (8 GB BARs at 0x2800x0000).
+  No PMM/high-RAM Normal mappings, allocator changes or removal of memory note.
 - [ ] Step 4: final normal/sanitized/Swift suites, both zero-warning builds,
   VZ smoke and QEMU TCG/HVF regression; log evidence, mark done and deliver.
   Trap: installed data/settings and concurrent QA work must survive unchanged.
 **Done when.**
-- [ ] RAM offers 2/3/4/6/8 GB only inside VZ min/max and <= half host RAM;
+- [x] RAM offers 2/3/4/6/8 GB only inside VZ min/max and <= half host RAM; — done 2026-10-27 (test: LaunchLimits guards and all five private VZ probes)
   one removable constant says "ojjyOS uses about 2.2 GB until its memory update".
-- [ ] CPU shows disabled 1 and "More cores come with SMP-01". Default screen
+- [x] CPU shows disabled 1 and "More cores come with SMP-01". Default screen — done 2026-10-27 (test: light/dark captures and live scanout/pointer assertions)
   1440x900 Retina means 2880x1800 scanout; other sizes have inspected live proof.
-- [ ] Option at launch restores the menu when show-at-start is off. VM > Launch
+- [x] Option at launch restores the menu when show-at-start is off. VM > Launch — done 2026-10-27 (test: startup decision guards, AppKit fixtures and four real-VM pending-only Save checks)
   Settings… (Cmd+,) reuses it; running VM only saves for next shutdown/start.
-- [ ] Missing/broken/bad settings log and default/clamp, never crash. JSON schema:
+- [x] Missing/broken/bad settings log and default/clamp, never crash. JSON schema: — done 2026-10-27 (test: 2137 Swift guards, 2000 mutations, atomic inode/old-reader/failure checks)
   `{"version":1,"memoryMB":2048,"cpus":1,"screen":"1440x900","network":true,"fullScreen":false,"showAtStart":true}`.
-- [ ] `--memory <MB>` and `--screen <WxH>` override file without overwriting it;
+- [x] `--memory <MB>` and `--screen <WxH>` override file without overwriting it; — done 2026-10-27 (test: CLI precedence/alias guards and byte-identical build/launch-settings.json sentinel across builders/tests)
   builders/tests preserve this ignored user file. Native guards cover parsing,
   defaults/clamping, unknown keys, broken JSON, round-trip and atomic writes.
-- [ ] Live private-disk VZ 2048/3072 MB boots show distinct [PMM] totals;
+- [x] Live private-disk VZ 2048/3072 MB boots show distinct [PMM] totals; — done 2026-10-27 (test: 2045 vs 3069 MB in build/hw-12-launch-final-source/report.json; every offered screen inspected; build/hw-12-ui-opaque light/dark captures)
   screenshots for every offered screen and light/dark menu in `build/hw-12-*`.
 **Tests.** `scripts/test-vmapp.sh`, `tests/vz_boot.py`, `tests/vz_smoke.py`,
 both zero-warning dev builds, normal and sanitized host suites, strict checklist.

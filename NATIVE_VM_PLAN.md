@@ -60,6 +60,29 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- HW-12 launch series (2026-10-27, board 76a30d, branch hw-12): split HW-10
+  into HW-12/13/14; native launch/settings window, version-1 atomic JSON,
+  bounded 2/3/4/6/8 GB choices, one CPU, 1440x900/1280x800/1600x900 Retina,
+  NAT on/off, fullscreen, Option recovery and Cmd+, save-only while running.
+  CLI start/control skip the menu; memory/screen overrides never persist.
+  No high-RAM allocator change: the single temporary memory note stays for
+  HW-13. Two measured boot prerequisites: retain packed BootInfo before the
+  owned tables (3 GB firmware header above 4 GiB, LDUR boot_epoch alignment
+  panic in rtc_read_time), map Device BARs through 16 GiB (8 GB moves BAR0
+  to 0x2800x0000, outside the old 4–8 GiB window). Before/after evidence:
+  build/hw-12-boot-3072{,-fixed}, hw-12-boot-8192-{before,fixed}/efi.log.
+  All five RAM probes pass; PMM total 2045 vs 3069 MB for 2048/3072 allocation,
+  actual free still tops out around 2286 MB. Four-case live launch matrix
+  (build/hw-12-launch-verified) passes all three screens, pixel pointer bounds,
+  network-off, automatic full screen, direct startup and pending-only Save.
+  Screenshots inspected. Startup fullscreen is coordinated on AppKit's event
+  loop (inline completion toggle left busy=1/stage=0 for 45s); pointer gates
+  account for centered letterboxing without changing the 3px bound. Native
+  three-boot protected/persistence smoke and QEMU ARM TCG/HVF protected smokes
+  pass. Both dev builds zero warnings, normal/sanitized suites green.
+  Exact-final-source/capture/delivery gates are being completed before HW-12
+  is marked done. Capture guards reject transparent WindowServer show frames.
+
 - Integration final receipts (2026-10-18): the delivered-image native smoke
   failed three times at the host full-screen step. Measured root cause, not
   a guest problem and not load flakiness: `styleMask` reports `.fullScreen`

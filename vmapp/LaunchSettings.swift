@@ -91,7 +91,11 @@ struct LaunchSettings: Equatable {
         return result.validated(limits,log:log)
     }
     static func load(_ url: URL, limits: LaunchLimits, log: (String) -> Void) -> LaunchSettings {
-        do { return decode(try Data(contentsOf:url),limits:limits,log:log) }
+        do {
+            let file = try FileHandle(forReadingFrom:url)
+            defer { try? file.close() }
+            return decode(try file.read(upToCount:65537) ?? Data(),limits:limits,log:log)
+        }
         catch { log("Launch settings missing or unreadable; using defaults"); return LaunchSettings().validated(limits,log:log) }
     }
     func encoded() throws -> Data {

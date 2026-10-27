@@ -48,9 +48,12 @@ func runVMHostTests() throws {
     try custom.save(settingsFile)
     try check(LaunchSettings.load(settingsFile,limits:limits,log:{ _ in }) == custom,"atomic round trip")
     let old = try FileManager.default.attributesOfItem(atPath:settingsFile.path)[.systemFileNumber] as! NSNumber
+    let oldReader = try FileHandle(forReadingFrom:settingsFile)
     try defaults.save(settingsFile)
     let new = try FileManager.default.attributesOfItem(atPath:settingsFile.path)[.systemFileNumber] as! NSNumber
     try check(old != new,"atomic replacement changes inode, never truncates old file")
+    try check(LaunchSettings.decode(try oldReader.readToEnd()!,limits:limits,log:{ _ in }) == custom,"open reader retains complete old JSON after atomic rename")
+    try oldReader.close()
     try check(try FileManager.default.contentsOfDirectory(atPath:root.path).filter { $0.hasPrefix(".launch-") }.isEmpty,"temporary files cleaned")
     let directoryTarget = root.appendingPathComponent("a-directory")
     try FileManager.default.createDirectory(at:directoryTarget,withIntermediateDirectories:false)
@@ -90,6 +93,16 @@ func runVMHostTests() throws {
     catch { rejected = true }
     try check(rejected,"hard-linked disk/log aliases rejected before any log truncation")
     try check(try String(contentsOf:image,encoding:.utf8) == "private test disk","disk unchanged on alias rejection")
+    for args in [["--image",settingsFile.path],["--vars",settingsFile.path],["--serial",settingsFile.path]] {
+        var failed = false
+        do { _ = try Options(arguments:args,build:root) } catch { failed = true }
+        try check(failed,"launch settings cannot alias a disk/vars/log path")
+    }
+    let settingsLink = root.appendingPathComponent("settings-hardlink")
+    try FileManager.default.linkItem(at:settingsFile,to:settingsLink)
+    var settingsAliasRejected = false
+    do { _ = try Options(arguments:["--serial",settingsLink.path],build:root) } catch { settingsAliasRejected = true }
+    try check(settingsAliasRejected,"hard-linked launch settings cannot be truncated by serial logging")
     func canLock(_ path: URL) throws -> Bool {
         let process = Process()
         process.executableURL = URL(fileURLWithPath:"/usr/bin/python3")

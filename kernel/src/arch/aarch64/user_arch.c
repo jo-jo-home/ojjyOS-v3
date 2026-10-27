@@ -75,10 +75,13 @@ void user_arch_init(void)
                 : base | 1 | AF | PXN | UXN;
         }
     }
-    /* 4-8 GiB: Device blocks for the 64-bit virtio BARs on Apple VZ
-     * (0x1_000x_0000). User copies of this table never point here into
+    /* 4-16 GiB: Device blocks for the 64-bit virtio BARs on Apple VZ.
+     * BARs move with configured RAM (8 GiB: 0x2_800x_0000), so the old
+     * 4-8 GiB window faulted before serial attach with larger presets.
+     * This does NOT make high RAM allocatable/cacheable (HW-13).
+     * User copies of this table never point here into
      * RAM, and user_arch_prepare() overrides app_l1[4] with the user region. */
-    for (unsigned l1 = 4; l1 < 8; l1++) {
+    for (unsigned l1 = 4; l1 < 16; l1++) {
         kernel_l1[l1] = ((uint64_t)l1 << 30) | 1 | AF | PXN | UXN;
     }
 

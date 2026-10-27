@@ -91,6 +91,11 @@ Every tour screenshot was read (ink-profile + spot ASCII rendering via
 
 ## 1. Job A — Native Mac app instead of QEMU  ([x])
 
+Launch series (2026-10-27), independent of the old N1–N11 milestones:
+- [ ] HW-12: native launch menu/settings file, live display/RAM proof and safe delivery (worktree `ojjyOS-v3-hw-12`).
+- [ ] HW-13 / launch-2: PMM and mappings really use all configured RAM; About shows it.
+- [ ] HW-14 / launch-3: QEMU and ojjy Control share `build/launch-settings.json`.
+
 Jonas: "qemu is laggy and i want it to feel smooth like a native virtualbox
 windows aarch64 vm". Replace QEMU on Apple Silicon with our own
 Virtualization.framework app (`vmapp/`, `ojjyOS.app`). QEMU stays for tests,

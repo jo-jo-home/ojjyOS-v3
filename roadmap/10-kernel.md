@@ -842,9 +842,49 @@ including DST changes.
 **Refs.** IANA tz database, RFC 8536 (TZif).
 
 ### TIM-04 — Clock sync at boot (SNTP)
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: see NET_WEB_PLAN.md N4 (Track N)
+- Files: kernel/src/clock.c/h (new), kernel/src/net/net.c, kernel/src/ui/netcmd.c, kernel/src/arch/aarch64/pl031.c, kernel/src/drivers/rtc.c, kernel/Makefile, scripts/test.sh, tests/test_clock.c (new), tests/qemu_net.py
+
+**Context (2026-10-27).** Track N's N4 (`NET_WEB_PLAN.md`): the wall
+clock is whatever the firmware/RTC says — no network correction. Auto
+appearance and future certificate-validity checks depend on real time.
+
+**Steps.**
+- [ ] 1. `kernel/src/clock.c/h`: unix<->civil conversion, the NTP
+      correction offset, `clock_adjust_rtc()` applied at the end of both
+      platform `rtc_read_time` implementations (signature unchanged, so
+      the menu clock and Auto appearance pick corrected time up for
+      free) and `clock_now_unix()`. Files: clock.c/h, pl031.c, rtc.c,
+      kernel/Makefile, scripts/test.sh.
+      Test: new `tests/test_clock.c` (conversions, offset apply, both
+      directions). Trap: keep clock.h kernel-neutral; the adjust runs
+      AFTER the platform fills the struct.
+- [ ] 2. SNTP pure core in `clock.c`: 48-byte client packet build
+      (LI=0, VN=4, mode=3), reply parse + validation (mode 4, stratum
+      1-15, non-zero transmit timestamp, originate echo must match our
+      transaction, |offset| <= 10 years, NTP-era 2036 rollover
+      resolution), RFC 4330 offset math in ms.
+      Test: `tests/test_clock.c` vectors + rejection cases + rollover.
+      Trap: NTP timestamps are 1900-based seconds in 32.32 fixed point.
+- [ ] 3. SNTP client + hooks: resolve time.apple.com (fallback
+      pool.ntp.org) over the existing UDP API, fixed local port, reply
+      handler, retry/backoff when offline, resync every 6 h, start after
+      the DHCP lease is acquired (inside net.c, no main.c change), poll
+      hook in net_poll; log `[CLOCK] NTP offset %+d ms from <server>`
+      and a clear giving-up line when offline.
+      Test: build + `tests/test_clock.c` with stubbed net functions.
+      Trap: dns_resolve is non-blocking (poll PENDING); never block the
+      stack — the client is a polled state machine like DNS itself.
+- [ ] 4. Terminal commands: `date` prints the corrected time, `ntp`
+      forces a sync (netcmd.c; add both to Tab completion). Test: build;
+      live in step 5.
+- [ ] 5. Live: `tests/qemu_net.py` gains a `date` receipt (always) and
+      an NTP step (internet, not a gate, must log either success or a
+      clean give-up); smoke TCG + HVF re-run; screenshots looked at.
+      Evidence `build/tim-04-*`.
+- [ ] 6. Docs: NET_WEB_PLAN.md N4 log, AGENTS.md LATEST, card done +
+      Log. Test: roadmap check + checklist --strict clean.
 
 **Context.** Owned by Track N as N4 in `NET_WEB_PLAN.md`.
 **Goal.** SNTP query after DHCP; correct the wall clock; periodic resync.

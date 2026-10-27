@@ -236,9 +236,21 @@ depending on window focus; makes VZ tests as scriptable as QEMU's.
 ## Releases, bugs and docs
 
 ### QA-30 — Bug tracking process
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: bugs/README.md, bugs/OPEN.md
+- Files: bugs/README.md, bugs/OPEN.md, AGENTS.md
+
+**Context (2026-10-27).** Bugs found by AI sessions either land as a fix
+in the same session or live only in a chat/card log; there is no single
+place Jonas can look at what is known-broken.
+
+**Steps.**
+- [ ] 1. Write `bugs/README.md` (one-line-per-bug format: `BUG-NNNN |
+      symptom | steps | area | severity | card-or--`) and
+      `bugs/OPEN.md`, seeded with today's known gaps (craigslist needs
+      TLS 1.2 -> NET-03; no caret click in the editor; >64-line files
+      open read-only). Reference the tracker from AGENTS.md's rules.
+      Test: files exist and AGENTS.md points at them.
 
 **Goal.** Lightweight tracker in the repo (one line per bug with ID,
 symptom, steps, area, severity, linked card) until Jonas moves to GitHub
@@ -249,9 +261,28 @@ issues; AI sessions add bugs they find but don't fix.
 **Refs.** —
 
 ### QA-40 — Release process and checklist
-- Phase: P0 · Size: S · Status: todo
+- Phase: P0 · Size: S · Status: doing
 - Depends: —
-- Files: docs/release.md, RELEASE.md
+- Files: docs/release.md, RELEASE.md, AGENTS.md
+
+**Context (2026-10-27).** Every session rebuilds and verifies, but the
+full-release flow (freeze, matrix, reviews, version sync, changelog,
+data-preserving delivery, tag) lives only in AGENTS.md fragments.
+
+**Steps.**
+- [ ] 1. Write `docs/release.md`: the step-by-step release checklist
+      with exact commands — freeze, full matrix (host + ASan/UBSan, both
+      dev builds 0 warnings, smoke TCG/HVF/Intel, tours, VZ boot/smoke
+      incl. build-vmapp.sh + Swift checks), security review pointer
+      (SEC-02), design gallery diff (DS-15), version sync in the four
+      places (main.c OJJYOS_VERSION, About, mkfs.sh version.txt, splash),
+      What's-New page via mkfs.sh, changelog guidance, installed image
+      rebuild + data-hash verification (no VM running), ojjyOS.app
+      rebuild, local git tag, ready_to_test.py note and a summary for
+      Jonas. Test: doc exists; the version-sync list matches AGENTS.md
+      §8; every command it names exists in the repo.
+- [ ] 2. Point RELEASE.md and AGENTS.md at docs/release.md.
+      Test: both reference it.
 
 **Goal.** Steps for each release: freeze, full matrix + soak, security
 review (SEC-02), design gallery diff (DS-15), version bump (main.c,

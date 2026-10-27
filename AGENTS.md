@@ -8,8 +8,13 @@ APP-CAL-01 is the first ready lowest-phase card. Plan/Done-when boxes in
 roadmap/17-apps.md; incumbent four-app captures in the review worktree were
 visually read. Preserve blue Liquid Glass, existing fonts/icons and Jonas
 credit. Native kernel UI (not a web frontend); no new UI dependencies.
-Next: baseline host gate, tested Calculator/frame models, then app wiring,
-live light/dark checks, full matrix and data-preserving delivery. No push.
+Baseline host suite passes. Step 1 models are implemented: Calculator
+history/input/key feedback and shared draw/hit layout in ui/calculator.c/h;
+bounded real-frame history, exact-date check and safe ratio in
+ui/app_metrics.c/h. New test_app_polish.c passes 29 checks + 5000-key fuzz
+normally and under ASan/UBSan (build/app-cal-01/model*.log).
+Next: wire the models into the four apps, live light/dark checks, full
+matrix and data-preserving delivery. No push.
 
 ## LATEST (2026-10-27): DNS continuation started; backup cancelled
 

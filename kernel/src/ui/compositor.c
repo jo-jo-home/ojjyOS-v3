@@ -105,6 +105,9 @@ static uint64_t last_input_ms;           /* any key/pointer/scroll (fast-loop wi
 static bool last_tick_animating;
 
 static char active_app_name[32] = "Finder";
+static AppFrameHistory monitor_frames;
+static int monitor_tab;
+static uint64_t monitor_refresh_ms;
 
 /* Dirty tracking (see compositor_tick): redraw only when something changed */
 static volatile bool need_redraw = true;
@@ -2105,16 +2108,16 @@ static void draw_calendar_window(CalendarState *cal, int content_x, int content_
 
                     int indices[4];
                     int count = calendar_events_for_day(cal, cal->year, cal->month, day, indices, 4);
-                    int chip_y = cy + 24;
-                    int shown = count > 2 ? 2 : count;
+                    int chip_y = cy + 27;
+                    int shown = MIN(count, MIN(2, MAX(0, (cell_h - 26) / 15)));
                     for (int e = 0; e < shown; e++) {
                         CalendarEvent *ev = &cal->events[indices[e]];
                         draw_rounded_rect_blend(cx + 3, chip_y, cell_w - 6, 14, 6, theme->accent, 90);
                         text_draw_fit(surface(), cx + 6, text_y_center(chip_y, 14, TEXT_SMALL), ev->title, TEXT_SMALL, theme->text, cell_w - 12);
                         chip_y += 15;
                     }
-                    if (count > 2) {
-                        ui_text(cx + 10, chip_y + 2, "+", TEXT_BODY, theme->text_muted);
+                    if (count > shown) {
+                        ui_text(cx + cell_w - 12, cy + 6, "+", TEXT_BODY, theme->text_muted);
                     }
                     day++;
                 }
@@ -2423,132 +2426,123 @@ static void draw_calculator_window(CalculatorState *calc, int content_x, int con
 /* Activity Monitor app                                                */
 /* ================================================================== */
 
+static bool monitor_visible(void)
+{
+    int i = app_window_index[APP_MONITOR];
+    return users_is_authenticated() && i >= 0 && i < window_count && !windows[i].minimized;
+}
+
+static void monitor_line(int x, int y, int ex, int ey, Color color)
+{
+    int dx = ABS(ex - x), sx = x < ex ? 1 : -1;
+    int dy = -ABS(ey - y), sy = y < ey ? 1 : -1, error = dx + dy;
+    for (;;) {
+        draw_rounded_rect_blend(x, y, 2, 2, 1, color, 255);
+        if (x == ex && y == ey) break;
+        int twice = 2 * error;
+        if (twice >= dy) { error += dy; x += sx; }
+        if (twice <= dx) { error += dx; y += sy; }
+    }
+}
+
+static void monitor_number(char *line, size_t size, uint64_t n, const char *suffix)
+{
+    char text[24]; utoa(n, text, 10);
+    str_append(line, size, text); str_append(line, size, suffix);
+}
+
 static void draw_monitor_window(int content_x, int content_y, int content_w, int content_h)
 {
     draw_rounded_rect_blend(content_x, content_y, content_w, content_h, 10, theme->dock_tint, 120);
-
-    int cx = content_x + 14;
-    ui_text(cx, content_y + 10, "ojjyOS Activity Monitor", TEXT_BODY, theme->text);
-
-#if defined(__aarch64__)
-    const char *arch_str = "Arch: ARM64 (EL1) on QEMU virt";      /* TCG runner, not HVF */
-#else
-    const char *arch_str = "Arch: x86_64 Long Mode";
-#endif
-    ui_text(cx, content_y + 28, arch_str, TEXT_BODY, theme->accent);
-
-    /* Uptime + Active User + Syscalls */
-    uint64_t secs = timer_get_ticks() / 1000;
-    char up_line[112];
-    char num[24];
-    up_line[0] = '\0';
-    str_append(up_line, sizeof(up_line), "Uptime: ");
-    utoa(secs / 60, num, 10);
-    str_append(up_line, sizeof(up_line), num);
-    str_append(up_line, sizeof(up_line), "m ");
-    utoa(secs % 60, num, 10);
-    str_append(up_line, sizeof(up_line), num);
-    str_append(up_line, sizeof(up_line), "s  User: ");
-    str_append(up_line, sizeof(up_line), users_current_username());
-    str_append(up_line, sizeof(up_line), "  Syscalls: ");
-    utoa(proc_get_total_syscalls(), num, 10);
-    str_append(up_line, sizeof(up_line), num);
-    ui_text(cx, content_y + 46, up_line, TEXT_BODY, theme->text_muted);
-
-    /* Physical Memory + Kernel Heap Usage */
-    uint64_t total_mb = pmm_get_total_memory() / (1024 * 1024);
-    uint64_t free_mb = pmm_get_free_memory() / (1024 * 1024);
-    uint64_t used_mb = (total_mb >= free_mb) ? (total_mb - free_mb) : 0;
-    if (total_mb == 0) total_mb = 1;
-
-    char mem_line[112];
-    mem_line[0] = '\0';
-    str_append(mem_line, sizeof(mem_line), "RAM: ");
-    utoa(used_mb, num, 10);
-    str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), "/");
-    utoa(total_mb, num, 10);
-    str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), " MB  |  KHeap: ");
-    utoa(kheap_get_used() / 1024, num, 10);
-    str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), "/");
-    utoa(kheap_get_total() / 1024, num, 10);
-    str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), " KB (");
-    utoa(kheap_get_alloc_count(), num, 10);
-    str_append(mem_line, sizeof(mem_line), num);
-    str_append(mem_line, sizeof(mem_line), " blks)");
-    ui_text(cx, content_y + 66, mem_line, TEXT_BODY, theme->text);
-
-    int bar_x = cx + 64, bar_w = content_w - 28 - 64;
-    ui_text(cx, content_y + 84, "Memory", TEXT_BODY, theme->text_muted);
-    draw_rounded_rect_blend(bar_x, content_y + 86, bar_w, 12, 6, theme->glass_aqua, 140);
-    int fill_w = (int)((used_mb * (uint64_t)bar_w) / total_mb);
-    if (fill_w < 12) fill_w = 12;
-    if (fill_w > bar_w) fill_w = bar_w;
-    draw_rounded_rect_blend(bar_x, content_y + 86, fill_w, 12, 6, theme->accent, 220);
-
-    /* Network */
-    {
+    int cx = content_x + 14, width = content_w - 28, top = content_y + 50;
+    const char *tabs[] = { "Processes", "Memory", "Frames" };
+    ui_glass_control(cx, content_y + 8, 336, 28, 14, false);
+    for (int i = 0; i < 3; i++) {
+        int tx = cx + i * 112;
+        if (monitor_tab == i) ui_glass_control(tx + 2, content_y + 10, 108, 24, 12, true);
+        ui_text_mid(tx + (112 - text_width(tabs[i], TEXT_BODY_BOLD)) / 2,
+                    content_y + 8, 28, tabs[i], TEXT_BODY_BOLD, theme->text);
+    }
+    char line[128], num[24];
+    if (monitor_tab == 0) {
+        ui_text(cx, top, "Processes", TEXT_HEADLINE, theme->text);
+        ui_text(cx, top + 28, "Task ticks are bookkeeping, not measured CPU usage.", TEXT_SMALL, theme->text_muted);
+        const char *labels[] = { "PID", "Process", "User", "State", "Ticks", "Mem KB" };
+        const int offsets[] = { 4, 48, 208, 306, 400, 484 };
+        for (int i = 0; i < 6; i++) ui_text(cx + offsets[i], top + 54, labels[i], TEXT_SMALL_BOLD, theme->text_muted);
+        int rows = MAX(0, (content_h - 150) / 22);
+        for (int i = 0; i < proc_count() && i < rows; i++) {
+            const ProcEntry *pe = proc_get_by_index(i);
+            if (!pe) continue;
+            int y = top + 72 + i * 22;
+            if (!(i & 1)) draw_rounded_rect_blend(cx, y - 3, width, 22, 4, theme->text, 12);
+            utoa(pe->pid, num, 10); ui_text(cx + 4, y, num, TEXT_BODY, theme->text_muted);
+            text_draw_fit(surface(), cx + 48, y, pe->name, TEXT_BODY_MEDIUM, theme->text, 150);
+            text_draw_fit(surface(), cx + 208, y, pe->owner, TEXT_BODY, theme->text_muted, 90);
+            text_draw_fit(surface(), cx + 306, y, proc_state_name(pe->state), TEXT_BODY, theme->text, 86);
+            utoa(pe->cpu_ticks, num, 10); text_draw_fit(surface(), cx + 400, y, num, TEXT_BODY, theme->text_muted, 76);
+            utoa(pe->memory_bytes / 1024, num, 10); text_draw_fit(surface(), cx + 484, y, num, TEXT_BODY, theme->text_muted, width - 488);
+        }
+    } else if (monitor_tab == 1) {
+        uint32_t total = (uint32_t)(pmm_get_total_memory() / (1024 * 1024));
+        uint32_t free = (uint32_t)(pmm_get_free_memory() / (1024 * 1024));
+        uint32_t used = total >= free ? total - free : 0;
+        ui_text(cx, top, "Physical memory", TEXT_HEADLINE, theme->text);
+        line[0] = 0;
+        monitor_number(line, sizeof(line), used, " / "); monitor_number(line, sizeof(line), total, " MB reported");
+        ui_text(cx, top + 32, line, TEXT_BODY, theme->text);
+        draw_rounded_rect_blend(cx, top + 58, width, 16, 8, theme->text_muted, 30);
+        int fill = app_bar_width(used, total, width);
+        if (fill) draw_rounded_rect_blend(cx, top + 58, fill, 16, MIN(8, fill / 2), theme->accent, 255);
+        ui_text(cx, top + 88, "Kernel heap", TEXT_TITLE, theme->text);
+        line[0] = 0;
+        monitor_number(line, sizeof(line), kheap_get_used() / 1024, " / ");
+        monitor_number(line, sizeof(line), kheap_get_total() / 1024, " KB");
+        ui_text(cx, top + 112, line, TEXT_BODY, theme->text);
+        draw_rounded_rect_blend(cx, top + 138, width, 12, 6, theme->text_muted, 30);
+        fill = app_bar_width((uint32_t)kheap_get_used(), (uint32_t)kheap_get_total(), width);
+        if (fill) draw_rounded_rect_blend(cx, top + 138, fill, 12, MIN(6, fill / 2), theme->accent, 255);
+        ui_text(cx, top + 170, "Network", TEXT_TITLE, theme->text);
         const NetInfo *ni = net_info();
-        char net_line[112], ip[16];
-        net_line[0] = '\0';
-        str_append(net_line, sizeof(net_line), "Network: ");
-        if (!ni->present) str_append(net_line, sizeof(net_line), "no adapter");
-        else if (!ni->enabled) str_append(net_line, sizeof(net_line), "off");
-        else if (!ni->configured) str_append(net_line, sizeof(net_line), "connecting");
-        else { net_format_ip(ni->ip, ip, sizeof(ip)); str_append(net_line, sizeof(net_line), ip); }
-        str_append(net_line, sizeof(net_line), "   in ");
-        utoa(ni->rx_bytes / 1024, num, 10);
-        str_append(net_line, sizeof(net_line), num);
-        str_append(net_line, sizeof(net_line), " KB   out ");
-        utoa(ni->tx_bytes / 1024, num, 10);
-        str_append(net_line, sizeof(net_line), num);
-        str_append(net_line, sizeof(net_line), " KB");
-        ui_text(cx, content_y + 104, net_line, TEXT_BODY, theme->text);
+        char ip[16]; line[0] = 0;
+        if (!ni->present) strcpy(line, "No network adapter");
+        else if (!ni->enabled) strcpy(line, "Network off");
+        else if (!ni->configured) strcpy(line, "Connecting...");
+        else { net_format_ip(ni->ip, ip, sizeof(ip)); strcpy(line, ip); }
+        str_append(line, sizeof(line), "    In "); monitor_number(line, sizeof(line), ni->rx_bytes / 1024, " KB    Out ");
+        monitor_number(line, sizeof(line), ni->tx_bytes / 1024, " KB");
+        text_draw_fit(surface(), cx, top + 194, line, TEXT_BODY, theme->text, width);
+        text_draw_fit(surface(), cx, top + 230, "High-RAM allocation is still limited until HW-13.", TEXT_SMALL, theme->text_muted, width);
+    } else {
+        ui_text(cx, top, "Renderer frame time", TEXT_HEADLINE, theme->text);
+        ui_text(cx, top + 28, "Milliseconds to draw and present each desktop frame.", TEXT_SMALL, theme->text_muted);
+        int gx = cx + 10, gy = top + 60, gw = width - 20, gh = 148;
+        draw_rounded_rect_blend(cx, gy - 6, width, gh + 16, 8, theme->midnight, settings_get()->dark_mode ? 85 : 12);
+        unsigned peak = 32;
+        for (unsigned i = 0; i < monitor_frames.count; i++) peak = MAX(peak, app_frame_sample(&monitor_frames, i));
+        int guide_y = gy + gh - 16 * gh / (int)peak;
+        draw_rounded_rect_blend(gx, guide_y, gw, 1, 0, theme->text_muted, 80);
+        ui_text(gx + 4, guide_y - 15, "16 ms guide", TEXT_SMALL, theme->text_muted);
+        Color ink = settings_get()->dark_mode ? theme->accent_soft : blend(theme->accent, theme->midnight, 75);
+        int px = gx, py = gy + gh;
+        for (unsigned i = 0; i < monitor_frames.count; i++) {
+            int x = gx + (int)i * (gw - 2) / (APP_FRAME_SAMPLES - 1);
+            int y = gy + gh - (int)app_frame_sample(&monitor_frames, i) * gh / (int)peak;
+            if (i) monitor_line(px, py, x, y, ink);
+            px = x; py = y;
+        }
+        line[0] = 0;
+        monitor_number(line, sizeof(line), monitor_frames.count, " samples    Latest ");
+        monitor_number(line, sizeof(line), monitor_frames.count ? app_frame_sample(&monitor_frames, monitor_frames.count - 1) : 0, " ms");
+        ui_text(cx, top + 232, line, TEXT_BODY, theme->text);
+        ui_text(cx, top + 258, "Includes this window. This is not FPS or CPU utilization.", TEXT_SMALL, theme->text_muted);
+        if (!monitor_frames.count) ui_text(gx + 12, gy + 20, "Waiting for a rendered frame...", TEXT_BODY, theme->text_muted);
     }
-
-    /* Kernel & User Process Table */
-    ui_text(cx, content_y + 126, "Processes", TEXT_BODY, theme->text);
-    ui_text(cx + 4, content_y + 144, "PID", TEXT_BODY, theme->text_muted);
-    ui_text(cx + 48, content_y + 144, "Process", TEXT_BODY, theme->text_muted);
-    ui_text(cx + 188, content_y + 144, "User", TEXT_BODY, theme->text_muted);
-    ui_text(cx + 268, content_y + 144, "State", TEXT_BODY, theme->text_muted);
-    ui_text(cx + 348, content_y + 144, "Ticks", TEXT_BODY, theme->text_muted);
-    ui_text(cx + 416, content_y + 144, "Mem KB", TEXT_BODY, theme->text_muted);
-
-    int pcount = proc_count();
-    int max_rows = (content_h - 190) / 16;
-    if (max_rows > 10) max_rows = 10;
-    if (max_rows < 3) max_rows = 3;
-    for (int i = 0; i < pcount && i < max_rows; i++) {
-        const ProcEntry *pe = proc_get_by_index(i);
-        if (!pe) continue;
-        int ry = content_y + 162 + i * 16;
-        utoa(pe->pid, num, 10);
-        ui_text(cx + 4, ry, num, TEXT_BODY, theme->text_muted);
-        ui_text(cx + 48, ry, pe->name, TEXT_BODY, theme->text);
-        ui_text(cx + 188, ry, pe->owner, TEXT_BODY, theme->text_muted);
-        ui_text(cx + 268, ry, proc_state_name(pe->state), TEXT_BODY, (pe->state == PROC_RUNNING) ? theme->accent : theme->text_muted);
-        utoa(pe->cpu_ticks, num, 10);
-        ui_text(cx + 348, ry, num, TEXT_BODY, theme->text_muted);
-        utoa(pe->memory_bytes / 1024, num, 10);
-        ui_text(cx + 416, ry, num, TEXT_BODY, theme->text_muted);
-    }
-
-    /* Open Windows / Tasks summary at bottom */
-    char task_line[96];
-    task_line[0] = '\0';
-    str_append(task_line, sizeof(task_line), "Processes: ");
-    utoa((uint64_t)pcount, num, 10);
-    str_append(task_line, sizeof(task_line), num);
-    str_append(task_line, sizeof(task_line), "   Windows: ");
-    utoa((uint64_t)window_count, num, 10);
-    str_append(task_line, sizeof(task_line), num);
-    str_append(task_line, sizeof(task_line), "   Active: ");
-    str_append(task_line, sizeof(task_line), active_app_name);
-    ui_text(cx, content_y + content_h - 20, task_line, TEXT_BODY, theme->text_muted);
+    line[0] = 0;
+    monitor_number(line, sizeof(line), (uint64_t)proc_count(), " processes    ");
+    monitor_number(line, sizeof(line), (uint64_t)window_count, " windows    Uptime ");
+    monitor_number(line, sizeof(line), timer_get_ticks() / 1000, "s");
+    text_draw_fit(surface(), cx, content_y + content_h - 20, line, TEXT_SMALL, theme->text_muted, width);
 }
 
 static void draw_window(int idx)
@@ -6268,6 +6262,10 @@ static int create_window_internal(const char *title, int x, int y, int w, int h,
         browser_open();
     } else if (type == APP_CALCULATOR) {
         calculator_reset(&state->calc);
+    } else if (type == APP_MONITOR) {
+        memset(&monitor_frames, 0, sizeof(monitor_frames));
+        monitor_tab = 0;
+        monitor_refresh_ms = timer_get_ticks();
     }
 
     if (type > APP_DEMO && type < APP_COUNT) {
@@ -6317,7 +6315,7 @@ static int app_open_window(AppType type, const char *title)
         h = MIN(820, (int)comp_height - MENU_BAR_HEIGHT - DOCK_HEIGHT - 24);
     }
     if (type == APP_CALCULATOR) { w = 320; h = 400; }
-    if (type == APP_MONITOR) { w = 540; h = 380; }
+    if (type == APP_MONITOR) { w = 640; h = 480; }
 
     /* Keep new windows fully on screen (cascade offsets + large apps such as
      * Web could otherwise run past the right edge or under the Dock). */
@@ -7175,6 +7173,20 @@ bool compositor_overlay_active(void)
     return overlay != OVERLAY_NONE;
 }
 
+/* These four apps have real minimum content layouts. Other apps retain
+ * the existing generic limits; both pointer ingress paths use this. */
+static void window_minimum_size(const CompositorWindow *win, int *w, int *h)
+{
+    *w = 360; *h = 220;
+    switch (win->app_type) {
+        case APP_CALCULATOR: *w = 320; *h = 360; break;
+        case APP_CALENDAR: *w = 760; *h = 440; break;
+        case APP_ABOUT: *w = 500; *h = 350; break;
+        case APP_MONITOR: *w = 640; *h = 440; break;
+        default: break;
+    }
+}
+
 void compositor_handle_mouse(int x, int y, bool down, bool up)
 {
     last_input_ms = timer_get_ticks();
@@ -8021,6 +8033,12 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                             if (mi >= 0) { settings_get()->mouse_speed = (uint8_t)(mi + 1); settings_save(); }
                         }
                     }
+                } else if (state->type == APP_MONITOR) {
+                    int tx = x - (win->x + 26), ty = y - (win->y + 48);
+                    if (tx >= 0 && tx < 336 && ty >= 0 && ty < 28) {
+                        monitor_tab = tx / 112;
+                        serial_printf("[MONITOR] tab=%d samples=%u\n", monitor_tab, monitor_frames.count);
+                    }
                 } else if (state->type == APP_CALCULATOR) {
                     int content_x = win->x + 12;
                     int content_y = win->y + 40;
@@ -8164,10 +8182,12 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
         int nh = resize_orig_h + (y - resize_start_y);
         int max_w = (int)comp_width - win->x - 8;
         int max_h = (int)comp_height - DOCK_HEIGHT - 24 - win->y;
-        if (nw < 360) nw = 360;
-        if (nh < 220) nh = 220;
-        if (nw > max_w && max_w >= 360) nw = max_w;
-        if (nh > max_h && max_h >= 220) nh = max_h;
+        int min_w, min_h;
+        window_minimum_size(win, &min_w, &min_h);
+        if (nw < min_w) nw = min_w;
+        if (nh < min_h) nh = min_h;
+        if (nw > max_w && max_w >= min_w) nw = max_w;
+        if (nh > max_h && max_h >= min_h) nh = max_h;
         win->w = nw;
         win->h = nh;
         if (wm_hooks.on_resize) {
@@ -8222,10 +8242,12 @@ void compositor_handle_mouse_absolute(int32_t x, int32_t y)
         int nh = resize_orig_h + (cursor_y - resize_start_y);
         int max_w = (int)comp_width - win->x - 8;
         int max_h = (int)comp_height - DOCK_HEIGHT - 24 - win->y;
-        if (nw < 360) nw = 360;
-        if (nh < 220) nh = 220;
-        if (nw > max_w && max_w >= 360) nw = max_w;
-        if (nh > max_h && max_h >= 220) nh = max_h;
+        int min_w, min_h;
+        window_minimum_size(win, &min_w, &min_h);
+        if (nw < min_w) nw = min_w;
+        if (nh < min_h) nh = min_h;
+        if (nw > max_w && max_w >= min_w) nw = max_w;
+        if (nh > max_h && max_h >= min_h) nh = max_h;
         win->w = nw;
         win->h = nh;
         if (wm_hooks.on_resize) {
@@ -8418,6 +8440,7 @@ static uint64_t perf_total_ms, perf_window_start;
 static void perf_record_frame(uint64_t start_ms, uint64_t end_ms)
 {
     uint32_t ms = (uint32_t)(end_ms - start_ms);
+    if (monitor_visible()) app_frame_record(&monitor_frames, ms);
     perf_frames++;
     perf_total_ms += ms;
     if (ms > perf_max_ms) perf_max_ms = ms;
@@ -8525,6 +8548,10 @@ void compositor_tick(uint64_t now_ms)
     if (netcmd_busy()) netcmd_poll(terminal_net_print);
     browser_poll();
     notes_autosave_tick(now_ms);
+    if (monitor_visible() && now_ms - monitor_refresh_ms >= 1000) {
+        monitor_refresh_ms = now_ms;
+        mark_dirty();
+    }
     for (int i = 0; i < window_count; i++)
         if (app_states[i].type == APP_CALCULATOR && calculator_expire(&app_states[i].calc, now_ms)) mark_dirty();
     pointer_pump();

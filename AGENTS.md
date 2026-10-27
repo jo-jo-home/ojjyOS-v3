@@ -20,8 +20,24 @@ credit. New qemu_app_polish.py --basic passes 8 light/dark flows including
 decimals/history, error recovery, actual mouse targets, feedback expiry,
 Calendar navigation/Today/New Event. Six app crops visually read in
 build/app-cal-01/basic-confirm-contact.png; ARM build zero warnings and
-host suite pass. Next: Monitor tabs/measured frame graph and app-size
-guards, then full matrix and safe delivery. No push.
+host suite pass. Step 3 implementation now adds Monitor tabs, a bounded
+real renderer-time graph, one-second visible-window updates, memory bars
+and zebra task rows (ticks explicitly not CPU utilization). The four apps
+now have content-aware minimum sizes in both pointer paths; Calendar chip
+capacity follows the cell height. New live assertions cover all tab clicks
+and four minimum-size drags in both themes. Initial step 3 live check
+passes 18 flows; six Monitor tab crops plus Calendar minimum-size capture
+were read. Confirmation adds an actual guest-symbol probe proving a
+minimized Monitor stops its refresh clock and resumes on restore; it also
+explicitly selects Processes in dark mode (the tab is intentionally kept
+when raising an existing window). Docs APPS.md/DESKTOP.md/What's New are
+updated; final normal/sanitized, both-arch and native regression is under
+way. Next: commit green step 3, finish matrix, preserve data on delivery.
+Step 3 confirmation now passes 20 flows, including the minimized refresh
+probe in both themes; six final tab crops were read. Normal/sanitized host
+suites, both zero-warning builds, 2137 Swift + seven pixel gates, protected
+TCG and native smokes plus Intel smoke pass. HVF/apps-check and additional
+native four-app captures are finishing. No push.
 
 ## LATEST (2026-10-27): DNS continuation started; backup cancelled
 

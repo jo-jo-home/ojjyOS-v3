@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import time
 from PIL import Image, ImageChops
 from qemu_smoke import VM
@@ -21,6 +22,13 @@ def run(args):
         f.write(bytes((102400 - 67584) * 512))
     vm = VM('aarch64', disk, out, 'polish')
     checks = []
+    if not args.basic:
+        kernel = Path(args.image).resolve().with_name('kernel.bin')
+        nm = shutil.which('llvm-nm') or '/opt/homebrew/opt/llvm/bin/llvm-nm'
+        symbols = subprocess.check_output([nm, str(kernel)], text=True)
+        refresh = re.search(r'^([0-9a-fA-F]+) [bBdD] monitor_refresh_ms$', symbols, re.M)
+        assert refresh, 'matching kernel lacks Monitor refresh probe'
+        refresh_address = int(refresh[1], 16)
     try:
         vm.wait('Entering main loop')
         time.sleep(2)
@@ -56,6 +64,18 @@ def run(args):
 
         def crop(image, rect):
             return image.crop(tuple(int(v * scale) for v in rect))
+
+        def shrink_check(name, geometry, minimum, mode):
+            x, y, w, h = geometry
+            desk.move(x + w - 6, y + h - 6); time.sleep(.1)
+            vm.qmp('input-send-event', {'events':[{'type':'btn','data':{'down':True,'button':'left'}}]})
+            time.sleep(.1)
+            desk.move(x + 180, y + 160); time.sleep(.2)
+            vm.qmp('input-send-event', {'events':[{'type':'btn','data':{'down':False,'button':'left'}}]})
+            resized = open_app(name)
+            assert resized[2:] == minimum, f'{name} minimum size mismatch: {resized}'
+            snap(mode + '-' + name.replace(' ', '-') + '-minimum')
+            checks.append(mode + ': ' + name + ' minimum-size guard')
 
         for mode in ('light', 'dark'):
             if mode == 'dark':
@@ -93,6 +113,8 @@ def run(args):
             assert diff.getbbox(), 'key feedback did not visibly expire'
             vm.wait("key=13 display='2'")
             checks.append(mode + ': mouse hit target, pressed feedback and expiry, error recovery')
+            if not args.basic:
+                shrink_check('calculator', (cx,cy,cw,ch), (320,360), mode)
 
             cx, cy, cw, ch = open_app('calendar')
             month = snap(mode + '-calendar-today')
@@ -110,13 +132,20 @@ def run(args):
             rect = (header_x, cy + 106, cx + cw - 24, cy + ch - 36)
             assert ImageChops.difference(crop(returned, rect), crop(event, rect)).getbbox(), 'new event did not render'
             checks.append(mode + ': Calendar previous month, Today and new event')
+            if not args.basic:
+                shrink_check('calendar', (cx,cy,cw,ch), (760,440), mode)
 
-            open_app('about')
+            about = open_app('about')
             snap(mode + '-about')
             checks.append(mode + ': About capture for version and Jonas credit review')
+            if not args.basic:
+                shrink_check('about', about, (500,350), mode)
 
             if not args.basic:
                 mx, my, mw, mh = open_app('activity monitor')
+                mark = len(vm.text())
+                desk.click(mx + 26 + 56, my + 62)
+                vm.wait('[MONITOR] tab=0', after=mark)
                 snap(mode + '-monitor-processes')
                 for tab, name in ((1, 'memory'), (2, 'frames')):
                     mark = len(vm.text())
@@ -126,6 +155,21 @@ def run(args):
                     snap(mode + '-monitor-' + name)
                 assert re.search(r'\[MONITOR\] tab=2 samples=[1-9]\d*', vm.text()), 'no measured frame samples'
                 checks.append(mode + ': all Monitor tabs and measured frame samples')
+                shrink_check('activity monitor', (mx,my,mw,mh), (640,440), mode)
+                # After minimize animations settle, no hidden one-second work.
+                desk.click(mx + 34, my + 14)
+                time.sleep(1.5)
+                probe = out / 'monitor-refresh.bin'
+                def refresh_value():
+                    vm.qmp('pmemsave', {'val':refresh_address, 'size':8, 'filename':str(probe)})
+                    return int.from_bytes(probe.read_bytes(), 'little')
+                before = refresh_value()
+                time.sleep(2.2)
+                assert refresh_value() == before, 'minimized Monitor kept refreshing'
+                open_app('activity monitor')
+                time.sleep(1.2)
+                assert refresh_value() > before, 'restored Monitor did not resume updates'
+                checks.append(mode + ': minimized Monitor stops updates and resumes on restore')
         (out / 'report.json').write_text(json.dumps({'checks':checks, 'count':len(checks)}, indent=2)+'\n')
         print(f'PASS: {len(checks)} app flows, light/dark; {out}')
     finally:

@@ -18,6 +18,43 @@ kernel, storage, networking, desktop) compiled from the 2026-10-18
 "make the OS better + routine bug/security check" request; work its
 section 0 fixes before anything else here.
 
+## >>> QA 2026-10-27: full test day on `main` = `9d90a23` (board 188713)
+
+Everything ran green on the installed images (same commit). Logs and
+evidence: `build/qa-2026-10-27/` (per-run logs + screenshot dirs).
+
+| Check | Result |
+|---|---|
+| Dev build aarch64 / x86_64 | PASS, 0 warnings both |
+| `bash scripts/test.sh` (host, 20 suites) | PASS (incl. third-party register check) |
+| ASan/UBSan host run | PASS |
+| `roadmap.py check` | 695 cards, 0 errors |
+| Smoke TCG / HVF (fresh private disk) | PASS / PASS |
+| Design tour HVF (18 screenshots) | PASS, no blanks, TextEdit paper verified |
+| Apps tour HVF (12 screenshots) | PASS, no blanks |
+| Apps check HVF (10 screenshots) | PASS |
+| Web tour HVF (16 pages) | PASS, 13 sites 200; craigslist failed (known, see below) |
+| Native VZ `vz_boot.py` | PASS (5 PCI devices, DHCP, clock) |
+| Native VZ `vz_smoke.py` | PASS (USB setup/editing, Retina capture, sync, saved login) |
+
+Every tour screenshot was read (ink-profile + spot ASCII rendering via
+`tools/qa_shots.py`; no blank captures, expected elements present).
+
+- [x] QA 2026-10-27 full matrix — done 2026-10-27 (test: see the table and
+      `build/qa-2026-10-27/*.log`; no failure or visible glitch found, so
+      no bugfix was needed; installed images rebuilt data-preserving from
+      the same commit)
+- [ ] KNOWN, not new: craigslist.org fails the TLS handshake (needs
+      TLS 1.2; server closes the TLS 1.3-only handshake) — tracked by
+      roadmap card NET-03; the browser shows a proper error page
+      (`build/qa-2026-10-27/web-tour/craigslist.png`).
+- [ ] KNOWN, not new: clicking inside TextEdit/Notes does not move the
+      caret (the editor never had click positioning; wrap-safe click
+      support is follow-up work, noted in APP-TEXTEDIT-01's log).
+- [ ] KNOWN, not new: documents over 64 lines open read-only (line cap
+      unchanged by soft wrap; raising it is future work with the
+      editor's big-buffer rework).
+
 ## >>> Current round (2026-10-18 night): TWO AIs IN PARALLEL — read `PARALLEL_PLAN.md`
 
 - Track D (desktop: LG4, S1-S4, every app, hygiene) — worktree

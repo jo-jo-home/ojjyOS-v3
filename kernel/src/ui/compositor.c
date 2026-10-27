@@ -5926,8 +5926,8 @@ static void textedit_save(TextEditState *edit, bool notify)
 static void terminal_complete(TerminalState *term)
 {
     static const char *commands[] = {
-        "adduser", "cat", "cd", "clear", "cp", "curl", "echo", "heap", "help", "ifconfig", "kill", "lock",
-        "logout", "ls", "mem", "mkdir", "mv", "net", "nslookup", "open", "passwd", "ping", "ps", "pwd",
+        "adduser", "cat", "cd", "clear", "cp", "curl", "date", "echo", "heap", "help", "ifconfig", "kill", "lock",
+        "logout", "ls", "mem", "mkdir", "mv", "net", "nslookup", "ntp", "open", "passwd", "ping", "ps", "pwd",
         "reboot", "rm", "run", "shutdown", "su", "sync", "top", "touch", "users", "whoami"
     };
     char *input = term->input;

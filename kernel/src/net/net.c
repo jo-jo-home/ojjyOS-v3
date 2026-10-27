@@ -10,6 +10,7 @@
 #include "net/net.h"
 #include "net/tcp.h"
 #include "random.h"
+#include "clock.h"
 #include "string.h"
 #include "serial.h"
 
@@ -473,6 +474,8 @@ static void dhcp_input(ip4_t src, uint16_t sport, uint16_t dport, const uint8_t 
             net_format_ip(info.dns, dn, sizeof(dn));
             serial_printf("[NET] DHCP lease %s gateway %s dns %s (%us)\n", ip, gw, dn, (unsigned)info.lease_seconds);
         }
+        /* With a lease we can ask the network for the real time (N4). */
+        clock_ntp_start(now_ms);
     } else if (type == 6) {                                            /* NAK */
         info.configured = false;
         dhcp_start();
@@ -712,6 +715,7 @@ void net_poll(uint64_t ms)
     arp_poll();
     dns_poll();
     tcp_poll(ms);
+    clock_ntp_poll(ms);
 }
 
 #ifdef OJJY_HOST_TEST

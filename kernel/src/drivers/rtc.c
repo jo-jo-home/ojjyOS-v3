@@ -5,6 +5,7 @@
  */
 
 #include "rtc.h"
+#include "../clock.h"
 #include "../serial.h"
 #include "../console.h"
 #include "../types.h"
@@ -185,6 +186,10 @@ void rtc_read_time(RtcTime *time)
     time->minute = minute;
     time->second = second;
     time->weekday = weekday;
+
+    /* Apply the NTP correction (TIM-04) so every reader of the RTC
+     * sees the synced time without knowing about it. */
+    clock_adjust_rtc(time);
 }
 
 /*

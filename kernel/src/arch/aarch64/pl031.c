@@ -9,6 +9,7 @@
  */
 
 #include "drivers/rtc.h"
+#include "clock.h"
 #include "console.h"
 #include "serial.h"
 #include "string.h"
@@ -100,6 +101,10 @@ void rtc_read_time(RtcTime *time)
     time->minute = (uint8_t)((rem % 3600) / 60);
     time->second = (uint8_t)(rem % 60);
     time->weekday = (uint8_t)day_of_week(days);
+
+    /* Apply the NTP correction (TIM-04) so every reader of the RTC
+     * sees the synced time without knowing about it. */
+    clock_adjust_rtc(time);
 }
 
 void rtc_print_time(void)

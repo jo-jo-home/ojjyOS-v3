@@ -8,6 +8,12 @@
 #include "random.h"
 #include "test_support.h"
 
+/* net.c drives the NTP client (kernel/src/clock.c) after DHCP; these
+ * tests do not link that file, so provide quiet stubs — otherwise the
+ * clock would inject real NTP frames into the captured traffic. */
+void clock_ntp_start(uint64_t now_ms) { (void)now_ms; }
+void clock_ntp_poll(uint64_t now_ms) { (void)now_ms; }
+
 static const uint8_t guest_mac[6] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
 static const uint8_t gw_mac[6] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
 #define GW   IP4(10, 0, 2, 2)

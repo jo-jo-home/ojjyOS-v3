@@ -29,6 +29,7 @@ fi
 "$HOST_CC" "${FLAGS[@]}" tests/test_user.c kernel/src/{user,user_image,string}.c -o "$OUT/test_user"
 "$HOST_CC" "${FLAGS[@]}" tests/test_framebuffer.c kernel/src/{framebuffer,gfx,cursor_image,string}.c -o "$OUT/test_framebuffer"
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_net.c kernel/src/net/{net,tcp}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_net"
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST -Itests tests/test_clock.c kernel/src/clock.c kernel/src/string.c -o "$OUT/test_clock"
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST -Itests tests/test_web.c kernel/src/web/{url,http,dom,css,layout}.c \
     kernel/src/image/{inflate,png,gif,image,jpeg,webp,svg}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_web"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_crypto.c kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c kernel/src/string.c -o "$OUT/test_crypto"
@@ -45,7 +46,7 @@ open(sys.argv[2], "wb").write(w.build_pack(items))' tools/import_wallpapers.py "
 "$HOST_CC" "${FLAGS[@]}" tests/test_calc.c kernel/src/ui/calcmath.c kernel/src/string.c -o "$OUT/test_calc"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_notes.c kernel/src/ui/notes.c kernel/src/fs/{ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_notes"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_textedit.c kernel/src/ui/textedit.c kernel/src/string.c -o "$OUT/test_textedit"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_calc test_notes test_textedit test_gfx test_jpeg; do
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_calc test_notes test_textedit test_clock test_gfx test_jpeg; do
     echo "Running $test"
     "$OUT/$test"
 done

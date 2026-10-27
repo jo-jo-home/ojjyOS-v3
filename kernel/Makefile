@@ -74,6 +74,7 @@ COMMON_C_SOURCES = src/main.c \
                    src/net/net.c \
                    src/net/tcp.c \
                    src/net/tls.c \
+                   src/clock.c \
                    src/web/url.c \
                    src/web/http.c \
                    src/web/dom.c \

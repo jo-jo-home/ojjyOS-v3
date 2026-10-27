@@ -8,6 +8,8 @@
 #include "net/net.h"
 #include "net/tcp.h"
 #include "web/http.h"
+#include "clock.h"
+#include "timer.h"
 #include "string.h"
 #include "serial.h"
 #include "memory.h"
@@ -55,6 +57,44 @@ static void cat_ip(char *dst, ip4_t ip)
 }
 
 static const char *skip(const char *s) { while (*s == ' ') s++; return s; }
+
+/* `date`: the corrected wall clock plus where the correction came
+ * from (TIM-04). One line, zero padding by hand. */
+static void print_date(netcmd_print_fn print)
+{
+    RtcTime t;
+    memset(&t, 0, sizeof(t));
+    rtc_read_time(&t);
+    char line[LINE + 1];
+    line[0] = '\0';
+    char num[16];
+    cat(line, "UTC ");
+    utoa((uint64_t)t.year, num, 10); cat(line, num); cat(line, "-");
+    if (t.month < 10) cat(line, "0");
+    utoa((uint64_t)t.month, num, 10); cat(line, num); cat(line, "-");
+    if (t.day < 10) cat(line, "0");
+    utoa((uint64_t)t.day, num, 10); cat(line, num); cat(line, " ");
+    if (t.hour < 10) cat(line, "0");
+    utoa((uint64_t)t.hour, num, 10); cat(line, num); cat(line, ":");
+    if (t.minute < 10) cat(line, "0");
+    utoa((uint64_t)t.minute, num, 10); cat(line, num); cat(line, ":");
+    if (t.second < 10) cat(line, "0");
+    utoa((uint64_t)t.second, num, 10); cat(line, num);
+    if (clock_ntp_synced()) {
+        cat(line, "  (NTP ");
+        int64_t off = clock_ntp_offset_ms();
+        char sign[2] = "+";
+        if (off < 0) { sign[0] = '-'; off = -off; }
+        cat(line, sign);
+        utoa((uint64_t)off, num, 10); cat(line, num);
+        cat(line, " ms via ");
+        cat(line, clock_ntp_server());
+        cat(line, ")");
+    } else {
+        cat(line, "  (no NTP sync yet)");
+    }
+    print(line);
+}
 
 static bool network_usable(netcmd_print_fn print)
 {
@@ -119,6 +159,15 @@ bool netcmd_exec(const char *cmd, netcmd_print_fn print)
     if (strcmp(cmd, "net on") == 0) { net_set_enabled(true); print("Network on (requesting address...)"); return true; }
     if (strcmp(cmd, "net off") == 0) { net_set_enabled(false); print("Network off"); return true; }
     if (strcmp(cmd, "net renew") == 0) { net_renew(); print("Renewing DHCP lease..."); return true; }
+
+    /* Corrected wall clock (TIM-04): read it, or force an NTP sync. */
+    if (strcmp(cmd, "date") == 0) { print_date(print); return true; }
+    if (strcmp(cmd, "ntp") == 0 || strcmp(cmd, "ntp sync") == 0) {
+        if (!network_usable(print)) return true;
+        clock_ntp_force(timer_get_ticks());
+        print(clock_ntp_synced() ? "Requesting a fresh NTP sync..." : "Requesting the first NTP sync...");
+        return true;
+    }
 
     bool is_ping = strncmp(cmd, "ping", 4) == 0 && (cmd[4] == ' ' || !cmd[4]);
     bool is_dns = strncmp(cmd, "nslookup", 8) == 0 && (cmd[8] == ' ' || !cmd[8]);

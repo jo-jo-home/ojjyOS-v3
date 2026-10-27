@@ -224,8 +224,43 @@ static void dns_answer(int q, bool nx, bool with_cname)
     deliver_udp(DNS, 53, ME, net_rd16(ip + 20), r, o);
 }
 
+static void test_dns_final_reply_window(void)
+{
+    bring_up();
+    ip4_t addr = 0;
+    CHECK(dns_resolve("fourth-reply.test", &addr) == DNS_PENDING,
+          "final-attempt lookup starts pending");
+    tick(1); tick(1000); tick(2000); tick(3000);
+    int q = find_udp(53);
+    int queries = 0;
+    for (int i = 0; i < cap_count; i++) {
+        const uint8_t *ip = ipv4_of(i);
+        if (ip && ip[9] == 17 && net_rd16(ip + 22) == 53) queries++;
+    }
+    CHECK(queries == 4, "DNS sends exactly four attempts by six seconds");
+    tick(1); /* a real network reply cannot arrive inline with dns_send */
+    CHECK(dns_resolve("fourth-reply.test", &addr) == DNS_PENDING,
+          "fourth DNS query retains its reply window after the next poll");
+    dns_answer(q, false, false);
+    CHECK(dns_resolve("fourth-reply.test", &addr) == DNS_DONE && addr == WEB,
+          "delayed answer to fourth DNS query is accepted");
+
+    bring_up();
+    dns_resolve("all-lost.test", &addr);
+    tick(1); tick(1000); tick(2000); tick(3000); tick(3998);
+    CHECK(dns_resolve("all-lost.test", &addr) == DNS_PENDING,
+          "no-answer lookup stays pending until original ten-second budget");
+    tick(2);
+    CHECK(dns_resolve("all-lost.test", &addr) == DNS_FAIL,
+          "unanswered lookup still fails at ten seconds, without extra attempts");
+    dns_answer(find_udp(53), false, false);
+    CHECK(dns_resolve("all-lost.test", &addr) == DNS_FAIL,
+          "answer arriving after the deadline cannot revive failed lookup");
+}
+
 int main(void)
 {
+    test_dns_final_reply_window();
     /* RFC 1071 example */
     const uint8_t sample[] = {0x00, 0x01, 0xf2, 0x03, 0xf4, 0xf5, 0xf6, 0xf7};
     CHECK(net_checksum_finish(net_checksum_add(0, sample, sizeof(sample))) == 0x220d, "RFC 1071 checksum");

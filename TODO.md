@@ -26,8 +26,8 @@ Working in the clean review worktree because net-web has an existing
 uncommitted edit. No Time Machine work: Jonas cancelled it and confirmed
 the empty portfolio directories are intentional. No push until final OK.
 
-- [ ] 1. Reproduce BUG-1006 with packet evidence and test DNS retry deadlines in `tests/test_net.c`; retain failing-before output in `build/bug-1006/`. Trap: a web tour's DONE is not a successful-load assertion; do not infer that a proven resolver bug caused the earlier six failures without packet evidence.
-- [ ] 2. Fix only demonstrated DNS defects in `kernel/src/net/net.c`, with new host regressions and parser fuzz where relevant; normal/sanitized `test_net` must pass. Trap: preserve the four-attempt/10-second policy, not a longer timeout or hidden retry.
+- [~] 1. Reproduce BUG-1006 with packet evidence and test DNS retry deadlines in `tests/test_net.c`; retain failing-before output in `build/bug-1006/`. Trap: a web tour's DONE is not a successful-load assertion; do not infer that a proven resolver bug caused the earlier six failures without packet evidence. — original external failures did not reproduce: all six sites loaded HTTP 200 BEFORE the fix; valid DNS answers captured in replay-before/network.pcap and dns-before.txt. Separate fourth-query reply-window defect reproduced by three failed assertions in deadline-before.log.
+- [x] 2. Fix only demonstrated DNS defects in `kernel/src/net/net.c`, with new host regressions and parser fuzz where relevant; normal/sanitized `test_net` must pass. Trap: preserve the four-attempt/10-second policy, not a longer timeout or hidden retry. — done 2026-10-27 (test: build/bug-1006/deadline-{after,sanitized}.log: 52/52 including delayed fourth reply and post-deadline rejection; existing 30000-frame fuzz; full host/sanitized suites pass in host.log/sanitized.log)
 - [ ] 3. Verify both warning-free dev builds, full normal/sanitized host suite, private TCG/HVF smokes and DNS/browser replay; inspect screenshots, update bug/plan/context and fast-forward main. Trap: keep unresolved external failures open, preserve installed guest data and existing worktree edits.
 
 ### Prior audit results

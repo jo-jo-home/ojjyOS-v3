@@ -91,6 +91,16 @@ HTTPS/SVCB records, multiple servers with failover, search domains,
 **Pitfalls.** Response validation (ID, question match) against spoofing.
 **Refs.** RFC 1035, RFC 3596, RFC 9460.
 
+**Log.** 2026-10-27 pre-service bugfix (board 6e210c): kernel dns_poll
+previously marked a lookup failed immediately after sending query four.
+It now preserves that query's reply window within the same four-query /
+ten-second budget. `tests/test_net.c` proves delayed fourth-query success,
+bounded timeout and expired-answer rejection; 52 checks normal/sanitized
+plus existing 30000-frame fuzz pass (`build/bug-1006/`). BUG-1006's earlier
+six external DNS failures did not reproduce on the unchanged image:
+all six HTTP 200, DNS packets captured. This is not completion of NET-04's
+future userspace service; Status remains todo and BUG-1006 stays open.
+
 ### NET-05 — TCP v2
 - Phase: P5 · Size: L · Status: todo
 - Depends: NET-01

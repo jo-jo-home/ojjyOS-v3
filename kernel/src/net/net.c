@@ -644,12 +644,14 @@ static void dns_poll(void)
     for (int i = 0; i < DNS_CACHE; i++) {
         DnsEntry *e = &dns_cache[i];
         if (e->state != 1) continue;
-        if (now_ms - e->started_ms > 10000 || e->tries >= 4) {
+        /* Sending the fourth query is not a timeout. Keep accepting its
+         * reply until the existing ten-second lookup deadline. */
+        if (now_ms - e->started_ms >= 10000) {
             e->state = 3;
             e->expires_ms = now_ms + 5000;
             continue;
         }
-        if (info.configured && now_ms >= e->next_ms) dns_send(e);
+        if (info.configured && e->tries < 4 && now_ms >= e->next_ms) dns_send(e);
     }
 }
 

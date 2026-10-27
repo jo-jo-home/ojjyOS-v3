@@ -11,6 +11,15 @@ any fix; do not confuse a separate proven retry defect with the original
 external-site failures. Next: DNS proof/fix/regression, then select the
 first ready daily card (currently APP-CAL-01). Only ask push at the end.
 
+DNS progress: unchanged-image replay loaded all six affected sites HTTP
+200; QEMU packet capture showed valid DNS answers (build/bug-1006/).
+Original BUG-1006 remains unproven/open. Separate deterministic bug found:
+dns_poll abandoned attempt four on its next tick, before a reply could
+arrive. Three failing-before host assertions now pass with the original
+four-query/ten-second budget preserved. 52/52 network assertions pass
+normally and with ASan/UBSan; full host/sanitized suites and both builds
+pass. TCG protected smoke passes; HVF/network/replay checks still running.
+
 ## LATEST (2026-10-27): completed-work audit — fixes and full matrix verified
 
 Board `1674cc`, worktree `ojjyOS-v3-review` / `verify-completed-work`,

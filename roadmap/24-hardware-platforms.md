@@ -33,11 +33,11 @@ them.
 **Refs.** Apple Virtualization framework docs.
 
 ### HW-12 — Launch menu in ojjyOS.app
-- Phase: P2 · Size: M · Status: doing
+- Phase: P2 · Size: M · Status: done
 - Depends: —
-- Files: vmapp/main.swift, tests/test_vmapp.swift, tests/vz_boot.py, vmapp/probe.swift
+- Files: vmapp/main.swift, vmapp/LaunchSettings.swift, vmapp/LaunchWindow.swift, vmapp/probe.swift, tests/test_vmapp.swift, tests/test_launch_window.swift, tests/launch_vm_checks.swift, tests/vz_boot.py, tests/vz_launch.py, tests/vz_smoke.py, tests/test_vz_capture.py, scripts/build-vmapp.sh, scripts/test-vmapp.sh, scripts/test-vmapp-ui.sh, kernel/src/main.c, kernel/src/arch/aarch64/user_arch.c
 
-**Context.** Part 1 of the launch series. The native Mac host starts immediately
+**Context.** Part 1 of the launch series. Before this card the native Mac host started immediately
 with one CPU, 2 GiB, 2880x1800 scanout, NAT and fixed 1440x900 input geometry.
 HW-10's larger host feature set is intentionally not part of this card.
 **Goal.** Blue Liquid Glass launch window before starting the VM; persistent,
@@ -56,7 +56,7 @@ safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
   before owned page tables (3 GB epoch alignment panic); extend only the
   high Device/MMIO window to 16 GiB in user_arch.c (8 GB BARs at 0x2800x0000).
   No PMM/high-RAM Normal mappings, allocator changes or removal of memory note.
-- [~] Step 4: final normal/sanitized/Swift suites, both zero-warning builds (all green); pending rebase/retest onto parallel QA main and installed delivery.
+- [x] Step 4: final normal/sanitized/Swift suites, both zero-warning builds, rebase/retest onto parallel QA main and installed delivery — done 2026-10-27 (test: build/hw-12-baseline/rebased-*.log, native/QEMU smoke reports, installed-before-verified.json, delivered 3 GB private boot, strict checklist)
   VZ smoke and QEMU TCG/HVF/Intel regression passed; log evidence, mark done and deliver.
   Trap: installed data/settings and concurrent QA work must survive unchanged.
 **Done when.**
@@ -75,11 +75,21 @@ safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
   screenshots for every offered screen and light/dark menu in `build/hw-12-*`.
 **Tests.** `scripts/test-vmapp.sh`, `tests/vz_boot.py`, `tests/vz_smoke.py`,
 both zero-warning dev builds, normal and sanitized host suites, strict checklist.
-**Pitfalls.** No SMP or kernel memory changes here. VZ RAM starts 0x70000000;
+**Pitfalls.** No SMP or high-RAM allocator changes here. VZ RAM starts 0x70000000;
 current PMM/EL0 maps cap at 4 GiB physical (~2.2 GB usable). Screen GET_DISPLAY_INFO
 drives guest size; host input must agree. Never touch installed disks during tests
 or a running VM; build scripts must not replace launch settings.
 **Refs.** NATIVE_VM_PLAN.md; launch-2 uses HW-13, launch-3 uses HW-14.
+**Log.** 2026-10-27: done (steps `b460fc8`, `83100d1`, `6c58913`; final
+integration follows `4adf8ec`). All ten card boxes verified; both rebased
+builds zero warnings, host/ASan/UBSan/Swift gates green; VZ all five RAM presets,
+all three screens + pointer/fullscreen/network/pending settings, native protected
+three-boot smoke and QEMU TCG/HVF/Intel pass. Evidence `build/hw-12-*` in
+`ojjyOS-v3-hw-12`. Main fast-forwarded; installed app + ARM image rebuilt only
+with no VM running; data/settings/legacy disk and existing release.html hashes
+unchanged. Installed-image 3 GB private boot passes; READY_TO_TEST note written.
+Limit: actual allocatable RAM still ~2.2 GB until HW-13; QEMU/Control sharing
+is HW-14. No SMP, high-RAM allocator, live guest display resize or remote push.
 
 ### HW-13 — ojjyOS uses all the memory it gets
 - Phase: P2 · Size: L · Status: todo

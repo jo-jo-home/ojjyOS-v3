@@ -80,8 +80,16 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
   account for centered letterboxing without changing the 3px bound. Native
   three-boot protected/persistence smoke and QEMU ARM TCG/HVF protected smokes
   pass. Both dev builds zero warnings, normal/sanitized suites green.
-  Exact-final-source/capture/delivery gates are being completed before HW-12
-  is marked done. Capture guards reject transparent WindowServer show frames.
+  Final source: build/hw-12-launch-final-source/report.json, hw-12-vz-final-source,
+  hw-12-ui-opaque (light/dark + error captures), 2137 Swift and seven pixel
+  gates. Capture guards reject transparent WindowServer show frames. Rebased
+  onto parallel QA ac5eb6c with no VM/kernel/test source differences; both
+  zero-warning builds and host/sanitized/Swift gates rerun green. Installed
+  app/ARM build delivered after VM-process checks; executable/kernel match
+  tested artifacts byte-for-byte; user-data/settings/legacy disk and existing
+  release.html hashes unchanged (hw-12-installed-before-verified.json).
+  Private delivered-image 3 GB boot passes (hw-12-delivered-3072/report.json).
+  HW-12 done, READY_TO_TEST note written; next HW-13 / launch-2, then HW-14.
 
 - Integration final receipts (2026-10-18): the delivered-image native smoke
   failed three times at the host full-screen step. Measured root cause, not

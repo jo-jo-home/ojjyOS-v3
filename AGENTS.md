@@ -1,5 +1,43 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27): HW-12 DONE — native launch menu delivered safely
+
+Board `76a30d`, worktree `ojjyOS-v3-hw-12` / `hw-12`. HW-10 split into
+HW-12/13/14 (those exact IDs); HW-12 is complete. Rebased onto parallel QA
+`ac5eb6c`, preserving its records/tool and LATEST block, retested both arches
+and normal/sanitized/Swift suites, then fast-forwarded main and Jonas's
+`ui-polish-3` checkout. Nothing pushed.
+
+Native settings: `vmapp/LaunchSettings.swift` (bounded JSON, RAM validation,
+atomic temp+rename), `LaunchWindow.swift` (blue native glass, Jonas credit),
+`main.swift` (startup/Option/Cmd+, pending-only Save, configuration/geometry).
+`build/launch-settings.json` lives next to the app; builders/tests preserve it.
+Defaults 2 GB, 1 CPU, 1440x900 Retina, NAT, windowed, show menu. Offered
+screens 1440x900 / 1280x800 / 1600x900, each with inspected live boot and
+pixel-aligned input. `--start`/`--control` skip menu; memory/screen overrides
+are per-run. Interactive async start errors return to a visible retry window.
+
+Small kernel prerequisites only: retain the 68-byte packed BootInfo header
+before owned tables (3 GB firmware metadata alignment panic); expand Device
+MMIO coverage 4–16 GiB because 8 GB VZ BARs move above 8 GiB. PMM bitmap and
+high-RAM Normal mappings are UNCHANGED. PMM raw totals 2045 vs 3069 MB at
+2/3 GB, actual free 2028 vs 2286 MB. The temporary 2.2 GB note stays.
+
+Verified: 2137 Swift checks incl. 2000 JSON mutations, seven pixel gates,
+AppKit control/error fixtures + opaque light/dark captures; all five RAM
+probes; four-case native launch lifecycle; native three-boot protected/input/
+persistence smoke; QEMU TCG/HVF protected and Intel smokes; normal + ASan/
+UBSan host suites; both rebased dev builds and delivered app/ARM build zero
+warnings; roadmap 698 cards / 0 errors; strict checklist no PROBLEM.
+Evidence `build/hw-12-*` in this worktree. Installed app executable and ARM
+kernel are byte-identical to tested artifacts. Installed ARM/Intel user data,
+legacy image, absent launch settings and pre-existing release.html unchanged:
+`build/hw-12-installed-before-verified.json`. Delivered-image private 3 GB VZ
+boot passes. `build/READY_TO_TEST.json` in the main checkout has exact clicks.
+UI review: ship (existing identity preserved); reusable VZ findings saved in
+apple-vz-custom-os-bringup v1.6.0. Next: launch-2 / HW-13 real high-RAM use,
+then launch-3 / HW-14 QEMU + ojjy Control shared settings.
+
 ## LATEST (2026-10-27, later): QA test day on `main` = `9d90a23` — EVERYTHING GREEN
 
 Board id 188713, worktree `ojjyOS-v3-qa` / `qa-2026-10-27` (only records
@@ -28,7 +66,7 @@ recorded in `TODO.md`'s "QA 2026-10-27" section: craigslist needs TLS
 lines open read-only. Installed images were rebuilt data-preserving
 from the same source as part of the day.
 
-## LATEST (2026-10-27): launch series split; HW-12 workspace
+## HW-12 execution history (2026-10-27; superseded by the completed LATEST above)
 
 Board `76a30d`, worktree `ojjyOS-v3-hw-12`, branch `hw-12`. HW-10 now
 depends on HW-12 (native launch menu), HW-13 (real high RAM), HW-14 (shared

@@ -245,13 +245,7 @@ in the same session or live only in a chat/card log; there is no single
 place Jonas can look at what is known-broken.
 
 **Steps.**
-- [x] 1. Write `bugs/README.md` (one-line-per-bug format: `BUG-NNNN |
-      symptom | steps | area | severity | card-or--`) and
-      `bugs/OPEN.md`, seeded with today's known gaps (craigslist needs
-      TLS 1.2 -> NET-03; no caret click in the editor; >64-line files
-      open read-only). Reference the tracker from AGENTS.md's rules.
-      Test: files exist and AGENTS.md points at them.
-      — done 2026-10-27 (test: bugs/README.md + bugs/OPEN.md exist with the three seeded bugs (BUG-1001..1003) and AGENTS.md's start-here checklist now has rule 2b pointing at them; format validated by reading both files)
+- [x] 1. Write `bugs/README.md` (one-line-per-bug format: `BUG-NNNN | symptom | steps | area | severity | card-or--`) and `bugs/OPEN.md`, seeded with today's known gaps (craigslist needs TLS 1.2 -> NET-03; no caret click in the editor; >64-line files open read-only). Reference the tracker from AGENTS.md's rules. Test: files exist and AGENTS.md points at them. — done 2026-10-27 (test: bugs/README.md + bugs/OPEN.md exist with BUG-1001..1003 seeded and AGENTS.md start-here rule 2b points at them; commit `36dbeb6`)
 
 **Goal.** Lightweight tracker in the repo (one line per bug with ID,
 symptom, steps, area, severity, linked card) until Jonas moves to GitHub
@@ -279,21 +273,8 @@ full-release flow (freeze, matrix, reviews, version sync, changelog,
 data-preserving delivery, tag) lives only in AGENTS.md fragments.
 
 **Steps.**
-- [x] 1. Write `docs/release.md`: the step-by-step release checklist
-      with exact commands — freeze, full matrix (host + ASan/UBSan, both
-      dev builds 0 warnings, smoke TCG/HVF/Intel, tours, VZ boot/smoke
-      incl. build-vmapp.sh + Swift checks), security review pointer
-      (SEC-02), design gallery diff (DS-15), version sync in the four
-      places (main.c OJJYOS_VERSION, About, mkfs.sh version.txt, splash),
-      What's-New page via mkfs.sh, changelog guidance, installed image
-      rebuild + data-hash verification (no VM running), ojjyOS.app
-      rebuild, local git tag, ready_to_test.py note and a summary for
-      Jonas. Test: doc exists; the version-sync list matches AGENTS.md
-      §8; every command it names exists in the repo.
-      — done 2026-10-27 (test: docs/release.md written; its four version-sync places match AGENTS.md §8; every script/test it names exists (scripts/{test.sh,build.sh,build-vmapp.sh}, tests/{qemu_smoke,vz_boot,vz_smoke}.py, tools/{qa_shots,check_third_party}.py, roadmap.py); SEC-02 and DS-15 verified as real card IDs)
-- [x] 2. Point RELEASE.md and AGENTS.md at docs/release.md.
-      Test: both reference it.
-      — done 2026-10-27 (test: RELEASE.md header links docs/release.md; AGENTS.md start-here rule 2c points at it)
+- [x] 1. Write `docs/release.md`: the step-by-step release checklist with exact commands — freeze, full matrix (host + ASan/UBSan, both dev builds 0 warnings, smoke TCG/HVF/Intel, tours, VZ boot/smoke incl. build-vmapp.sh + Swift checks), security review pointer (SEC-02), design gallery diff (DS-15), version sync in the four places (main.c OJJYOS_VERSION, About, mkfs.sh version.txt, splash), What's-New page via mkfs.sh, changelog guidance, installed image rebuild + data-hash verification (no VM running), ojjyOS.app rebuild, local git tag, ready_to_test.py note and a summary for Jonas. Test: doc exists; the version-sync list matches AGENTS.md §8; every command it names exists in the repo. — done 2026-10-27 (test: version-sync list matches AGENTS.md §8; every script/test named exists (scripts/{test.sh,build.sh,build-vmapp.sh}, tests/{qemu_smoke,vz_boot,vz_smoke}.py, tools/{qa_shots,check_third_party}.py); SEC-02/DS-15 verified as real card IDs; commit `7ed7fb9`)
+- [x] 2. Point RELEASE.md and AGENTS.md at docs/release.md. Test: both reference it. — done 2026-10-27 (test: RELEASE.md header links docs/release.md and AGENTS.md start-here rule 2c points at it; commit `7ed7fb9`)
 
 **Goal.** Steps for each release: freeze, full matrix + soak, security
 review (SEC-02), design gallery diff (DS-15), version bump (main.c,

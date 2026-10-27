@@ -42,7 +42,12 @@ guards passed, Python pixel gates needed Pillow (local build/hw-12-venv).
 Step 1 green: LaunchSettings.swift defines safe JSON/default/clamp, VZ/half-host
 limits, atomic temp+rename persistence; Options supports start/memory/screen.
 2132 Swift checks incl. 2000 JSON mutations and five pixel gates pass;
-app builds warnings-as-errors. Evidence build/hw-12-baseline. Next: AppKit window.
+app builds warnings-as-errors. Step 2 green: LaunchWindow.swift (native
+vibrancy, blue title/accent, RAM/screen/network/fullscreen/startup controls),
+Option recovery, Cmd+, and save-only pending settings while active. Seven
+AppKit interaction guards in tests/test_launch_window.swift pass; inspected
+build/hw-12-launch-{light,dark}-final.png. ARM dev build clean; Intel needs
+/opt/homebrew/bin on PATH for nasm (rerun underway). Next: real VM wiring/matrix.
 
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 

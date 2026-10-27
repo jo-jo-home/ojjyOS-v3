@@ -148,6 +148,12 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     var serialHandle: FileHandle?
     var controlServer: ControlServer?
     var held: Set<Int> = []
+    let limits = LaunchLimits()
+    var settings = LaunchSettings()
+    var activeSettings = LaunchSettings()
+    var launchWindow: LaunchWindow?
+    var isActive: Bool { machine != nil && machine?.state != .stopped && machine?.state != .error }
+    func logSettings(_ message: String) { fputs("ojjyOS: \(message)\n",stderr) }
     /* Full-screen transitions: styleMask flips before the Space animation
      * settles and AppKit silently drops toggleFullScreen calls made while
      * one is in flight (measured: windowed-size captures while "full
@@ -166,6 +172,8 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     }
     init(_ options: Options) { self.options = options }
     func applicationDidFinishLaunching(_ notification: Notification) {
+        settings = LaunchSettings.load(options.settingsURL,limits:limits,log:logSettings)
+        if let appearance = options.appearance { NSApp.appearance = NSAppearance(named:appearance == "dark" ? .darkAqua : .aqua) }
         makeMenus()
         window = NSWindow(contentRect: NSRect(x:0,y:0,width:1120,height:700),
             styleMask:[.titled,.closable,.miniaturizable,.resizable], backing:.buffered, defer:false)
@@ -181,12 +189,23 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         view.controlOnly = options.control != nil
         // The guest currently uses a fixed Retina mode. The view scales it
         // to the window; automatic mode changes await guest GPU resize support.
-        window.center(); window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(view)
-        NSApp.activate(ignoringOtherApps:true)
+        window.center()
         do {
             if let path = options.control { controlServer = try ControlServer(path, host:self) }
-            try start()
+            if options.showsLaunchMenu(settings,optionHeld:NSEvent.modifierFlags.contains(.option)) {
+                launchSettings()
+                if let path = options.launchCapture {
+                    DispatchQueue.main.asyncAfter(deadline:.now()+0.8) { [self] in
+                        do {
+                            #if OJJY_VMAPP_UI_TEST
+                            if let panel = launchWindow { try runLaunchWindowTests(panel) }
+                            #endif
+                            try launchWindow?.capture(path); NSApp.terminate(nil)
+                        }
+                        catch { fputs("ojjyOS: \(error)\n",stderr); exit(1) }
+                    }
+                }
+            } else { try start() }
         } catch { fail(error) }
     }
     func makeMenus() {
@@ -200,6 +219,8 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         for (title, selector) in [("Start",#selector(startMenu)),("Request Stop",#selector(requestStop)),("Force Stop…",#selector(forceStop))] {
             vmMenu.addItem(withTitle:title,action:selector,keyEquivalent:"").target = self
         }
+        vmMenu.addItem(.separator())
+        vmMenu.addItem(withTitle:"Launch Settings…",action:#selector(launchSettings),keyEquivalent:",").target = self
         let viewItem = NSMenuItem(); bar.addItem(viewItem); let menu = NSMenu(title:"View"); viewItem.submenu = menu
         menu.addItem(withTitle:"Enter Full Screen",action:#selector(fullScreen),keyEquivalent:"f").target = self
         menu.items.last?.keyEquivalentModifierMask = [.control,.command]
@@ -210,11 +231,30 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
             .credits:NSAttributedString(string:"Created by Jonas Lee\nA custom kernel, running natively on Apple Virtualization.framework.")])
     }
     @objc func fullScreen() { window.toggleFullScreen(nil) }
+    @objc func launchSettings() {
+        if launchWindow == nil {
+            let panel = LaunchWindow(limits:limits)
+            panel.isActive = { [weak self] in self?.isActive ?? false }
+            panel.onApply = { [weak self] selected in
+                guard let self = self else { return }
+                try selected.save(self.options.settingsURL)
+                self.settings = selected
+                self.logSettings("Launch settings saved; changes apply on next start")
+                if !self.isActive { try self.start() }
+            }
+            launchWindow = panel
+        }
+        launchWindow?.show(settings)
+    }
     @objc func startMenu() { do { try start() } catch { fail(error) } }
     func start() throws {
         guard machine == nil || machine?.state == .stopped || machine?.state == .error else {
             throw HostError("The virtual machine is already active")
         }
+        guard !limits.memoryChoices.isEmpty else { throw HostError("No supported RAM setting within half this Mac's memory") }
+        activeSettings = options.applying(to:settings,limits:limits,log:logSettings)
+        window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view)
+        NSApp.activate(ignoringOtherApps:true)
         view.virtualMachine = nil; machine = nil; serialHandle = nil; lease = nil; held.removeAll()
         lease = try DiskLease(options.image)
         let cfg = VZVirtualMachineConfiguration()
@@ -261,7 +301,9 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         alert.addButton(withTitle:"Cancel"); alert.addButton(withTitle:"Force Stop")
         if alert.runModal() == .alertSecondButtonReturn { vm.stop { [weak self] error in if let error = error { self?.fail(error) } } }
     }
-    func guestDidStop(_ virtualMachine: VZVirtualMachine) { window.title = "ojjyOS · Stopped"; print("Guest stopped") }
+    func guestDidStop(_ virtualMachine: VZVirtualMachine) {
+        window.title = "ojjyOS · Stopped"; launchWindow?.refreshState(); print("Guest stopped")
+    }
     func virtualMachine(_ virtualMachine: VZVirtualMachine,didStopWithError error: Error) { fail(error) }
     func fail(_ error: Error) {
         window.title = "ojjyOS · \(error)"

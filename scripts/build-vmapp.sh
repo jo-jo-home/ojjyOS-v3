@@ -11,7 +11,7 @@ STAGE="$(mktemp -d "$STAGE_BASE/ojjyos-vmapp.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 APP="$STAGE/ojjyOS.app"
 mkdir -p "$APP/Contents/MacOS"
-swiftc -O -warnings-as-errors -target arm64-apple-macos13.0 "$ROOT/vmapp/LaunchSettings.swift" "$ROOT/vmapp/main.swift" \
+swiftc -O -warnings-as-errors -target arm64-apple-macos13.0 "$ROOT/vmapp/LaunchSettings.swift" "$ROOT/vmapp/LaunchWindow.swift" "$ROOT/vmapp/main.swift" \
     -framework Virtualization -framework AppKit -o "$APP/Contents/MacOS/ojjyOS"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

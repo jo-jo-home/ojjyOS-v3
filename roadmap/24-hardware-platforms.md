@@ -46,8 +46,8 @@ safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
 - [x] Step 1: settings model/limits/CLI in vmapp/main.swift and vmapp/LaunchSettings.swift, host guards in tests/test_vmapp.swift — done 2026-10-27 (test: scripts/test-vmapp.sh, 2132 checks + five pixel gates; app build warnings-as-errors)
   Test parse/default/clamp/unknown/broken/round-trip/
   atomic/fuzz and path aliases. Trap: never let settings overwrite disk/log/EFI.
-- [ ] Step 2: native AppKit launch window and startup/running-settings flows in
-  vmapp/main.swift; build/test guards and light/dark captures. Trap: pending
+- [x] Step 2: native AppKit launch window and startup/running-settings flows in vmapp/main.swift + vmapp/LaunchWindow.swift — done 2026-10-27 (test: seven AppKit interaction checks, light/dark captures inspected, warnings-as-errors app build)
+  Build/test guards and light/dark captures. Trap: pending
   settings must not change active VM input geometry or start a second VM.
 - [ ] Step 3: wire RAM/network/Retina/aspect/input/fullscreen, extend
   vmapp/probe.swift and tests/vz_boot.py; private 2048/3072 boots and each screen

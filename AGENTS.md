@@ -18,7 +18,12 @@ dns_poll abandoned attempt four on its next tick, before a reply could
 arrive. Three failing-before host assertions now pass with the original
 four-query/ten-second budget preserved. 52/52 network assertions pass
 normally and with ASan/UBSan; full host/sanitized suites and both builds
-pass. TCG protected smoke passes; HVF/network/replay checks still running.
+pass. TCG/HVF protected smokes pass; strict internet network check passed
+with a real -47 ms NTP correction, DNS and HTTP. Final six-site replay is
+6/6 HTTP 200 with valid captured DNS replies; hn.png visually reviewed.
+Code `53d6c7c` fast-forwarded to main; original BUG-1006 stays open with a
+packet-capture Handoff in TODO.md. Installed delivery will follow the daily
+UI task if no user VM is running. Next: APP-CAL-01 in the UI track.
 
 ## LATEST (2026-10-27): completed-work audit — fixes and full matrix verified
 

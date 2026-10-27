@@ -47,7 +47,7 @@ directories as code moves into them, update Makefiles and docs (AGENTS.md
 **Refs.** D-018.
 
 ### QA-22 — Repository hygiene
-- Phase: P0 · Size: S · Status: doing
+- Phase: P0 · Size: S · Status: done
 - Depends: —
 - Files: .gitignore, kernel/Makefile, tools/Makefile, scripts/mkfs.sh, scripts/clean-icloud-dupes.sh (new), kernel/src/**/*.o, *.d, "* 2.*" files
 
@@ -79,9 +79,10 @@ and `tools/mkojfs` (a built binary) shows as modified in git status.
       build-output extension that appears with a " N" suffix.
       Test: `git check-ignore` matches the real conflict copies.
       — done 2026-10-27 (test: `git check-ignore 'kernel/src/net/tcp 2.d'` matches via `* [0-9].d`; new `.elf/.a/.lib/.img` and two-digit patterns added)
-- [ ] Full-build hygiene proof: build both arches twice, then
+- [x] Full-build hygiene proof: build both arches twice, then
       `git status --porcelain` must be empty and no `*.o`/`*.d` may
       remain inside `kernel/src`. Evidence `build/qa-22-*`.
+      — done 2026-10-27 (test: both arches built twice, 0 warnings each (build/qa-22-{arm,x86}-build{1,2}.log); after the commit a further `ARCH=aarch64 bash scripts/build.sh` exits 0 and `git status --porcelain` is empty (0 lines) with zero `*.o`/`*.d` under kernel/src (build/qa-22-final-arm.log))
 
 **Goal.** Builds write objects only under `build/`; `.gitignore` covers
 build products and iCloud duplicates; remove tracked binaries (rebuild
@@ -90,6 +91,16 @@ that lists (never auto-deletes without `--yes`) conflict copies.
 **Done when.** `git status` is clean after a full build.
 **Tests.** Build twice, check `git status --porcelain` is empty.
 **Pitfalls.** Never delete Jonas's files outside build products.
+**Log.** Done 2026-10-27 (commits `97af4f4`, card ticks): kernel objects
+under build/obj-<arch>/, host tools under build/tools/, mkfs calls them
+there; clean-icloud-dupes.sh lists/(-yes) deletes untracked
+build-output conflict copies (removed the 4 stale ones here);
+.gitignore extended; build twice + post-commit build leaves
+`git status --porcelain` empty and kernel/src artifact-free. Limits:
+boot/'s single `ojjy-boot.obj`/`.efi` still build inside boot/ (both
+gitignored, removed by build.sh's `make clean` each build); the
+protected sample `.elf`s still stage inside sysroot/System/Programs
+because mkojfs packs that folder. Evidence: build/qa-22-*.log.
 **Refs.** —
 
 ### QA-23 — Coding style and formatter

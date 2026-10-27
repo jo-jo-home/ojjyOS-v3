@@ -4,6 +4,7 @@ HTTP via Terminal curl (plain, redirect, chunked, 300 KB) against a local
 host server reached at 10.0.2.2, and network off/on. Created by Jonas Lee.
 """
 import argparse
+from datetime import datetime, timezone
 from pathlib import Path
 import re
 import shutil
@@ -87,13 +88,13 @@ def run(args):
         # with internet the DHCP-time NTP sync must have landed too.
         found = command('date', r'\[CLOCK\] date UTC (\d{4})-(\d{2})-(\d{2})')
         print('date:', found[0], flush=True)
-        assert found[1] == '2026', f'date shows a wrong year: {found[0]}'
+        assert int(found[1]) == datetime.now(timezone.utc).year, f'date shows a wrong year: {found[0]}'
         vm.screenshot(out / '05-date.png')
         if args.internet:
             found = command('ntp', r'\[CLOCK\] NTP offset ([+-]\d+) ms from (\S+)')
             print('ntp:', found[0], flush=True)
             found = command('date', r'\[CLOCK\] date UTC (\d{4})-\d\d-\d\d \d\d:\d\d:\d\d  \(NTP')
-            assert found[1] == '2026', 'corrected date year'
+            assert int(found[1]) == datetime.now(timezone.utc).year, 'corrected date year'
             vm.screenshot(out / '06-ntp-date.png')
 
         vm.type('net off\n'); time.sleep(.5)
@@ -122,5 +123,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--output', required=True)
-    parser.add_argument('--internet', action='store_true', help='also try example.com (not a gate)')
+    parser.add_argument('--internet', action='store_true', help='require external SNTP success; also try example.com (DNS/HTTP are advisory)')
     run(parser.parse_args())

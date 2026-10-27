@@ -21,6 +21,16 @@ Order: N1 -> N2 -> N3 -> N4 -> N5 -> N6 -> N7 -> N8. Commit and publish to
 
 ## Current state (updated 2026-10-19 after N1; verify lines by reading)
 
+**2026-10-27 audit addendum:** N4 is implemented; the dated snapshot below
+is historical. Review fixes in `clock.c/h` repair automatic retry/resync,
+keep deadlines on uptime, preserve fractional correction and validate the
+selected peer and both server timestamps across NTP eras. `date` has its
+missing serial receipt. 61 clock checks pass normally and sanitized; both
+zero-warning builds and private QEMU/VZ regression matrix pass. Initial
+external SNTP was unreachable; the final strict internet run passed with
+a real -64 ms correction from pool.ntp.org plus successful DNS/HTTP.
+See `REVIEW_COMPLETED_WORK.md` and TIM-04's audit follow-up for receipts.
+
 **Where the tracks stand:** `main` = `f35c47a` and contains BOTH tracks'
 latest work (Track D: D1 LG4 glass controls, mouse-lag fix, poll hooks;
 Track N: N1 crypto below). Track N branch `net-web` == `main`, tree clean.

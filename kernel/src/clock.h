@@ -62,11 +62,12 @@ void clock_sntp_build(uint8_t *packet48, int64_t unix_tx_ms);
  * best guess of the time). Returns true and fills offset_ms_out /
  * server_unix_out for a good reply; false for anything wrong.
  * Rules: 48 bytes, LI != 3 (unsynchronized), mode 4, VN 3 or 4,
- * stratum 1..15, non-zero transmit timestamp, originate echo must
+ * stratum 1..15, non-zero receive/transmit timestamps in order, originate echo must
  * match our request exactly, server time inside a plausible window,
  * |offset| within CLOCK_MAX_SKEW_MS unless our own clock is
  * implausible (then one big correction is allowed), 2036 era
- * rollover resolved against expected_now. */
+ * rollover resolved independently within the supported plausible window.
+ * This is unauthenticated SNTP, not protection against an on-path attacker. */
 bool clock_sntp_parse(const uint8_t *reply, size_t len,
                       int64_t unix_tx_ms, int64_t unix_rx_ms,
                       int64_t expected_now_ms,

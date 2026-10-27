@@ -45,9 +45,14 @@ Pick `X.Y.Z`; update all four in the same commit so nothing drifts:
       `HOST_CC=/opt/homebrew/opt/llvm/bin/clang OJJY_SANITIZE=1 bash scripts/test.sh`.
 - [ ] `OJJY_BUILD_DIR="$PWD/build/dev-aarch64" ARCH=aarch64 bash scripts/build.sh`
       and the same for `x86_64` — zero warnings both.
-- [ ] Smoke: `python3 -B tests/qemu_smoke.py --arch aarch64 --image build/aarch64/ojjyos3.img --output build/rel-smoke-tcg --fresh-data`,
+- [ ] `bash scripts/build-vmapp.sh` and `bash scripts/test-vmapp.sh`
+      (Swift guards plus Python pixel gates; Python needs Pillow).
+- [ ] Smoke: `OJJY_ACCEL=tcg python3 -B tests/qemu_smoke.py --arch aarch64 --image build/dev-aarch64/ojjyos3.img --output build/rel-smoke-tcg --fresh-data --protected`,
       repeat with `OJJY_ACCEL=hvf`, and once with `--arch x86_64`
-      against the Intel image.
+      against `build/dev-x86_64/ojjyos3.img`. Use the freshly built images,
+      not a previously installed image from another revision.
+- [ ] `python3 -B tests/vz_launch.py --image build/dev-aarch64/ojjyos3.img --output build/rel-launch`
+      (private launch/settings, screens, network, fullscreen and pointer matrix).
 - [ ] Tours under HVF (design, apps, apps-check, web) — screenshots
       reviewed with `tools/qa_shots.py` at minimum.
 - [ ] Security review pass per card SEC-02 (creds, VFS isolation,

@@ -10,6 +10,7 @@
 #include "string.h"
 #include "serial.h"
 #include "net/net.h"
+#include "timer.h"
 
 #define NTP_PORT        123
 #define NTP_PORT_LOCAL  53536
@@ -143,29 +144,30 @@ bool clock_sntp_parse(const uint8_t *reply, size_t len,
     uint64_t originate = (rd32_be(reply + 24) << 32) | rd32_be(reply + 28);
     uint64_t receive = (rd32_be(reply + 32) << 32) | rd32_be(reply + 36);
     uint64_t transmit = (rd32_be(reply + 40) << 32) | rd32_be(reply + 44);
-    if (transmit == 0) return false;
+    if (receive == 0 || transmit == 0) return false;
 
     /* The reply must be to OUR request: the server echoes our transmit
      * timestamp in the originate field. */
     uint64_t our_tx = clock_unix_ms_to_ntp(unix_tx_ms);
     if (originate != our_tx) return false;
 
-    /* Resolve the 2036-era rollover against what we believe "now" is. */
+    /* The supported 1990..2100 window is shorter than one NTP era.
+     * Resolve each timestamp independently, including exchanges spanning
+     * February 2036 and a boot with an implausible firmware clock. */
     int64_t t1_unix = clock_ntp_to_unix(receive);
     int64_t t2_unix = clock_ntp_to_unix(transmit);
-    int64_t floor = expected_now_ms / 1000 - CLOCK_MAX_SKEW_MS / 1000;
-    if (t2_unix < floor) {
-        t1_unix += (int64_t)1 << 32;
-        t2_unix += (int64_t)1 << 32;
-    }
+    if (t1_unix < CLOCK_PLAUSIBLE_MIN) t1_unix += (int64_t)1 << 32;
+    if (t2_unix < CLOCK_PLAUSIBLE_MIN) t2_unix += (int64_t)1 << 32;
 
     /* Server time must land in a plausible window at all. */
     if (t2_unix < CLOCK_PLAUSIBLE_MIN || t2_unix > CLOCK_PLAUSIBLE_MAX) return false;
+    if (t1_unix < CLOCK_PLAUSIBLE_MIN || t1_unix > CLOCK_PLAUSIBLE_MAX) return false;
 
     int64_t t0_ms = unix_tx_ms;
     int64_t t1_ms = t1_unix * 1000 + (int64_t)((receive & 0xffffffff) * 1000 >> 32);
     int64_t t2_ms = t2_unix * 1000 + (int64_t)((transmit & 0xffffffff) * 1000 >> 32);
     int64_t t3_ms = unix_rx_ms;
+    if (t3_ms < t0_ms || t2_ms < t1_ms || t2_ms - t1_ms > t3_ms - t0_ms + 1) return false;
     int64_t offset = clock_sntp_offset_ms(t0_ms, t1_ms, t2_ms, t3_ms);
 
     /* Reject absurd jumps — unless our own clock is implausible, in
@@ -221,9 +223,11 @@ static NtpState ntp_state;
 static int ntp_host_index;
 static ip4_t ntp_ip;
 static int64_t ntp_tx_ms;
+static uint64_t ntp_tx_ticks;
 static uint64_t ntp_next_ms;          /* when to do the next action */
 static uint64_t ntp_backoff_ms;       /* retry spacing while offline */
 static bool ntp_bound;
+static bool ntp_started;
 
 static void ntp_log_offset(int64_t delta_ms)
 {
@@ -249,7 +253,10 @@ static void ntp_schedule_retry(uint64_t now_ms)
 static void ntp_send_query(uint64_t now_ms)
 {
     uint8_t packet[48];
-    ntp_tx_ms = clock_now_unix() * 1000;
+    /* RTC readers apply only the whole-second offset. Include the stored
+     * remainder here so repeated subsecond corrections do not accumulate. */
+    ntp_tx_ms = clock_now_unix() * 1000 + ntp_offset_ms % 1000;
+    ntp_tx_ticks = now_ms;
     clock_sntp_build(packet, ntp_tx_ms);
     if (net_udp_send(ntp_ip, NTP_PORT_LOCAL, NTP_PORT, packet, sizeof(packet)) == 0) {
         ntp_state = NTP_WAIT_REPLY;
@@ -262,13 +269,17 @@ static void ntp_send_query(uint64_t now_ms)
 static void ntp_udp_handler(ip4_t src, uint16_t src_port, uint16_t dst_port,
                             const uint8_t *data, size_t len)
 {
-    (void)src; (void)src_port; (void)dst_port;
     if (ntp_state != NTP_WAIT_REPLY) return;
+    if (src != ntp_ip || src_port != NTP_PORT || dst_port != NTP_PORT_LOCAL) return;
 
-    uint64_t now_ms = (uint64_t)clock_now_unix() * 1000;
+    uint64_t now_ms = timer_get_ticks();
+    if (now_ms < ntp_tx_ticks || now_ms - ntp_tx_ticks >= NTP_REPLY_MS) return;
+    /* Elapsed time and deadlines are monotonic, never Unix wall time.
+     * This also avoids quantizing the round trip to whole RTC seconds. */
+    int64_t rx_ms = ntp_tx_ms + (int64_t)(now_ms - ntp_tx_ticks);
     int64_t delta = 0;
-    if (!clock_sntp_parse(data, len, ntp_tx_ms, (int64_t)now_ms,
-                           (int64_t)now_ms, &delta, NULL)) {
+    if (!clock_sntp_parse(data, len, ntp_tx_ms, rx_ms,
+                           rx_ms, &delta, NULL)) {
         return;                          /* bad reply: let the timeout retry */
     }
 
@@ -284,24 +295,17 @@ static void ntp_udp_handler(ip4_t src, uint16_t src_port, uint16_t dst_port,
 
 void clock_ntp_start(uint64_t now_ms)
 {
-    if (!ntp_bound) {
-        net_udp_bind(NTP_PORT_LOCAL, ntp_udp_handler);
-        ntp_bound = true;
-    }
-    if (ntp_state != NTP_IDLE && ntp_state != NTP_WAIT_REPLY) return;
-    if (ntp_state == NTP_IDLE && ntp_synced && now_ms < ntp_next_ms) return;
-    ntp_host_index = 0;
-    ntp_state = NTP_RESOLVING;
-    ntp_next_ms = now_ms;
+    /* DHCP renewals must not cancel in-flight requests or offline backoff. */
+    if (!ntp_started) clock_ntp_force(now_ms);
 }
 
 void clock_ntp_force(uint64_t now_ms)
 {
+    ntp_started = true;
     ntp_backoff_ms = 0;
     ntp_host_index = 0;
     if (!ntp_bound) {
-        net_udp_bind(NTP_PORT_LOCAL, ntp_udp_handler);
-        ntp_bound = true;
+        ntp_bound = net_udp_bind(NTP_PORT_LOCAL, ntp_udp_handler) == 0;
     }
     ntp_state = NTP_RESOLVING;
     ntp_next_ms = now_ms;
@@ -309,7 +313,15 @@ void clock_ntp_force(uint64_t now_ms)
 
 void clock_ntp_poll(uint64_t now_ms)
 {
-    if (ntp_state == NTP_IDLE || now_ms < ntp_next_ms) return;
+    if (!ntp_started || now_ms < ntp_next_ms) return;
+    if (!ntp_bound) {
+        ntp_bound = net_udp_bind(NTP_PORT_LOCAL, ntp_udp_handler) == 0;
+        if (!ntp_bound) { ntp_schedule_retry(now_ms); return; }
+    }
+    if (ntp_state == NTP_IDLE) {
+        ntp_host_index = 0;
+        ntp_state = NTP_RESOLVING;
+    }
 
     if (ntp_state == NTP_RESOLVING) {
         ip4_t ip = 0;
@@ -353,9 +365,11 @@ void clock_test_reset(void)
     ntp_host_index = 0;
     ntp_ip = 0;
     ntp_tx_ms = 0;
+    ntp_tx_ticks = 0;
     ntp_next_ms = 0;
     ntp_backoff_ms = 0;
     ntp_bound = false;
+    ntp_started = false;
     ntp_offset_ms = 0;
     ntp_synced = false;
     ntp_server_name[0] = '\0';

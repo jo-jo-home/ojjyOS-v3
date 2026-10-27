@@ -881,6 +881,18 @@ Limits: the 6 h resync is not persisted across boots (TIM-05 writes
 back to the RTC); QEMU's RTC already carries host time so visible
 offsets are small.
 
+**Audit follow-up (2026-10-27, board 1674cc).** The original single-sync
+test missed dead IDLE timers and a wall-time/uptime deadline mix. Fixed
+automatic retry/6 h resync, idempotent DHCP start, peer/port/expiry checks,
+fractional-offset carry, and independent receive/transmit era unfolding.
+Missing/out-of-order server timestamps are refused. Added the missing
+`date` serial receipt. Verified: 61 clock assertions normal + ASan/UBSan,
+both dev builds zero warnings, TCG/HVF/Intel protected smokes, five VZ RAM
+boot probes, four-case launch matrix and native protected/persistence smoke.
+Full records: `REVIEW_COMPLETED_WORK.md`, `build/review/`. Initial external
+NTP was unreachable; the final strict internet run passed with a real
+-64 ms correction from pool.ntp.org (network-internet-strict.log).
+
 ### TIM-05 — Clock persistence and suspend/resume time
 - Phase: P9 · Size: S · Status: todo
 - Depends: TIM-03, SVC-60

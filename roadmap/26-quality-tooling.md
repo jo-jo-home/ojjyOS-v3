@@ -297,6 +297,12 @@ Limits: SEC-02 and DS-15 are still todo cards — the checklist links
 them as the review steps they will own; the tag is local-only until
 Jonas pushes.
 
+**Audit follow-up (2026-10-27, board 1674cc).** Runbook now explicitly
+runs native guards/pixel gates and the launch matrix; smoke commands use
+the fresh dev images, explicit TCG/HVF and protected-app checks, not stale
+installed images. Executed successfully during the completed-work audit
+(`build/review/`, `REVIEW_COMPLETED_WORK.md`). This is not a 3.2 release.
+
 ### QA-41 — Release ojjyOS 3.2
 - Phase: P0 · Size: M · Status: todo
 - Depends: SHL-02, SHL-03, SHL-04, APP-TERM-01, APP-FINDER-01, APP-TEXTEDIT-01, APP-NOTES-01, APP-CAL-01, APP-SET-01, NET-02, TIM-04, QA-40

@@ -1,5 +1,31 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27): completed-work audit — fixes and full matrix verified
+
+Board `1674cc`, worktree `ojjyOS-v3-review` / `verify-completed-work`,
+baseline `d74efea`. Jonas requested review, fixes as needed and push.
+Plan/evidence: `REVIEW_COMPLETED_WORK.md`, `build/review/`. Fixed TIM-04
+automatic retry/6 h resync (IDLE never woke; deadline mixed Unix and
+uptime), DHCP idempotence, peer/port/expiry checks, fractional-offset
+oscillation, missing/out-of-order timestamps and era-boundary unfolding.
+Added the date serial receipt (same uncommitted line in net-web was left
+untouched), UTC-host-year live assertion and fresh-image/native tests in
+the release runbook. Before-fix failures retained; 61 clock assertions,
+all host suites normal + sanitized, both dev builds zero warnings,
+2137 Swift + 7 pixel gates, protected TCG/HVF/Intel and native persistence
+smokes, 5 native RAM boots, 4-case launch/3-screen matrix, TextEdit/Notes
+checks and design/apps tours pass. Web tour completed: 7 HTTP 200 loads,
+6 DNS failures and the known craigslist handshake failure. PNG profiles plus representative
+visual reads performed. Fresh-context adversarial review: no new finding.
+Initial external NTP was unreachable; the separate final strict --internet
+run PASSED with a real -64 ms correction from pool.ntp.org, plus DNS/HTTP.
+No network-success gate was weakened. Known craigslist gap remains. Filed
+BUG-1004 (relative build directory), BUG-1005 (Terminal overflow) and
+BUG-1006 (six web-tour DNS failures; cause not established).
+Installed images/settings and other worktrees' edits are untouched; no
+release/version bump or HW-13/14 work. Next: docs/privacy checks and the
+push Jonas already authorized. Local Pillow venv is build/review/venv.
+
 ## LATEST (2026-10-27, night): THREE more cards done — QA-30 bug tracker, QA-40 release runbook, TIM-04 SNTP clock
 
 Board id `b774d3`, worktree `ojjyOS-v3-net` / `net-web` (brought to

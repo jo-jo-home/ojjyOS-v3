@@ -18,6 +18,22 @@ kernel, storage, networking, desktop) compiled from the 2026-10-18
 "make the OS better + routine bug/security check" request; work its
 section 0 fixes before anything else here.
 
+## >>> Completed-work audit (2026-10-27, board 1674cc)
+
+TIM-04 timer/peer/era/fractional fixes and date serial receipt verified on
+the combined source. Full receipts: `REVIEW_COMPLETED_WORK.md`,
+`build/review/`. Normal/sanitized host, warning-free ARM/Intel builds,
+native guards, private TCG/HVF/Intel/VZ smokes, launch/RAM matrix and
+app/design tours passed. Web tour completed with 7 HTTP 200 loads,
+6 DNS failures and the known craigslist failure; cause of the DNS failures
+is not established. Installed images were NOT replaced.
+Initial external NTP was unreachable (clean retry); the final strict
+internet run passed with a real -64 ms correction from pool.ntp.org.
+
+- [ ] BUG-1004: relative OJJY_BUILD_DIR fails; use an absolute path (QA-22).
+- [ ] BUG-1005: long Terminal output overflows the right edge (APP-TERM-01).
+- [ ] BUG-1006: investigate six web-tour DNS failures (NET-04); strict example.com DNS/HTTP passed in a separate VM.
+
 ## >>> QA 2026-10-27: full test day on `main` = `9d90a23` (board 188713)
 
 Everything ran green on the installed images (same commit). Logs and

@@ -8,3 +8,6 @@ not fix; remove the line in the commit that fixes it.
 | BUG-1001 | craigslist.org fails the secure handshake (needs TLS 1.2; the browser only speaks TLS 1.3) | Web: open https://craigslist.org/ | NET | med | NET-03 |
 | BUG-1002 | Clicking inside TextEdit/Notes does not move the caret (the editor has no click positioning at all) | TextEdit: click anywhere in the text | APP-TEXTEDIT | low | -- |
 | BUG-1003 | Documents longer than 64 lines open read-only and are shown cut down | TextEdit: open a 70-line .txt file | APP-TEXTEDIT | low | -- |
+| BUG-1004 | Relative OJJY_BUILD_DIR fails after the build script changes directory; absolute paths work | Run OJJY_BUILD_DIR=build/dev-aarch64 ARCH=aarch64 bash scripts/build.sh | QA | low | QA-22 |
+| BUG-1005 | Long Terminal output draws past the right edge of its content area | Terminal: curl a page with a long unbroken line (tests/qemu_net.py /big fixture) | APP-TERM | low | APP-TERM-01 |
+| BUG-1006 | First six web-tour destinations reported DNS lookup failure; later sites and a separate example.com DNS check succeeded; cause not established | Run tests/qemu_web_tour.py under HVF; evidence build/review/web.log | NET | med | NET-04 |

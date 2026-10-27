@@ -94,6 +94,8 @@ static void print_date(netcmd_print_fn print)
         cat(line, "  (no NTP sync yet)");
     }
     print(line);
+    /* Keep the headless receipt next to the actual date output. */
+    serial_printf("[CLOCK] date %s\n", line);
 }
 
 static bool network_usable(netcmd_print_fn print)

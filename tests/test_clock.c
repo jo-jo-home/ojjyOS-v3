@@ -12,12 +12,15 @@
 #include "net/net.h"
 #include "string.h"
 #include "test_support.h"
+#include "timer.h"
 
 void clock_test_reset(void);
 
 /* ---- fakes for what the kernel build provides for real ---- */
 
 static int64_t fake_rtc_unix;
+static uint64_t fake_ticks;
+uint64_t timer_get_ticks(void) { return fake_ticks; }
 void rtc_read_time(RtcTime *time)
 {
     if (!time) return;
@@ -182,6 +185,15 @@ static void test_parse(void)
     CHECK(clock_sntp_parse(reply, 48, 0, 0, 0, &offset, &server),
           "big correction accepted when the local clock is implausible");
     CHECK(server == T2026, "1970 boot syncs to the server time");
+
+    memset(reply + 32, 0, 8);
+    CHECK(!clock_sntp_parse(reply, 48, 0, 100, 0, &offset, &server),
+          "missing server receive timestamp rejected even on 1970 boot");
+    build_reply(reply, clock_unix_ms_to_ntp(T2026 * 1000), clock_unix_ms_to_ntp(0), 0x24, 2, true);
+    uint64_t later = clock_unix_ms_to_ntp((T2026 + 1) * 1000);
+    wr_be(reply + 32, (uint32_t)(later >> 32)); wr_be(reply + 36, (uint32_t)later);
+    CHECK(!clock_sntp_parse(reply, 48, 0, 100, 0, &offset, &server),
+          "server transmit before receive rejected");
 }
 
 static void test_era_rollover(void)
@@ -199,6 +211,19 @@ static void test_era_rollover(void)
     CHECK(clock_sntp_parse(reply, 48, T2040 * 1000, T2040 * 1000, T2040 * 1000, &offset, &server),
           "era-wrapped transmit timestamp accepted");
     CHECK(server == T2040, "era rollover resolves into this era");
+    build_reply(reply, reply_ntp, clock_unix_ms_to_ntp(0), 0x24, 2, true);
+    CHECK(clock_sntp_parse(reply, 48, 0, 0, 0, &offset, &server) && server == T2040,
+          "1970 no-RTC boot can sync after the 2036 rollover");
+
+    int64_t rollover_ms = (4294967296LL - 2208988800LL) * 1000;
+    build_reply(reply, clock_unix_ms_to_ntp(rollover_ms + 1),
+                clock_unix_ms_to_ntp(rollover_ms - 10), 0x24, 2, true);
+    uint64_t before_rollover = clock_unix_ms_to_ntp(rollover_ms - 1);
+    wr_be(reply + 32, (uint32_t)(before_rollover >> 32));
+    wr_be(reply + 36, (uint32_t)before_rollover);
+    CHECK(clock_sntp_parse(reply, 48, rollover_ms - 10, rollover_ms + 10,
+                           rollover_ms, &offset, &server) && offset >= -1 && offset <= 1,
+          "exchange straddling the NTP era boundary parses both timestamps independently");
 
     /* The same wrapped value is NOT lifted when it makes no sense:
      * expected now 2026, wrapped value lands after 2036 -> offset way
@@ -236,6 +261,7 @@ static void test_state_machine(void)
      * our raw clock; the reply arrives ~100 ms after our request. */
     uint8_t reply[48];
     build_reply(reply, clock_unix_ms_to_ntp((T2026 + 30) * 1000 + 100), our_tx, 0x24, 2, true);
+    fake_ticks = 6000;
     bound_handler(0x08080808, 123, 53536, reply, 48);
     CHECK(clock_ntp_synced(), "synced after a good reply");
     CHECK(clock_ntp_offset_ms() > 29900 && clock_ntp_offset_ms() < 30200, "offset ~+30 s applied");
@@ -250,9 +276,69 @@ static void test_state_machine(void)
     rtc_read_time(&t);
     CHECK(t.year == 2026 && t.month == 10 && t.day == 27, "rtc_read_time is corrected");
 
-    /* No immediate resync: the 6 h timer holds. */
-    clock_ntp_start(T2026 * 1000 + 1000);
+    /* Deadlines use uptime, not Unix time; start itself never sends. */
+    clock_ntp_start(7000);
+    clock_ntp_poll(7000);
     CHECK(sent_count == 1, "no resync before the 6 h mark");
+}
+
+static void test_lifecycle_regressions(void)
+{
+    clock_test_reset(); sent_count = 0; fake_ticks = 1000;
+    fake_rtc_unix = T2026; dns_result = -1;
+    clock_ntp_start(1000);
+    clock_ntp_poll(1000); clock_ntp_poll(1001);
+    dns_result = 1; dns_result_ip = 0x08080808;
+    clock_ntp_poll(61001);
+    CHECK(sent_count == 1, "offline retry works without another DHCP event");
+    clock_test_reset(); sent_count = 0; dns_result = -1;
+    clock_ntp_start(1000); clock_ntp_poll(1000); clock_ntp_poll(1001);
+    dns_result = 1;
+    clock_ntp_start(2000); /* DHCP renewal must not defeat backoff. */
+    clock_ntp_poll(2000);
+    CHECK(sent_count == 0, "DHCP restart respects offline backoff");
+    fake_ticks = 61001;
+    clock_ntp_poll(fake_ticks);
+    CHECK(sent_count == 1, "offline retry starts automatically at its uptime deadline");
+
+    clock_test_reset(); sent_count = 0;
+    clock_ntp_start(fake_ticks); clock_ntp_poll(fake_ticks);
+
+    uint8_t reply[48];
+    build_reply(reply, clock_unix_ms_to_ntp(T2026 * 1000 + 500), rd_be64(sent + 40), 0x24, 2, true);
+    bound_handler(0x01010101, 123, 53536, reply, 48);
+    CHECK(!clock_ntp_synced(), "reply from another IP rejected");
+    bound_handler(dns_result_ip, 124, 53536, reply, 48);
+    CHECK(!clock_ntp_synced(), "reply from another source port rejected");
+    bound_handler(dns_result_ip, 123, 53537, reply, 48);
+    CHECK(!clock_ntp_synced(), "reply to another local port rejected");
+    bound_handler(dns_result_ip, 123, 53536, reply, 48);
+    CHECK(clock_ntp_synced(), "selected server accepted");
+    clock_ntp_poll(fake_ticks + CLOCK_RESYNC_MS - 1);
+    CHECK(sent_count == 1, "periodic sync not early");
+    fake_ticks += CLOCK_RESYNC_MS;
+    clock_ntp_poll(fake_ticks);
+    CHECK(sent_count == 2, "six-hour resync starts automatically using uptime");
+
+    /* Several +0.5-second corrections against a second-resolution RTC
+     * must replace the fractional remainder, not accumulate into seconds. */
+    for (int i = 0; i < 4; i++) {
+        clock_ntp_force(fake_ticks); clock_ntp_poll(fake_ticks);
+        build_reply(reply, clock_unix_ms_to_ntp(T2026 * 1000 + 500), rd_be64(sent + 40), 0x24, 2, true);
+        bound_handler(dns_result_ip, 123, 53536, reply, 48);
+        CHECK(clock_ntp_offset_ms() >= 499 && clock_ntp_offset_ms() <= 500,
+              "each fractional sync keeps the same offset");
+    }
+    CHECK(clock_ntp_offset_ms() >= 499 && clock_ntp_offset_ms() <= 500,
+          "repeated fractional syncs do not accumulate unapplied corrections");
+    CHECK(clock_now_unix() == T2026, "fractional sync does not move RTC by whole seconds");
+
+    clock_ntp_force(fake_ticks); clock_ntp_poll(fake_ticks);
+    build_reply(reply, clock_unix_ms_to_ntp(T2026 * 1000), rd_be64(sent + 40), 0x24, 2, true);
+    int64_t saved = clock_ntp_offset_ms();
+    fake_ticks += 3000;
+    bound_handler(dns_result_ip, 123, 53536, reply, 48);
+    CHECK(clock_ntp_offset_ms() == saved, "reply arriving at timeout cannot change clock");
 }
 
 int main(void)
@@ -262,5 +348,6 @@ int main(void)
     test_parse();
     test_era_rollover();
     test_state_machine();
+    test_lifecycle_regressions();
     return finish();
 }

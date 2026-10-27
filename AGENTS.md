@@ -1,5 +1,16 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27): APP-CAL-01 started in UI track
+
+Board bc2ad1, worktree ojjyOS-v3-ui / desktop-polish at db2c113, clean
+fast-forward from main after DNS work. No paused entries or IDEAS bugs;
+APP-CAL-01 is the first ready lowest-phase card. Plan/Done-when boxes in
+roadmap/17-apps.md; incumbent four-app captures in the review worktree were
+visually read. Preserve blue Liquid Glass, existing fonts/icons and Jonas
+credit. Native kernel UI (not a web frontend); no new UI dependencies.
+Next: baseline host gate, tested Calculator/frame models, then app wiring,
+live light/dark checks, full matrix and data-preserving delivery. No push.
+
 ## LATEST (2026-10-27): DNS continuation started; backup cancelled
 
 Jonas confirmed the empty portfolio directories are intentional and

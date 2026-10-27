@@ -2,11 +2,11 @@
 
 Do not edit by hand: change `Status:` inside the card and regenerate.
 
-**8 / 698 cards done.** Ready to start now: APP-CAL-01, APP-FINDER-01, APP-SET-01, APP-TERM-01, SHL-02, SHL-03, SHL-04, QA-20, DOC-01, DS-03, DS-12, KDB-01, KDB-04, NET-91, QA-01, QA-06, QA-08, QA-23, SEC-01, TIM-01, BOOT-01, DRV-CORE-05, DS-01, DS-02, IRQ-01 …
+**8 / 698 cards done.** Ready to start now: APP-FINDER-01, APP-SET-01, APP-TERM-01, SHL-02, SHL-03, SHL-04, QA-20, DOC-01, DS-03, DS-12, KDB-01, KDB-04, NET-91, QA-01, QA-06, QA-08, QA-23, SEC-01, TIM-01, BOOT-01, DRV-CORE-05, DS-01, DS-02, IRQ-01, MEM-01 …
 
 | Phase | Cards | todo | doing | done | blocked |
 |---|---|---|---|---|---|
-| P0 | 18 | 10 | 1 | 7 | 0 |
+| P0 | 18 | 9 | 2 | 7 | 0 |
 | P1 | 67 | 67 | 0 | 0 | 0 |
 | P2 | 190 | 189 | 0 | 1 | 0 |
 | P3 | 89 | 89 | 0 | 0 | 0 |
@@ -22,7 +22,7 @@ Do not edit by hand: change `Status:` inside the card and regenerate.
 
 | ID | Title | Size | Status | Depends | File |
 |---|---|---|---|---|---|
-| APP-CAL-01 | Calendar, Calculator, Activity Monitor, About polish (D7) | M | todo | — | 17-apps.md |
+| APP-CAL-01 | Calendar, Calculator, Activity Monitor, About polish (D7) | M | doing | — | 17-apps.md |
 | APP-FINDER-01 | Finder polish (D6) | M | todo | — | 17-apps.md |
 | APP-NOTES-01 | Notes polish (D6) | S | done | — | 17-apps.md |
 | APP-SET-01 | Settings, Login and Preview polish (D8) | M | todo | — | 17-apps.md |

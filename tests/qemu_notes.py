@@ -233,21 +233,23 @@ def run(args):
         ok('after a cold boot both notes have the saved byte counts (30, 15)')
         desk.snap('04-cold-boot')
 
-        # 7. A file longer than the editor (lines > 79 columns) opens
+        # 7. A file longer than the editor (more than 64 lines — the
+        #    per-line cap rose to 255 columns with soft wrap) opens
         #    read-only; typing does not change or save it.
         desk.spotlight('terminal')
-        vm.type('cp /System/Web/home.html Notes/Web.txt\n'); time.sleep(1)
+        vm.type('cp /System/Legal/THIRD_PARTY.txt Notes/Legal.txt\n'); time.sleep(1)
         mark = len(vm.text())
         notes = NotesWindow(desk, desk.spotlight('notes'))            # raise -> re-scan
-        notes.row(3)                                                  # New Note, New Note 2, Notes, Web
-        size = int(wait_re(vm, r"\[NOTES\] Opened 'Web\.txt' (\d+) bytes read-only", mark)[1])
+        notes.row(0)                                                  # Legal sorts first
+        size = int(wait_re(vm, r"\[NOTES\] Opened 'Legal\.txt' (\d+) bytes read-only", mark)[1])
+        assert size > 3000, f'Legal fixture suspiciously small: {size} bytes'
         mark = len(vm.text())
         vm.type('zzz'); desk.chord('meta_l', 's'); time.sleep(3)
-        assert not any("Saved 'Web.txt'" in line for line in notes_lines(vm, mark)), 'read-only note was saved'
+        assert not any("Saved 'Legal.txt'" in line for line in notes_lines(vm, mark)), 'read-only note was saved'
         desk.snap('05-read-only')
-        notes.row(0); notes.row(3)
-        wait_re(vm, r"\[NOTES\] Opened 'Web\.txt' %d bytes read-only" % size, mark)
-        ok(f'too-long file opened read-only, typing + Cmd+S left it at {size} bytes')
+        notes.row(1); notes.row(0)
+        wait_re(vm, r"\[NOTES\] Opened 'Legal\.txt' %d bytes read-only" % size, mark)
+        ok(f'92-line file opened read-only ({size} bytes), typing + Cmd+S left it unchanged')
 
         # 8. Spotlight finds a note and opens it in Notes.
         mark = len(vm.text())

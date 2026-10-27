@@ -56,33 +56,11 @@ iCloud conflict copies (`tcp 2.d`, `http 2.o`, `uifont 2.o`) accumulate,
 and `tools/mkojfs` (a built binary) shows as modified in git status.
 (The tools were untracked on 2026-10-26; they still BUILD into `tools/`.)
 **Steps.**
-- [x] `kernel/Makefile`: objects + dep files under `../build/obj-<arch>/`
-      (mkdir in the rule), per-arch dirs so builds never mix; `clean`
-      removes the obj dirs plus the legacy in-src `*.o`/`*.d`.
-      Test: both dev builds 0 warnings; `bash scripts/test.sh`.
-      Trap: Makefile recipes need TABs; `kernel.bin` stays where
-      `scripts/build.sh` copies it from.
-      — done 2026-10-27 (test: `ARCH=aarch64` + `ARCH=x86_64` full builds exit 0 with 0 warnings, twice each (build/qa-22-{arm,x86}-build{1,2}.log); `bash scripts/test.sh` passes; after `make clean`, `find kernel/src -name '*.o' -o -name '*.d'` is empty)
-- [x] `tools/Makefile` builds into `../build/tools/`; `scripts/mkfs.sh`
-      calls mkojfs/mkicon/mkarray from there.
-      Test: `bash scripts/mkfs.sh` from a clean tools dir; full builds.
-      Trap: mkfs.sh also runs from `scripts/build.sh` — absolute paths.
-      — done 2026-10-27 (test: mkfs ran inside both full builds; `build/tools/` holds the four binaries; the stale `tools/mk*` binaries from the old layout are deleted, `tools/` holds sources only)
-- [x] New `scripts/clean-icloud-dupes.sh`: lists `* <digit>.*` conflict
-      copies; `--yes` deletes only UNTRACKED duplicates of build-output
-      extensions (.o .d .bin .elf .efi .obj .a .lib .img) — never sources,
-      documents or tracked files. Run it (with --yes) in this worktree.
-      Test: run in the worktree; deletion list reviewed first.
-      Trap: never delete Jonas's files outside build products.
-      — done 2026-10-27 (test: list mode found exactly the 4 stale copies (`netcmd 2.o`, `tcp 2.d`, `http 2.o`, `uifont 2.o`) and ignored planted `Note 2.txt`/`src 2.c`; `--yes` then deleted those 4 untracked build products)
-- [x] `.gitignore`: extend the iCloud-duplicate patterns to cover every
-      build-output extension that appears with a " N" suffix.
-      Test: `git check-ignore` matches the real conflict copies.
-      — done 2026-10-27 (test: `git check-ignore 'kernel/src/net/tcp 2.d'` matches via `* [0-9].d`; new `.elf/.a/.lib/.img` and two-digit patterns added)
-- [x] Full-build hygiene proof: build both arches twice, then
-      `git status --porcelain` must be empty and no `*.o`/`*.d` may
-      remain inside `kernel/src`. Evidence `build/qa-22-*`.
-      — done 2026-10-27 (test: both arches built twice, 0 warnings each (build/qa-22-{arm,x86}-build{1,2}.log); after the commit a further `ARCH=aarch64 bash scripts/build.sh` exits 0 and `git status --porcelain` is empty (0 lines) with zero `*.o`/`*.d` under kernel/src (build/qa-22-final-arm.log))
+- [x] 1. `kernel/Makefile`: objects + dep files under `../build/obj-<arch>/` (mkdir in the rule), per-arch dirs so builds never mix; `clean` removes the obj dirs plus the legacy in-src `*.o`/`*.d`. Test: both full builds 0 warnings; `bash scripts/test.sh`. Trap: Makefile recipes need TABs; `kernel.bin` stays where `scripts/build.sh` copies it from. — done 2026-10-27 (test: `ARCH=aarch64` + `ARCH=x86_64` full builds exit 0 with 0 warnings, twice each (build/qa-22-{arm,x86}-build{1,2}.log); `bash scripts/test.sh` passes; after `make clean`, `find kernel/src -name '*.o' -o -name '*.d'` is empty)
+- [x] 2. `tools/Makefile` builds into `../build/tools/`; `scripts/mkfs.sh` calls mkojfs/mkicon/mkarray from there. Test: `bash scripts/mkfs.sh` from a clean tools dir; full builds. Trap: mkfs.sh also runs from `scripts/build.sh` — absolute paths. — done 2026-10-27 (test: mkfs ran inside both full builds; `build/tools/` holds the four binaries; the stale `tools/mk*` binaries from the old layout are deleted, `tools/` holds sources only)
+- [x] 3. New `scripts/clean-icloud-dupes.sh`: lists `* <digit>.*` conflict copies; `--yes` deletes only UNTRACKED duplicates of build-output extensions (.o .d .bin .elf .efi .obj .a .lib .img) — never sources, documents or tracked files. Run it (with --yes) in this worktree. Test: run in the worktree; deletion list reviewed first. Trap: never delete Jonas's files outside build products. — done 2026-10-27 (test: list mode found exactly the 4 stale copies (`netcmd 2.o`, `tcp 2.d`, `http 2.o`, `uifont 2.o`) and ignored planted `Note 2.txt`/`src 2.c`; `--yes` then deleted those 4 untracked build products)
+- [x] 4. `.gitignore`: extend the iCloud-duplicate patterns to cover every build-output extension that appears with a " N" suffix. Test: `git check-ignore` matches the real conflict copies. — done 2026-10-27 (test: `git check-ignore 'kernel/src/net/tcp 2.d'` matches via `* [0-9].d`; new `.elf/.a/.lib/.img` and two-digit patterns added)
+- [x] 5. Full-build hygiene proof: build both arches twice, then `git status --porcelain` must be empty and no `*.o`/`*.d` may remain inside `kernel/src`. Evidence `build/qa-22-*`. — done 2026-10-27 (test: both arches built twice, 0 warnings each (build/qa-22-{arm,x86}-build{1,2}.log); after the commit a further `ARCH=aarch64 bash scripts/build.sh` exits 0 and `git status --porcelain` is empty (0 lines) with zero `*.o`/`*.d` under kernel/src (build/qa-22-final-arm.log))
 
 **Goal.** Builds write objects only under `build/`; `.gitignore` covers
 build products and iCloud duplicates; remove tracked binaries (rebuild
@@ -336,23 +314,8 @@ JetBrains Mono, both SIL OFL 1.1, licences in `fonts/`) and keeps Apple
 wallpapers in git-ignored `wallpapers/local/`, but there is no single
 register of what is third-party, under which licence, and from where.
 **Steps.**
-- [x] Write `THIRD_PARTY.md`: `fonts/` entries (Inter, JetBrains Mono,
-      sources + OFL 1.1), the generated bitmap/font data derived from
-      them, the Apple wallpapers policy (local only, never shipped or
-      committed), and `packages/`/CA roots/tz data/dictionaries/Unicode
-      data as explicit "not shipped yet" future sections (D-023: ported
-      programs only as optional ojjypkg packages).
-      Test: file exists and is reviewed.
-      Trap: no absolute local paths, no personal data.
-      — done 2026-10-27 (test: `tools/check_third_party.py` validates the sections and entries; sabotage test (removing the packages/ heading) fails it with exit 1)
-- [x] Ship it read-only in the OS image as
-      `/System/Legal/THIRD_PARTY.txt` (`scripts/mkfs.sh`) and add
-      `tools/check_third_party.py` asserting the `fonts/` + `packages/`
-      sections and the wallpapers note; wire it into `scripts/test.sh`.
-      Test: `bash scripts/test.sh` runs it; a broken register fails it.
-      Trap: keep the file > 64 lines — it doubles as the editor's
-      read-only fixture for APP-TEXTEDIT-01's live tests.
-      — done 2026-10-27 (test: `bash scripts/test.sh` runs the check ("register OK (92 lines)"); `strings build/system.ojfs` shows THIRD_PARTY.txt inside the packed image; 92 lines > 64 so it opens read-only in the editor)
+- [x] 1. Write `THIRD_PARTY.md`: `fonts/` entries (Inter, JetBrains Mono, sources + OFL 1.1), the generated bitmap/font data derived from them, the Apple wallpapers policy (local only, never shipped or committed), and `packages/`/CA roots/tz data/dictionaries/Unicode data as explicit "not shipped yet" future sections (D-023: ported programs only as optional ojjypkg packages). Test: file exists and is reviewed. Trap: no absolute local paths, no personal data. — done 2026-10-27 (test: `tools/check_third_party.py` validates the sections and entries; sabotage test (removing the packages/ heading) fails it with exit 1)
+- [x] 2. Ship it read-only in the OS image as `/System/Legal/THIRD_PARTY.txt` (`scripts/mkfs.sh`) and add `tools/check_third_party.py` asserting the `fonts/` + `packages/` sections and the wallpapers note; wire it into `scripts/test.sh`. Test: `bash scripts/test.sh` runs it; a broken register fails it. Trap: keep the file > 64 lines — it doubles as the editor's read-only fixture for APP-TEXTEDIT-01's live tests. — done 2026-10-27 (test: `bash scripts/test.sh` runs the check ("register OK (92 lines)"); `strings build/system.ojfs` shows THIRD_PARTY.txt inside the packed image; 92 lines > 64 so it opens read-only in the editor, verified live by tests/qemu_notes.py)
 
 **Goal.** List every third-party asset/data/package with licence and
 source: Inter and JetBrains Mono (OFL), Unicode data, future CA roots,

@@ -79,48 +79,12 @@ gives no feedback beyond the status text, and Home/End/PageUp/PageDown
 are accepted for read-only documents but do nothing.
 
 **Steps.**
-- [x] Move `TextEditState` and the pure editing ops (clear/selection,
-      insert/delete line, insert char, join-on-backspace) into new
-      `kernel/src/ui/textedit.c/h`; `TEXTEDIT_LINE_MAX` 80 -> 256 so
-      paragraphs are editable; load/save/key mapping/drawing stay in
-      `compositor.c` (save needs Spotlight + notification hooks).
-      Files: textedit.c/h, compositor.c, kernel/Makefile, scripts/test.sh.
-      Test: `bash scripts/test.sh` + both dev builds 0 warnings.
-      Trap: `AppWindowState` grows ~270 KB over 12 windows (BSS) — watch
-      the boot tests; no big buffers on the kernel stack.
-      — done 2026-10-27 (test: `bash scripts/test.sh` and the ASan/UBSan run pass incl. the new test_textedit; `OJJY_BUILD_DIR="$PWD/build/dev-aarch64" ARCH=aarch64 bash scripts/build.sh` and the x86_64 dev build exit 0 with 0 warnings, logs build/app-textedit-01-{arm,x86}.log)
-- [x] Soft wrap layout in `textedit.c`: greedy word wrap (break after the
-      last space in the window), hard break for words wider than the
-      view, minimum width 16 columns, one row per (also empty) line, and
-      visual helpers `textedit_move_visual` (goal column), cursor
-      row/col mapping and `textedit_click`.
-      Test: new `tests/test_textedit.c` — layout invariants + cursor
-      mapping + a deterministic fuzz loop.
-      Trap: every logical line keeps at least one row (the cursor may sit
-      on any line); rows must cover each line exactly once.
-      — done 2026-10-27 (test: tests/test_textedit.c 66/66 on the host and under ASan/UBSan: wrap cases, worst-case 64x255 sizing, cursor-row mapping, 500-case fuzz invariants; `textedit_click` dropped from the card — the editor has no click positioning yet, so an unused API would be dead code; noted as follow-up work)
-- [ ] Wrap-aware `draw_textedit_window`: rows from the layout, `scroll`
-      counts visual rows, cursor bar and single-line selection rendered
-      per row.
-      Test: host suite + dev builds; screenshots in the live test.
-      Trap: clamp `scroll` against the row count, not `line_count`.
-- [x] Word/character counts (`textedit_counts`) in the status bar; wire
-      Home/End/PageUp/PageDown; backspace join refuses to merge lines
-      whose combined length would not fit (the old check could truncate
-      the tail).
-      Test: `tests/test_textedit.c` counts + join cases.
-      — done 2026-10-27 (test: tests/test_textedit.c counts + join cases pass; two old editor bugs fixed on the way, both caught by the new tests: Backspace in the middle of a line truncated everything right of the caret, and Enter at a line end could re-show stale grid bytes; Shift+Left now extends the selection instead of moving it)
-- [ ] Save notification: `textedit_save(edit, notify)` — TextEdit
-      explicit saves push "Saved <name>" (or the failure) through
-      `notifications_push` and log `[TEXTEDIT] Saved '<name>' N bytes, W
-      words, C chars`; Notes autosave stays silent (no toast per second).
-      Test: live test asserts the serial line.
-- [ ] Live test `tests/qemu_textedit.py`: type a long paragraph without
-      Enter and verify by pixel-ink row count in the paper that it wraps
-      (>= 3 rows), save via Cmd+S, assert the counts log, screenshots
-      looked at; `qemu_notes.py` read-only check moves to a 65+-line
-      fixture file (the old > 79-column file is editable now).
-      TCG + HVF. Evidence: `build/app-textedit-01-*`.
+- [x] 1. Move `TextEditState` and the pure editing ops (clear/selection, insert/delete line, insert char, join-on-backspace) into new `kernel/src/ui/textedit.c/h`; `TEXTEDIT_LINE_MAX` 80 -> 256 so paragraphs are editable; load/save/key mapping/drawing stay in `compositor.c` (save needs Spotlight + notification hooks). Test: `bash scripts/test.sh` + both dev builds 0 warnings. Trap: `AppWindowState` grows ~270 KB over 12 windows (BSS) — watch the boot tests; no big buffers on the kernel stack. — done 2026-10-27 (test: `bash scripts/test.sh` and the ASan/UBSan run pass incl. the new test_textedit; both dev builds (`OJJY_BUILD_DIR="$PWD/build/dev-<arch>" ARCH=<arch> bash scripts/build.sh`) exit 0 with 0 warnings, logs build/app-textedit-01-{arm,x86}.log)
+- [x] 2. Soft wrap layout in `textedit.c`: greedy word wrap (break after the last space in the window), hard break for words wider than the view, minimum width 16 columns, one row per (also empty) line, and visual movement (`textedit_move_visual` with a goal column, cursor row mapping). Test: new `tests/test_textedit.c` — layout invariants + cursor mapping + a deterministic fuzz loop. Trap: every logical line keeps at least one row; rows must cover each line exactly once. — done 2026-10-27 (test: tests/test_textedit.c 66/66 on the host and under ASan/UBSan: wrap cases, worst-case 64x255 sizing, cursor-row mapping, 500-case fuzz invariants; `textedit_click` dropped — no click positioning exists yet, an unused API would be dead code)
+- [ ] 3. Wrap-aware `draw_textedit_window`: rows from the layout, `scroll` counts visual rows, cursor bar and single-line selection rendered per row. Test: host suite + dev builds; screenshots in the live test. Trap: clamp `scroll` against the row count, not `line_count`.
+- [x] 4. Word/character counts (`textedit_counts`) in the status bar; wire Home/End/PageUp/PageDown; backspace join refuses to merge lines whose combined length would not fit (the old check could truncate the tail). Test: `tests/test_textedit.c` counts + join cases. — done 2026-10-27 (test: counts + join cases pass; two old editor bugs fixed on the way, both caught by the new tests: Backspace mid-line truncated everything right of the caret, and Enter at a line end could re-show stale grid bytes; Shift+Left now extends the selection instead of moving it)
+- [ ] 5. Save notification: `textedit_save(edit, notify)` — TextEdit explicit saves push "Saved <name>" (or the failure) through `notifications_push` and log `[TEXTEDIT] Saved '<name>' N bytes, W words, C chars`; Notes autosave stays silent (no toast per second). Test: live test asserts the serial line.
+- [ ] 6. Live test `tests/qemu_textedit.py`: type a long paragraph without Enter and verify by pixel-ink row count in the paper that it wraps (>= 3 rows), save via Cmd+S, assert the counts log, screenshots looked at; `qemu_notes.py` read-only check moves to a 65+-line fixture file (the old > 79-column file is editable now). TCG + HVF. Evidence: `build/app-textedit-01-*`.
 
 **Goal.** Soft word wrap, word/character count, save notification.
 **Done when.** D6 acceptance: long lines wrap at word boundaries inside

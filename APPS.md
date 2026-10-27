@@ -104,28 +104,40 @@ This document defines core app layouts, data models, and implementation details 
 
 - Glass editor canvas with filename header.
 - Status line at bottom (Open/Save status).
-  - Dirty indicator + line/column display.
+  - Dirty indicator + line/column display + word and character count
+    (falls back to just the counts when the line would not fit).
 
 ### Data model
 
-- `TextEditState`:
-  - `lines[]` text buffer.
+- `TextEditState` (in `kernel/src/ui/textedit.c/h`):
+  - `lines[]` text buffer (64 lines x up to 255 characters).
   - `file_path` current file.
-  - `status` string.
+  - `status` string, `goal_col` remembered column for Up/Down,
+    `view_cols`/`view_rows` the view size of the last draw.
 
 ### Implementation
 
+- Soft word wrap: the document is laid out into visual rows of at most
+  the window width (broken after the last space inside the window;
+  words wider than the view hard-break). Up/Down/PageUp/PageDown move
+  over the rows the eye sees, keeping the goal column; Home/End go to
+  the line's start/end. Wrapping adds no bytes to the file.
 - Loads file contents via VFS. Opening and saving keeps the bytes (the
   newline that ends the last line does not add an empty line); a file
-  longer than 64 lines x 79 columns, or with NUL bytes, is shown cut down
-  and opens read-only (edits blocked, Save refused) so it is never cut.
+  longer than 64 lines, with lines over 255 columns, or with NUL bytes,
+  is shown cut down and opens read-only (edits blocked, Save refused) so
+  it is never cut.
 - Save writes to RAMFS-backed `/Users/<user>/Documents`.
 - Super+O reopens last file opened from Finder.
-- Super+S saves to RAMFS-backed file.
+- Super+S saves; an explicit save pushes a "Saved <name>" notification
+  and logs the byte, word and character counts (Notes autosave stays
+  quiet).
 - Clipboard: Super+C/V/X copies/pastes/cuts current line.
-- Editing: arrow navigation, line split/merge, insertion at cursor.
+- Editing: arrow navigation, line split/merge (a merge that would not
+  fit is refused, never truncated), insertion at cursor, Backspace
+  deletes the character left of the caret anywhere in the line.
 - Word navigation: Ctrl+Left/Right jumps by word.
-- Selection: Shift+Arrow highlights selection.
+- Selection: Shift+Arrow highlights from an anchor (both directions).
 
 ## Notes
 

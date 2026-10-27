@@ -33,7 +33,7 @@ them.
 **Refs.** Apple Virtualization framework docs.
 
 ### HW-12 — Launch menu in ojjyOS.app
-- Phase: P2 · Size: M · Status: todo
+- Phase: P2 · Size: M · Status: doing
 - Depends: —
 - Files: vmapp/main.swift, tests/test_vmapp.swift, tests/vz_boot.py, vmapp/probe.swift
 
@@ -43,27 +43,31 @@ HW-10's larger host feature set is intentionally not part of this card.
 **Goal.** Blue Liquid Glass launch window before starting the VM; persistent,
 safe version-1 settings in `build/launch-settings.json` next to ojjyOS.app.
 **Steps.**
-1. Parse/default/clamp settings and CLI overrides; atomic temp+rename writes.
-2. Add native launch/settings window with RAM, fixed CPU, tested Retina sizes,
-   network, full screen, show-at-start, Start/Restore Defaults/Quit.
-3. Apply configuration and matching aspect/scaling/control coordinates; retain
-   DiskLease and errors. `--control` and `--start` bypass the launch window.
-4. Extend probe/boot tools with `--memory` MB and `--screen` logical WxH;
-   live-test memory and every offered screen; inspect light/dark launch captures.
-5. Run complete Definition of Done, update context, fast-forward and safely deliver.
+- [ ] Step 1: settings model/limits/CLI in vmapp/main.swift and host guards in
+  tests/test_vmapp.swift; test parse/default/clamp/unknown/broken/round-trip/
+  atomic/fuzz and path aliases. Trap: never let settings overwrite disk/log/EFI.
+- [ ] Step 2: native AppKit launch window and startup/running-settings flows in
+  vmapp/main.swift; build/test guards and light/dark captures. Trap: pending
+  settings must not change active VM input geometry or start a second VM.
+- [ ] Step 3: wire RAM/network/Retina/aspect/input/fullscreen, extend
+  vmapp/probe.swift and tests/vz_boot.py; private 2048/3072 boots and each screen
+  screenshot/input proof. Trap: physical scanout is twice logical coordinates.
+- [ ] Step 4: final normal/sanitized/Swift suites, both zero-warning builds,
+  VZ smoke and QEMU TCG/HVF regression; log evidence, mark done and deliver.
+  Trap: installed data/settings and concurrent QA work must survive unchanged.
 **Done when.**
-- RAM offers 2/3/4/6/8 GB only inside VZ min/max and <= half host RAM;
+- [ ] RAM offers 2/3/4/6/8 GB only inside VZ min/max and <= half host RAM;
   one removable constant says "ojjyOS uses about 2.2 GB until its memory update".
-- CPU shows disabled 1 and "More cores come with SMP-01". Default screen
+- [ ] CPU shows disabled 1 and "More cores come with SMP-01". Default screen
   1440x900 Retina means 2880x1800 scanout; other sizes have inspected live proof.
-- Option at launch restores the menu when show-at-start is off. VM > Launch
+- [ ] Option at launch restores the menu when show-at-start is off. VM > Launch
   Settings… (Cmd+,) reuses it; running VM only saves for next shutdown/start.
-- Missing/broken/bad settings log and default/clamp, never crash. JSON schema:
+- [ ] Missing/broken/bad settings log and default/clamp, never crash. JSON schema:
   `{"version":1,"memoryMB":2048,"cpus":1,"screen":"1440x900","network":true,"fullScreen":false,"showAtStart":true}`.
-- `--memory <MB>` and `--screen <WxH>` override file without overwriting it;
+- [ ] `--memory <MB>` and `--screen <WxH>` override file without overwriting it;
   builders/tests preserve this ignored user file. Native guards cover parsing,
   defaults/clamping, unknown keys, broken JSON, round-trip and atomic writes.
-- Live private-disk VZ 2048/3072 MB boots show distinct [PMM] totals;
+- [ ] Live private-disk VZ 2048/3072 MB boots show distinct [PMM] totals;
   screenshots for every offered screen and light/dark menu in `build/hw-12-*`.
 **Tests.** `scripts/test-vmapp.sh`, `tests/vz_boot.py`, `tests/vz_smoke.py`,
 both zero-warning dev builds, normal and sanitized host suites, strict checklist.

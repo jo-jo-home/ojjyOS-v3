@@ -8,7 +8,7 @@ Do not edit by hand: change `Status:` inside the card and regenerate.
 |---|---|---|---|---|---|
 | P0 | 18 | 13 | 1 | 4 | 0 |
 | P1 | 67 | 67 | 0 | 0 | 0 |
-| P2 | 190 | 190 | 0 | 0 | 0 |
+| P2 | 190 | 189 | 1 | 0 | 0 |
 | P3 | 89 | 89 | 0 | 0 | 0 |
 | P4 | 70 | 70 | 0 | 0 | 0 |
 | P5 | 54 | 54 | 0 | 0 | 0 |
@@ -170,7 +170,7 @@ Do not edit by hand: change `Status:` inside the card and regenerate.
 | GFX-03 | Image library (`libimage`) in user space | M | todo | USR-01 | 14-graphics.md |
 | GPU-00 | Research: which GPU paths exist on our platforms | S | todo | — | 14-graphics.md |
 | HW-10 | `ojjyOS.app` (VZ host app) features | M | todo | HW-12, HW-13, HW-14, SMP-01 | 24-hardware-platforms.md |
-| HW-12 | Launch menu in ojjyOS.app | M | todo | — | 24-hardware-platforms.md |
+| HW-12 | Launch menu in ojjyOS.app | M | doing | — | 24-hardware-platforms.md |
 | HW-13 | ojjyOS uses all the memory it gets | L | todo | HW-12 | 24-hardware-platforms.md |
 | HW-14 | QEMU script and ojjy Control use the launch settings | S | todo | HW-12 | 24-hardware-platforms.md |
 | I18N-02 | Keyboard layouts | M | todo | DRV-IN-01 | 25-accessibility-i18n.md |

@@ -35,7 +35,9 @@ depends on HW-12 (native launch menu), HW-13 (real high RAM), HW-14 (shared
 QEMU/Control settings) and SMP-01. No kernel changes in part 1. Other
 active QA session owns its own worktree; main has an existing release.html
 edit, which is not ours. Roadmap validation precedes implementation.
-Next: baseline suites, then HW-12 checkbox execution plan and native settings.
+HW-12 is doing with four checkbox steps in roadmap/24-hardware-platforms.md:
+settings+guards, native window, live wiring/matrix, final regression/delivery.
+Baseline suites running in build/hw-12-baseline; next implement settings model.
 
 ## LATEST (2026-10-27, night): THREE cards done — TextEdit soft wrap (APP-TEXTEDIT-01), third-party register (DOC-03), repo hygiene (QA-22)
 

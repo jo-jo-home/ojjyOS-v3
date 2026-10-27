@@ -131,6 +131,14 @@ This document defines the macOS Tahoe-like desktop behaviors built on the compos
 - Search Index: indexes app names, `/System/Wallpapers`, and `/Users/<user>/Documents` + `Desktop` for Spotlight.
 - Settings Service: stores dark mode, 24h time, reduced transparency, reduced motion, Dock size/magnification, mouse speed, shortcuts in `/Library/Preferences/system.conf`.
 
+## Four-app polish (APP-CAL-01)
+
+- Calendar: glass month header, full-date today circle and event chips that fit each cell.
+- Calculator: larger readout, last equation and transient keyboard/mouse key feedback.
+- Activity Monitor: Processes, Memory and Frames tabs, zebra task rows, memory bars and a 48-sample measured renderer-time graph. Task ticks are not CPU utilization. Updates pause when minimized or locked.
+- About: hero icon, glass version card and readable Jonas Lee credit.
+- These four apps have minimum layout sizes; other apps retain their existing resize limits.
+
 ## 4) Code Map
 
 - Compositor & Apps: `kernel/src/ui/compositor.c`

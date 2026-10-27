@@ -338,6 +338,9 @@ suggestions, bookmarks bar, history, downloads, find in page, zoom and view sour
 </ul>
 <h3>Also new</h3>
 <ul>
+<li><b>Calendar, Calculator, Activity Monitor and About</b> &mdash; glass Calendar header and
+today circle, Calculator equation history and key feedback, Monitor tabs with memory bars and
+measured renderer frame times, and a clearer version card with Jonas Lee's credit.</li>
 <li><b>Accurate clock</b> &mdash; the system now syncs to NTP time servers after
 connecting, so the menu bar clock is always right; Terminal <code>date</code> shows the
 corrected time and <code>ntp</code> forces a sync.</li>

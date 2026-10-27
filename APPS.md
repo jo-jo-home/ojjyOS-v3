@@ -189,7 +189,7 @@ This document defines core app layouts, data models, and implementation details 
 
 ### Layout
 
-- Header: month/year, navigation arrows, Today button, view switcher.
+- Glass header: month/year, navigation arrows, Today button, view switcher.
 - Sidebar: calendars list + New Event.
 - Month grid with weekday labels and event chips.
 - Agenda pane with upcoming events.
@@ -202,7 +202,7 @@ This document defines core app layouts, data models, and implementation details 
 ### Implementation
 
 - Events stored in `/Users/<user>/Documents/Calendar.txt` (RAMFS).
-- Month grid uses RTC for current date and highlights today.
+- Month grid highlights the full current UTC date, not the same day number in another month/year; event chips fit the cell height.
 - Quick Add button creates a default event at 09:00 for the selected day.
 - Time format uses Settings toggle (12/24).
 - Edit mode: press `E` on selected event, type new title, Enter to save.
@@ -214,22 +214,30 @@ This document defines core app layouts, data models, and implementation details 
 
 ### Layout
 
-- Dark midnight LCD readout at top showing active operator and current 64-bit integer value.
-- 5×4 rounded glass keypad (`C`, `+/-`, `%`, `/`, `7..9`, `*`, `4..6`, `-`, `1..3`, `+`, `0`, `00`, `BS`, `=`).
+- 72-pixel dark midnight readout with a right-aligned value and the latest equation above it.
+- 5×4 rounded glass keypad (`C`, `+/-`, `%`, `/`, `7..9`, `*`, `4..6`, `-`, `1..3`, `+`, `0`, `.`, `BS`, `=`).
+- Accepted keyboard/mouse keys highlight for 180 ms, then expire without continued repaints.
 
 ### Implementation
 
 - Supports both mouse clicks on the keypad grid and direct keyboard entry (`0..9`, `+`, `-`, `*`, `/`, `Enter`/`=`, `Backspace`, `C`/`Esc`).
-- Guards against division by zero (`Error: Div 0`).
+- Fixed-point arithmetic (six decimal places); division-by-zero and overflow show an error, and typing a digit starts a fresh calculation.
+- `ui/calculator.c/h` owns input/history and shared draw/hit geometry; `ui/calcmath.c` owns arithmetic.
 
 ## Activity Monitor (`Monitor.app`)
 
 ### Layout
 
-- Displays architecture (`Apple Silicon ARM64 (EL1 / HVF)` or `x86_64 Long Mode`), system uptime, and active user account.
-- Physical Memory usage bar (`used MB / total MB (free MB)`).
-- Live kernel drivers table (`Driver`, `Class`, `State`, `IRQs`, `I/O B`) queried via `driver_for_each()`.
-- Open windows count and active app indicator.
+- **Processes / Memory / Frames:** Working segmented tabs, refreshed once per second while open and not minimized; no background refresh while locked.
+- **Processes:** Zebra rows for PID, name, owner, state, task ticks and recorded memory. Ticks are bookkeeping, **not CPU utilization**; rows that fit are shown without scrolling.
+- **Memory:** Physical-memory and kernel-heap bars with bounded ratios, plus virtual-NIC state/address and traffic totals. Reported RAM does not mean HW-13's high-RAM allocator is implemented.
+- **Frames:** Last 48 actual draw-and-present durations in milliseconds, sampled only while open and not minimized. Includes its own rendering cost; **not FPS or CPU percent**. The 16 ms guide is not a performance guarantee.
+- **Footer:** Total tasks, open windows and uptime.
+
+## About (`About.app`)
+
+- Hero icon, glass Version 3.1.0 / Tahoe card, readable **Created by Jonas Lee** credit, original-kernel description and reported memory.
+- Calendar, Calculator, Monitor and About enforce content-aware minimum window sizes so resizing cannot hide their controls.
 
 ---
 
@@ -267,4 +275,3 @@ real Chrome: see `BROWSER_CHROME_PLAN.md` section 0).
 - Tests: `tests/test_web.c` (host, incl. fuzzing), `tests/web_render.c`
   (renders saved pages to images), `tests/qemu_web_tour.py` (live sites).
 - No JavaScript engine yet; TLS 1.2-only sites need Track N's work.
-

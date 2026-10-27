@@ -185,8 +185,9 @@ live resize, Terminal themes.
     Notes done 2026-10-26 (roadmap card APP-NOTES-01); TextEdit done
     2026-10-27 (APP-TEXTEDIT-01: soft word wrap, word/char counts, save
     notification; editor core now in ui/textedit.c/h with 255-column
-    lines); all other apps still open (their roadmap cards:
-    APP-FINDER-01, APP-CAL-01, APP-SET-01, APP-TERM-01).
+    lines); Calendar/Calculator/Activity Monitor/About implemented and
+    verified 2026-10-27 (APP-CAL-01, build/app-cal-01/; installed delivery
+    pending). Other app cards: APP-FINDER-01, APP-SET-01, APP-TERM-01.
   - [ ] Leftovers: drop the unused `.raw` wallpapers from `mkfs.sh` and make
     Spotlight list desktop pictures; desktop "Change Wallpaper..." opens
     Settings > Wallpaper.

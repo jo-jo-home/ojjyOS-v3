@@ -1,43 +1,32 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-27): APP-CAL-01 started in UI track
+## LATEST (2026-10-27): APP-CAL-01 verified; installed delivery next
 
-Board bc2ad1, worktree ojjyOS-v3-ui / desktop-polish at db2c113, clean
-fast-forward from main after DNS work. No paused entries or IDEAS bugs;
-APP-CAL-01 is the first ready lowest-phase card. Plan/Done-when boxes in
-roadmap/17-apps.md; incumbent four-app captures in the review worktree were
-visually read. Preserve blue Liquid Glass, existing fonts/icons and Jonas
-credit. Native kernel UI (not a web frontend); no new UI dependencies.
-Baseline host suite passes. Step 1 models are implemented: Calculator
-history/input/key feedback and shared draw/hit layout in ui/calculator.c/h;
-bounded real-frame history, exact-date check and safe ratio in
-ui/app_metrics.c/h. New test_app_polish.c passes 29 checks + 5000-key fuzz
-normally and under ASan/UBSan (build/app-cal-01/model*.log).
-Step 2 wired: Calendar 60px glass header, proper full-date today circle,
-event chips; Calculator 72px readout/equation line and shared hit layout,
-180ms keyboard/mouse feedback; About hero/version card with readable Jonas
-credit. New qemu_app_polish.py --basic passes 8 light/dark flows including
-decimals/history, error recovery, actual mouse targets, feedback expiry,
-Calendar navigation/Today/New Event. Six app crops visually read in
-build/app-cal-01/basic-confirm-contact.png; ARM build zero warnings and
-host suite pass. Step 3 implementation now adds Monitor tabs, a bounded
-real renderer-time graph, one-second visible-window updates, memory bars
-and zebra task rows (ticks explicitly not CPU utilization). The four apps
-now have content-aware minimum sizes in both pointer paths; Calendar chip
-capacity follows the cell height. New live assertions cover all tab clicks
-and four minimum-size drags in both themes. Initial step 3 live check
-passes 18 flows; six Monitor tab crops plus Calendar minimum-size capture
-were read. Confirmation adds an actual guest-symbol probe proving a
-minimized Monitor stops its refresh clock and resumes on restore; it also
-explicitly selects Processes in dark mode (the tab is intentionally kept
-when raising an existing window). Docs APPS.md/DESKTOP.md/What's New are
-updated; final normal/sanitized, both-arch and native regression is under
-way. Next: commit green step 3, finish matrix, preserve data on delivery.
-Step 3 confirmation now passes 20 flows, including the minimized refresh
-probe in both themes; six final tab crops were read. Normal/sanitized host
-suites, both zero-warning builds, 2137 Swift + seven pixel gates, protected
-TCG and native smokes plus Intel smoke pass. HVF/apps-check and additional
-native four-app captures are finishing. No push.
+Board bc2ad1, UI track desktop-polish; code c0f4ee3/6bbbcad/7603802.
+Native original-kernel UI; blue Liquid Glass, fonts/icons and Jonas credit
+preserved. Calendar has a glass header/full-date today circle/cell-bounded
+event chips; Calculator a 72px readout, equation history, 180ms feedback
+and shared input/hit model (ui/calculator.c/h). About has a hero/version
+card and readable credit. Monitor has Processes/Memory/Frames tabs, zebra
+rows, bounded memory bars and the last 48 real renderer durations
+(ui/app_metrics.c/h); task ticks are explicitly not CPU utilization.
+Monitor refreshes once/second only while authenticated and not minimized.
+All four apps have content-aware minimum sizes in both pointer paths.
+
+Evidence build/app-cal-01/: 29 host checks + 5000-key fuzz normal/sanitized,
+full host + ASan/UBSan, both dev builds zero warnings, 20 light/dark live
+flows (incl. guest-symbol proof that minimized refresh stops/resumes),
+TCG/HVF/Intel protected/persistence regression (EL0 ARM only), native
+protected three-boot smoke, 2137 Swift + seven pixel gates, apps-check
+and native four-app keyboard/tab checks pass. Representative QEMU/native
+light/dark and minimum-size captures visually read. APPS.md, DESKTOP.md,
+DESKTOP_PLAN.md, What's New and TODO.md updated. Limits: last 48 frames,
+not FPS/CPU%, no Monitor row scrolling; high-RAM allocator stays HW-13.
+
+Next: fast-forward tested code/docs to main, safely rebuild installed
+images/app when no user VM is running, verify saved-data/settings hashes,
+private delivered check + ready-to-test note, then finish card and wrapup.
+Original BUG-1006 remains open; Time Machine cancelled. Nothing pushed.
 
 ## LATEST (2026-10-27): DNS continuation started; backup cancelled
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Live browser test on a private disk copy against the local test server
 (guest URL http://10.0.2.2:<port>/): start page, address bar, link click,
-redirect, form submit, Back, HTTPS notice, screenshots. Optional real-site
+redirect, form submit, Back, HTTPS certificate warning + Visit anyway,
+screenshots. Optional real-site
 visits with --internet (not a gate). Created by Jonas Lee.
 """
 import argparse
@@ -118,10 +119,18 @@ def run(args):
         assert loaded[1] == '200' and loaded[2].startswith('text/plain'), loaded[0]
         snap('06-plain-text')
 
-        # HTTPS against the local TLS 1.3 server (self-signed: encrypted, unverified)
-        loaded, _ = visit(f'https://10.0.2.2:{tls_port}/', timeout=90)
+        # HTTPS against the local self-signed TLS 1.3 server: the certificate
+        # warning (NET-02), then "Visit anyway" loads the page unverified.
+        warned, mark = visit(f'https://10.0.2.2:{tls_port}/', r'\[WEB\] cert warning 10\.0\.2\.2: ([^\n]*)', timeout=90)
+        assert warned[1] == 'self-signed certificate', warned[0]
+        proceed = until(r"\[WEB\] link \d+ '(ojjy:proceed[^']*)' at (-?\d+),(-?\d+)", 20, mark)
+        view = re.findall(r'\[WEB\] view (\d+),(\d+) (\d+)x(\d+) page-origin (\d+),(\d+)', vm.text())[-1]
+        mark = len(vm.text())
+        click(int(view[4]) + int(proceed[2]) + 12, int(view[5]) + int(proceed[3]) + 6)
+        loaded = until(r'\[WEB\] loaded status=(\d+) type=(.*?) bytes=(\d+) ms=(\d+)', 90, mark)
         assert loaded[1] == '200' and int(loaded[3]) == len(web_server.PAGE), loaded[0]
-        print('local https:', loaded[0], flush=True)
+        until(r'\[WEB\] security 10\.0\.2\.2 exception self-signed certificate', 10, mark)
+        print('local https (visit anyway):', loaded[0], flush=True)
         snap('07-https-local', 1.0)
 
         mark = len(vm.text())

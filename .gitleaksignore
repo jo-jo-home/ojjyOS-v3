@@ -1,0 +1,3 @@
+# gitleaks false positives (reviewed). One fingerprint per line.
+# NET-02: the enum name X509_KEY_EC_P384 in x509.h matches generic-api-key; it is not a secret.
+28d724d5002842269184a458cd53e41ed5aac146:kernel/src/crypto/x509.h:generic-api-key:32

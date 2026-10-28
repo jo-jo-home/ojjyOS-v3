@@ -417,6 +417,7 @@ static void finish(HttpFetch *f)
         if (++f->redirects > HTTP_MAX_REDIRECTS) { set_error(f, "too many redirects"); return; }
         Url next;
         if (!url_resolve(&f->url, h->location, &next)) { set_error(f, "bad redirect address"); return; }
+        if (strcmp(next.scheme, "http") != 0 && strcmp(next.scheme, "https") != 0) { set_error(f, "redirect to a non-web address"); return; }
         f->url = next;
         if (h->status == 303 || ((h->status == 301 || h->status == 302) && f->post)) { f->post = false; f->post_len = 0; }
         begin(f);

@@ -28,6 +28,11 @@ typedef struct {
 bool url_parse(const char *text, Url *out);
 /* Resolve an href against the page URL (absolute, //host, /path, rel, ?q, #f). */
 bool url_resolve(const Url *base, const char *ref, Url *out);
+/* May a page loaded from `from` open `to` on its own (link, form, meta
+ * refresh)? ojjy: pages with a query change settings or trust (cookies,
+ * history, "Visit anyway"), so a web page may only open plain ojjy: pages;
+ * ojjy:proceed only from the certificate warning page itself. */
+bool url_page_may_open(const Url *from, bool from_cert_warning, const Url *to);
 /* Canonical text form, without the fragment unless with_fragment. */
 void url_format(const Url *u, char *out, size_t size, bool with_fragment);
 /* Percent-encode a form value (application/x-www-form-urlencoded). */

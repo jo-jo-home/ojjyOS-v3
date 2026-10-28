@@ -65,6 +65,11 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/big":
             body = bytes((i * 7 + (i >> 9)) % 251 for i in range(300000))
             self.send_body(body, "application/octet-stream")
+        elif self.path.startswith("/sneaky?to="):
+            # a hostile page: meta refresh to an ojjy: URL (must be blocked: no silent certificate exceptions)
+            to = self.path.split("to=", 1)[1].replace('"', "")
+            self.send_body(b'<html><head><meta http-equiv="refresh" content="0; url=' + to.encode() +
+                           b'"></head><body><p>Nothing to see</p></body></html>')
         elif self.path.startswith("/search"):
             q = self.path.split("q=", 1)[-1]
             self.send_body(b"<html><head><title>Results</title></head><body><h1>Search: " + q.encode() +

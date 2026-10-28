@@ -204,6 +204,15 @@ bool url_resolve(const Url *base, const char *ref, Url *out)
     return true;
 }
 
+bool url_page_may_open(const Url *from, bool from_cert_warning, const Url *to)
+{
+    if (strcmp(to->scheme, "ojjy") != 0 || strcmp(from->scheme, "ojjy") == 0) return true;
+    if (strcmp(to->host, "proceed") == 0) return from_cert_warning;
+    for (const char *c = to->path; *c; c++)
+        if (*c == '?') return false;
+    return true;
+}
+
 void url_format(const Url *u, char *out, size_t size, bool with_fragment)
 {
     if (!size) return;

@@ -1,5 +1,41 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-28): NET-02 review: a web page could add a certificate exception (FIX ON BRANCH, PAUSED)
+
+Board f0ce7f, worktree `ojjyOS-v3-check-net02` / branch `check-net02` off
+main a374079. Jonas asked for a check of NET-02 (board 27c8ad).
+Re-verified at a374079: `scripts/test.sh` + ASan/UBSan pass, both dev
+builds 0 warnings, roadmap check 698/0, checklist clean, gitleaks on the
+pushed range 5402f4e..a374079 clean (no paths/emails; all 12 commits carry
+a `Co-Authored-By` trailer from before global rule 10, already public, left
+as is), READY_TO_TEST.json matches the installed image.
+**Found + fixed (security):** any web page could open `ojjy:` URLs through
+a link, a GET form or `<meta http-equiv=refresh>` (no click), so
+`ojjy:proceed?url=https://bank.example` silently added a certificate
+exception (a network attacker can inject that into any http page), and
+`ojjy:settings?cookies=1` / `history?clear=1` / `bookmarks?remove=N` /
+`settings?search=` changed settings (reachable since NET-02's url.c query
+fix). Fix: `url_page_may_open()` in `web/url.c` (web pages may open only
+plain ojjy: pages; ojjy:proceed only from the certificate warning page;
+ojjy: pages unrestricted), used by `page_may_open()` in `ui/browser.c` for
+links (incl. Open Link in New Tab), forms and meta refresh; logs
+`[WEB] blocked page navigation to ojjy:<page>`; HTTP redirects to non-web
+schemes now fail in `web/http.c`. Test: `tests/test_web.c` +9 checks (red
+with the old allow-everything rule: 4 FAILs), host + ASan/UBSan pass, both
+dev builds 0 warnings. New live step 1b in `tests/qemu_https.py`
+(`web_server.py /sneaky?to=` page with a meta refresh to ojjy:proceed).
+**Handoff.** Done: the fix + host tests, committed on `check-net02`. Next:
+1. `OJJY_ACCEL=hvf python3 -B tests/qemu_https.py --image build/dev-aarch64/ojjyos3.img --output build/check/https-hvf2`
+   (dev image already built here; the first run was stopped at setup when
+   Jonas paused) → expect PASS incl. "page cannot add an exception" and
+   "host still warns after the hostile page"; read the screenshots.
+2. `qemu_browser.py` + smoke (TCG/HVF) for the browser change.
+3. Card NET-02 `**Log.**` follow-up line, then fast-forward main (rebase if
+   it moved), rebuild the installed image only with Jonas's VM shut down,
+   ready_to_test note, ask Jonas about pushing (repo is PUBLIC).
+Traps: don't touch ojjyOS-v3-net (netcmd.c [CLOCK] line) or ojjyOS-v3-qa
+(release.html TextEdit line): other sessions' uncommitted work.
+
 ## LATEST (2026-10-27, night): NET-02 — HTTPS now proves who the server is
 
 Board 27c8ad, worktree `ojjyOS-v3-net-02` / branch `net-02` off main

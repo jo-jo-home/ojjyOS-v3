@@ -100,6 +100,17 @@ static void set_status(Tab *t, const char *s)
     t->status[sizeof(t->status) - 1] = '\0';
 }
 
+/* A page may only open what url_page_may_open() allows (no settings or
+ * certificate-exception changes from web content). */
+static bool page_may_open(Tab *t, const Url *to)
+{
+    if (url_page_may_open(&t->url, t->cert_warning, to)) return true;
+    serial_printf("[WEB] blocked page navigation to ojjy:%s\n", to->host);
+    set_status(t, "Blocked: a web page can't change ojjyOS settings");
+    ui_mark_dirty();
+    return false;
+}
+
 Tab *active_tab(void)
 {
     if (!BR || BR->active < 0 || BR->active >= MAX_TABS || !BR->tabs[BR->active].used) return NULL;
@@ -1034,7 +1045,7 @@ static void fetch_done(Tab *t)
     if (tab_index(t) == BR->active && BR->doc->refresh_url[0] && BR->doc->refresh_secs >= 0 && BR->doc->refresh_secs <= 5) {
         Url base, target;
         base_url(&base);
-        if (url_resolve(&base, BR->doc->refresh_url, &target)) br_navigate(t, &target, false);
+        if (url_resolve(&base, BR->doc->refresh_url, &target) && page_may_open(t, &target)) br_navigate(t, &target, false);
     }
     ui_mark_dirty();
 }
@@ -1057,6 +1068,7 @@ void br_follow_link(int link, bool new_tab)
     Url base, target;
     base_url(&base);
     if (!url_resolve(&base, href, &target)) { set_status(t, "That link's address isn't supported"); ui_mark_dirty(); return; }
+    if (!page_may_open(t, &target)) return;
     if (strcmp(target.scheme, t->url.scheme) == 0 && strcmp(target.host, t->url.host) == 0 &&
         strcmp(target.path, t->url.path) == 0 && target.fragment[0]) {
         int32_t y = web_anchor_y(BR->doc, target.fragment);
@@ -1081,6 +1093,7 @@ static void submit_form(int form, int submitter)
     base_url(&base);
     const char *action = form >= 0 && form < BR->doc->form_count ? BR->doc->forms[form].action : "";
     if (!url_resolve(&base, action[0] ? action : "", &target)) return;
+    if (!page_may_open(t, &target)) return;
     static char query[2048];
     web_form_encode(BR->doc, form, submitter, query, sizeof(query));
     bool post = form >= 0 && form < BR->doc->form_count && BR->doc->forms[form].post;

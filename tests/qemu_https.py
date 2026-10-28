@@ -125,6 +125,15 @@ def run(args):
         record('Go Back', got[1].endswith(f':{port}/'), got[1])
         snap('03-after-go-back')
 
+        # 1b. a web page can't add a certificate exception by itself (meta refresh to ojjy:proceed)
+        sneaky = f'ojjy:proceed?url=https%3A%2F%2F10.0.2.2%3A{ca_port}%2F'
+        _, mark = visit(f'http://10.0.2.2:{port}/sneaky?to={sneaky}', r'\[WEB\] loaded status=200')
+        blocked = until(r'\[WEB\] (blocked page navigation to ojjy:\w+|certificate exception for [^\n]*)', 20, mark)
+        record('page cannot add an exception', blocked[1] == 'blocked page navigation to ojjy:proceed', blocked[1])
+        snap('03b-sneaky-blocked')
+        warned, _ = visit(f'https://10.0.2.2:{ca_port}/', r'\[WEB\] (cert warning 10\.0\.2\.2: [^\n]*|loaded[^\n]*)')
+        record('host still warns after the hostile page', warned[1].startswith('cert warning'), warned[1])
+
         # 2. self-signed -> warning; Visit anyway -> page with the crossed lock
         warned, mark = visit(f'https://10.0.2.2:{self_port}/', r'\[WEB\] cert warning 10\.0\.2\.2: ([^\n]*)')
         record('self-signed warning', warned[1] == 'self-signed certificate', warned[1])

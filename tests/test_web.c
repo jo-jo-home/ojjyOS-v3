@@ -69,6 +69,25 @@ static void url_http_tests(void)
               "ojjy: link keeps its query");
         CHECK(url_parse("ojjy:newtab", &u) && strcmp(u.path, "/") == 0, "ojjy: page without a query");
     }
+    {   /* web pages can't change settings or add certificate exceptions (links, forms, meta refresh) */
+        Url web, own, to;
+        url_parse("https://evil.example/", &web);
+        url_parse("ojjy:newtab", &own);
+        url_parse("ojjy:proceed?url=https%3A%2F%2Fbank.example%2F", &to);
+        CHECK(!url_page_may_open(&web, false, &to), "web page can't open ojjy:proceed (silent certificate exception)");
+        CHECK(url_page_may_open(&web, true, &to), "the certificate warning page's Visit anyway still works");
+        url_parse("ojjy:settings?cookies=1", &to);
+        CHECK(!url_page_may_open(&web, false, &to) && !url_page_may_open(&web, true, &to), "web page can't clear cookies");
+        url_parse("ojjy:history?clear=1", &to);
+        CHECK(!url_page_may_open(&web, false, &to), "web page can't clear history");
+        url_parse("ojjy:bookmarks?remove=0", &to);
+        CHECK(!url_page_may_open(&web, false, &to), "web page can't remove bookmarks");
+        CHECK(url_page_may_open(&own, false, &to), "ojjyOS's own pages keep their buttons");
+        url_parse("ojjy:newtab", &to);
+        CHECK(url_page_may_open(&web, false, &to), "web page may link to a plain ojjy: page");
+        url_parse("https://other.example/a?b=1", &to);
+        CHECK(url_page_may_open(&web, false, &to), "ordinary web links are untouched");
+    }
     CHECK(!url_parse("ftp://x/", &u) && !url_parse("http://bad host/", &u) && !url_parse("http://h:99999/", &u) &&
           !url_parse("", &u) && !url_parse("http://:80/", &u), "reject unsupported/bad URLs");
     CHECK(url_parse("http://h/a/./b/../c", &u) && strcmp(u.path, "/a/c") == 0, "dot segments removed");

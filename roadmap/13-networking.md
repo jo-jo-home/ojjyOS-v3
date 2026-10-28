@@ -22,15 +22,39 @@ outside explicit developer flags.
 ### NET-02 — HTTPS certificate verification (X.509 + chain + CertificateVerify)
 - Phase: P0 · Size: L · Status: doing
 - Depends: —
-- Files: NET_WEB_PLAN.md N2–N3 (Track N), kernel/src/net/tls.c, kernel/src/crypto/
+- Files: NET_WEB_PLAN.md N2–N3 (Track N), kernel/src/net/tls.c, kernel/src/crypto/x509*.c/h (new), kernel/src/crypto/roots_data.c (new), tools/mkroots.py (new), kernel/src/web/http.c/h, kernel/src/ui/browser*.c/h, kernel/src/ui/netcmd.c, tests/test_x509.c (new), tests/test_tls_verify.c (new), tests/qemu_https.py (new)
 
 **Context.** TLS encrypts but does not verify server identity. Track N has
 done N1 (SHA-384/512, RSA, ECDSA). This card mirrors N2 (ASN.1/X.509) and
 N3 (chain building, root store, hostname checks, CertificateVerify).
+(2026-10-27, board 27c8ad, worktree `ojjyOS-v3-net-02` / `net-02`.) The
+card said `doing` since the roadmap was written, but nothing for N2/N3
+existed: `tls.c` keeps only the leaf certificate and skips
+CertificateVerify. N4 (TIM-04 SNTP clock) is done, so validity can be
+checked against `clock_now_unix()`. No Track D session is active, so this
+card also edits the browser files Track D used to own.
 **Goal.** As specified in `NET_WEB_PLAN.md` N2–N3.
-**Done when.** As specified there; the browser shows a real lock and an
-error page for bad certificates.
-**Tests.** As specified there.
+**Steps.**
+- [ ] 1. Strict DER reader + X.509 parser in `kernel/src/crypto/x509.c/h` (new): tbs bytes, version, serial, signature algorithm (sha256/384/512WithRSA, RSASSA-PSS sha256/384/512, ecdsa-with-SHA256/384), issuer/subject raw DER + CN, validity (UTCTime/GeneralizedTime -> Unix), SPKI (RSA n/e, EC P-256/P-384 point), basicConstraints, keyUsage, extKeyUsage, SAN dNSName/iPAddress, nameConstraints, unknown critical extension flag; `x509_verify_signed_by(child, issuer_key)`. Files: x509.c/h, kernel/Makefile, scripts/test.sh, tests/gen_x509_vectors.py (new, OpenSSL CLI), tests/x509_vectors.h (generated), tests/test_x509.c (new). Test: field checks + signature checks for every algorithm + full truncation sweep + 4000 random corruptions, normal and ASan/UBSan. Trap: OIDs/constants from generated data or the RFC text, never memory; a separate file name for every generated key.
+- [ ] 2. Chain verification in `kernel/src/crypto/x509_chain.c` (new): host-name match (RFC 6125: exact or one left-most `*` label, IP hosts against iPAddress SANs), validity with the clock (±48 h tolerance only while NTP has not synced, logged), path building through the sent certificates in any order to a trusted root (issuer/subject + signature), CA flag, pathLen, keyCertSign, serverAuth EKU, dNSName name constraints, depth limit; clear reasons ("certificate expired", "name mismatch: a vs b", "unknown issuer", "bad signature", …). Test: tests/test_x509.c chain cases (good, out-of-order, expired, not yet valid, wrong SAN, wildcard rules, CA:false intermediate, pathLen exceeded, no keyCertSign, clientAuth-only EKU, unknown critical extension, unknown issuer, name constraints). Trap: a leaf that is itself self-signed is "unknown issuer", never trusted.
+- [ ] 3. Root store: `tools/mkroots.py` (new) builds `kernel/src/crypto/roots_data.c` (subject DER + SubjectPublicKeyInfo only) from a curated list of the macOS system roots; THIRD_PARTY.md entry; regeneration documented. Test: tests/test_x509.c parses every built-in root key and finds ISRG Root X1/X2 and the other must-have roots; `tools/check_third_party.py`. Trap: watch kernel image size (`llvm-size`) — rodata only, no BSS.
+- [ ] 4. TLS: `tls.c` checks the whole Certificate message (bounded count/size) at arrival, keeps the leaf key, verifies CertificateVerify over `64×0x20 || "TLS 1.3, server CertificateVerify" || 0 || transcript hash` (rsa_pss_rsae_sha256/384/512, ecdsa_secp256r1_sha256, ecdsa_secp384r1_sha384; PKCS#1 v1.5 rejected), stops advertising ed25519; per-connection "allow untrusted" option keeps the handshake (and CertificateVerify) but records the certificate problem; `verified`, `cert_error`, subject/issuer CN exposed. Files: tls.c/h, tests/tls_probe.c, tests/test_tls_verify.c (new), tests/test_tls_local.py (new). Test: CertificateVerify vectors from OpenSSL (valid, flipped, wrong transcript, PKCS#1 refused) + local handshakes against Python's TLS 1.3 server with generated chains (RSA leaf, ECDSA P-256 and P-384 leaves, expired, wrong host, unknown issuer, allow-untrusted). Trap: TlsConn lives in the page-allocated pool — no new big static buffers.
+- [ ] 5. Performance: log `[TLS] verify N ms` (chain + CertificateVerify); measure on host and QEMU TCG/HVF. Test: numbers recorded in the card log; if one handshake's verification is > ~300 ms under TCG, split it across tls_poll turns. Trap: never quote TCG time as user speed.
+- [ ] 6. HTTP + browser: `http.c` exposes verified/cert-error and asks a browser hook for per-host exceptions; the browser shows a blue Liquid Glass "This connection is not private" page with the reason, Go Back and a small "Visit anyway" link (per-host, per-session exception), a lock for verified HTTPS, a crossed lock for exceptions, honest page-info and Settings text. Files: web/http.c/h, ui/browser.c, ui/browser_pages.c, ui/browser_ui.c, ui/browser_int.h, tests/test_web.c stubs. Test: both builds + live in step 8.
+- [ ] 7. Terminal: `curl https://…` prints the certificate reason and refuses; `curl -k` connects and warns. Files: ui/netcmd.c. Test: live in step 8.
+- [ ] 8. Live: new `tests/qemu_https.py` (local self-signed server -> warning page with "unknown issuer", Visit anyway -> page + crossed lock, curl refuse / curl -k; with --internet: example.com, en.wikipedia.org, www.apple.com, letsencrypt.org load verified; expired/wrong.host/self-signed/untrusted-root.badssl.com show the right reason); `tests/qemu_browser.py` HTTPS step updated; smoke TCG + HVF; screenshots looked at. Evidence `build/net-02-*`.
+- [ ] 9. Docs + delivery: NET_WEB_PLAN.md N2/N3 log, tls.h header, About/Settings/README/APPS.md "identity not verified" texts, What's New, AGENTS.md LATEST, card Log; fast-forward main; installed image rebuild + ready-to-test note.
+**Done when.**
+- [ ] The DER/X.509 parser is host-tested with real OpenSSL-generated certificates and survives the truncation sweep + 4000 corruptions under ASan/UBSan.
+- [ ] Chain verification rejects expired, not-yet-valid, wrong-name, unknown-issuer, CA:false, pathLen and bad-signature chains with clear reasons (host tests).
+- [ ] TLS verifies CertificateVerify with the leaf key and refuses PKCS#1 v1.5 there (host tests + local handshakes).
+- [ ] The browser shows a real lock for verified HTTPS, and a blue "This connection is not private" page with the reason, Go Back and Visit anyway (per-host, per-session; crossed lock) for bad certificates (live).
+- [ ] Terminal `curl https://…` prints the reason and refuses unless `curl -k` (live).
+- [ ] Real sites load with a lock and the badssl.com cases show the right reason under HVF (or the lack of internet is recorded and host tests cover it).
+- [ ] Verification time is logged and stays under ~300 ms per handshake under TCG (or is split across poll turns).
+- [ ] Definition of Done: both dev builds 0 warnings, scripts/test.sh + sanitizer pass, smoke TCG + HVF pass, evidence in `build/net-02-*`.
+**Tests.** As specified there: tests/test_x509.c, tests/test_tls_verify.c,
+tests/test_tls_local.py (host), tests/qemu_https.py + qemu_browser.py (live).
 **Pitfalls.** —
 **Refs.** RFC 5280, RFC 8446 §4.4.3, RFC 6125.
 

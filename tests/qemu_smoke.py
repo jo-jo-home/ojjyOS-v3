@@ -146,7 +146,7 @@ class VM:
 
     def type(self, text, pace=0.08):
         for char in text:
-            shifted = {"_": "minus", ">": "dot", ":": "semicolon", "?": "slash"}.get(char) or (char.lower() if char.isupper() else None)
+            shifted = {"_": "minus", ">": "dot", ":": "semicolon", "?": "slash", "%": "5"}.get(char) or (char.lower() if char.isupper() else None)
             if shifted:
                 self.key("shift", True); self.press(shifted, pace); self.key("shift", False)
                 continue

@@ -22,6 +22,14 @@ static GfxSurface *surf(void)
     return &s;
 }
 
+static void sappend(char *dst, size_t size, const char *src)
+{
+    size_t a = strlen(dst), b = strlen(src);
+    if (a + b >= size) b = size - a - 1;
+    memcpy(dst + a, src, b);
+    dst[a + b] = '\0';
+}
+
 static bool dark(void) { return ((ui_theme()->text >> 16) & 0xFF) > 128; }
 static Color toolbar_bg(void) { return dark() ? RGB(41, 44, 52) : RGB(255, 255, 255); }
 static Color omni_bg(void) { return dark() ? RGB(28, 31, 38) : RGB(238, 241, 245); }
@@ -479,9 +487,19 @@ static void draw_toolbar(void)
         int lx = ox + 10, ly = oy + oh / 2;
         bool https = t && strcmp(t->url.scheme, "https") == 0;
         bool http = t && strcmp(t->url.scheme, "http") == 0;
+        bool untrusted = https && (t->cert_warning || (t->secure && !t->verified));
         if (https) {
             ui_rounded_rect(lx + 2, ly - 1, 10, 8, 2, muted(), 255);
             gfx_arc_up(s, lx + 7, ly - 1, 2, 4, 90, muted(), 255);
+        }
+        if (untrusted) {
+            /* crossed lock: cut a gap in the field colour, then the slash */
+            for (int i = 0; i < 16; i++) ui_rounded_rect(lx - 1 + i, ly - 9 + i, 3, 3, 1, omni_bg(), 255);
+            for (int i = 0; i < 15; i++) ui_rounded_rect(lx + i, ly - 8 + i, 2, 2, 1, muted(), 255);
+            text_draw(s, lx + 20, text_y_center(oy, oh, TEXT_SMALL_BOLD), "Not secure", TEXT_SMALL_BOLD, muted());
+            tx = ox + 42 + text_width("Not secure", TEXT_SMALL_BOLD);
+            ui_rounded_rect(tx - 9, oy + 8, 1, oh - 16, 0, muted(), 120);
+        } else if (https) {
         } else if (http) {
             text_draw(s, lx, text_y_center(oy, oh, TEXT_SMALL_BOLD), "Not secure", TEXT_SMALL_BOLD, muted());
             tx = ox + 22 + text_width("Not secure", TEXT_SMALL_BOLD);
@@ -734,16 +752,37 @@ static void draw_menu(void)
     if (BR->menu == MENU_PAGE_INFO) {
         Tab *t = active_tab();
         bool https = t && strcmp(t->url.scheme, "https") == 0;
-        const char *head = https ? "Connection is encrypted" : (t && strcmp(t->url.scheme, "http") == 0) ? "Your connection to this site is not secure" : "Built-in ojjyOS page";
+        bool untrusted = https && (t->cert_warning || (t->secure && !t->verified));
+        bool verified = https && t->secure && t->verified;
+        const char *head = verified ? "Connection is secure" : untrusted ? "Your connection to this site is not private"
+                         : (t && strcmp(t->url.scheme, "http") == 0) ? "Your connection to this site is not secure"
+                         : "Built-in ojjyOS page";
         text_draw(surf(), mx + 18, my + 16, head, TEXT_BODY_BOLD, fg());
-        if (https) {
-            char line1[96] = "TLS 1.3 \xC2\xB7 ";
-            size_t k = strlen(line1);
-            for (size_t j = 0; t->suite[j] && k + 1 < sizeof(line1); j++) line1[k++] = t->suite[j];
-            line1[k] = '\0';
-            text_draw(surf(), mx + 18, my + 44, line1, TEXT_SMALL, muted());
-            text_draw_fit(surf(), mx + 18, my + 66, "The certificate is not checked yet, so the site's", TEXT_SMALL, fg(), mw - 30);
-            text_draw_fit(surf(), mx + 18, my + 84, "identity is not proven. Avoid entering passwords.", TEXT_SMALL, fg(), mw - 30);
+        char line[160];
+        if (verified || untrusted) {
+            line[0] = '\0';
+            if (t->secure) { sappend(line, sizeof(line), "TLS 1.3 \xC2\xB7 "); sappend(line, sizeof(line), t->suite); }
+            else sappend(line, sizeof(line), "Nothing was sent to this site.");
+            text_draw_fit(surf(), mx + 18, my + 44, line, TEXT_SMALL, muted(), mw - 30);
+        }
+        if (verified) {
+            line[0] = '\0';
+            sappend(line, sizeof(line), "Certificate for ");
+            sappend(line, sizeof(line), t->cert_subject);
+            text_draw_fit(surf(), mx + 18, my + 66, line, TEXT_SMALL, fg(), mw - 30);
+            line[0] = '\0';
+            sappend(line, sizeof(line), "Issued by ");
+            sappend(line, sizeof(line), t->cert_issuer);
+            sappend(line, sizeof(line), " \xC2\xB7 trusted root ");
+            sappend(line, sizeof(line), t->cert_root);
+            text_draw_fit(surf(), mx + 18, my + 84, line, TEXT_SMALL, fg(), mw - 30);
+        } else if (untrusted) {
+            line[0] = '\0';
+            sappend(line, sizeof(line), "Certificate problem: ");
+            sappend(line, sizeof(line), t->cert_error);
+            text_draw_fit(surf(), mx + 18, my + 66, line, TEXT_SMALL, fg(), mw - 30);
+            text_draw_fit(surf(), mx + 18, my + 84, t->cert_warning ? "Go Back unless you are sure about this site."
+                          : "You chose to visit anyway (until ojjyOS restarts).", TEXT_SMALL, fg(), mw - 30);
         } else if (t && strcmp(t->url.scheme, "http") == 0) {
             text_draw_fit(surf(), mx + 18, my + 44, "Information you send or receive could be read or", TEXT_SMALL, fg(), mw - 30);
             text_draw_fit(surf(), mx + 18, my + 62, "changed by others on the network.", TEXT_SMALL, fg(), mw - 30);

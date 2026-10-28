@@ -5174,7 +5174,7 @@ static void terminal_exec(TerminalState *term, const char *raw)
         terminal_append_line(term, "  ps, top, kill, heap, whoami, users,");
         terminal_append_line(term, "  adduser, passwd, su, lock, run <name>");
         terminal_append_line(term, "Network: ifconfig, net on|off|renew,");
-        terminal_append_line(term, "  ping <host> [n], nslookup <host>, curl [-I] <url>");
+        terminal_append_line(term, "  ping <host> [n], nslookup <host>, curl [-I] [-k] <url>");
         terminal_append_line(term, "  (Ctrl+C stops a running network command)");
         return;
     }

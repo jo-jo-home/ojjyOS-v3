@@ -84,7 +84,16 @@ bool url_parse(const char *text, Url *out)
         if (!n) { strcpy(out->host, "home"); }
         else if (!copy_n(out->host, sizeof(out->host), p, n)) return false;
         for (char *c = out->host; *c; c++) *c = lower(*c);
+        /* keep "?a=b" (built-in page actions like ojjy:settings?search=1);
+         * it used to be dropped, so those buttons did nothing */
         strcpy(out->path, "/");
+        if (n < len && p[n] == '?') {
+            size_t q = n;
+            while (q < len && p[q] != '#') q++;
+            if (q - n + 2 > sizeof(out->path)) return false;
+            memcpy(out->path + 1, p + n, q - n);
+            out->path[1 + q - n] = '\0';
+        }
         return true;
     }
     if (strcmp(out->scheme, "http") != 0 && strcmp(out->scheme, "https") != 0) return false;
@@ -203,6 +212,7 @@ void url_format(const Url *u, char *out, size_t size, bool with_fragment)
     if (strcmp(u->scheme, "ojjy") == 0) {
         append(out, size, ":");
         append(out, size, u->host);
+        if (u->path[0] == '/' && u->path[1] == '?') append(out, size, u->path + 1);
         return;
     }
     append(out, size, "://");

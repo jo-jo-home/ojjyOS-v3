@@ -27,6 +27,7 @@ const NetInfo *net_info(void) { return &ni; }
 bool net_ready(void) { return false; }
 #include "net/tls.h"
 void tls_start(TlsConn *c, const char *h, TlsIo io) { (void)c; (void)h; (void)io; }
+void tls_start_ex(TlsConn *c, const char *h, TlsIo io, unsigned f) { (void)c; (void)h; (void)io; (void)f; }
 TlsState tls_poll(TlsConn *c) { (void)c; return TLS_FAILED; }
 int tls_send(TlsConn *c, const void *d, size_t l) { (void)c; (void)d; (void)l; return -1; }
 int tls_recv(TlsConn *c, void *b, size_t l) { (void)c; (void)b; (void)l; return 0; }
@@ -54,6 +55,20 @@ static void url_http_tests(void)
           "bare host defaults to http and /");
     CHECK(url_parse("https://a.b", &u) && u.port == 443, "https default port");
     CHECK(url_parse("ojjy:Home", &u) && strcmp(u.scheme, "ojjy") == 0 && strcmp(u.host, "home") == 0, "ojjy: pages");
+    CHECK(url_parse("ojjy:settings?search=1", &u) && strcmp(u.host, "settings") == 0 && strcmp(u.path, "/?search=1") == 0,
+          "ojjy: page keeps its query (Settings buttons, NET-02 Visit anyway)");
+    CHECK(url_parse("ojjy:proceed?url=https://10.0.2.2:8443/a?b=1#frag", &u) && strcmp(u.host, "proceed") == 0 &&
+          strcmp(u.path, "/?url=https://10.0.2.2:8443/a?b=1") == 0, "ojjy: query with a nested URL");
+    {
+        char text[URL_TEXT_MAX];
+        url_format(&u, text, sizeof(text), false);
+        CHECK(strcmp(text, "ojjy:proceed?url=https://10.0.2.2:8443/a?b=1") == 0, "ojjy: query round-trips");
+        Url base, link;
+        url_parse("ojjy:settings", &base);
+        CHECK(url_resolve(&base, "ojjy:settings?cookies=clear", &link) && strcmp(link.path, "/?cookies=clear") == 0,
+              "ojjy: link keeps its query");
+        CHECK(url_parse("ojjy:newtab", &u) && strcmp(u.path, "/") == 0, "ojjy: page without a query");
+    }
     CHECK(!url_parse("ftp://x/", &u) && !url_parse("http://bad host/", &u) && !url_parse("http://h:99999/", &u) &&
           !url_parse("", &u) && !url_parse("http://:80/", &u), "reject unsupported/bad URLs");
     CHECK(url_parse("http://h/a/./b/../c", &u) && strcmp(u.path, "/a/c") == 0, "dot segments removed");

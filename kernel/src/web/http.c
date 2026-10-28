@@ -70,6 +70,16 @@ static int tls_tcp_recv(void *ctx, uint8_t *data, size_t len)
     return 0;
 }
 
+static bool (*tls_exception)(const char *host);
+
+void http_set_tls_exception_hook(bool (*allowed)(const char *host)) { tls_exception = allowed; }
+
+static void copy_field(char *dst, size_t size, const char *src)
+{
+    strncpy(dst, src, size - 1);
+    dst[size - 1] = '\0';
+}
+
 static TlsSlot *tls_acquire(void)
 {
     for (int i = 0; i < TLS_POOL; i++) {
@@ -287,6 +297,8 @@ static void begin(HttpFetch *f)
     memset(&f->head, 0, sizeof(f->head));
     f->secure = strcmp(f->url.scheme, "https") == 0;
     f->tls_suite[0] = '\0';
+    f->verified = f->cert_failed = false;
+    f->cert_error[0] = f->cert_subject[0] = f->cert_issuer[0] = f->cert_root[0] = '\0';
     if (!f->secure && strcmp(f->url.scheme, "http") != 0) { set_error(f, "unsupported URL scheme"); return; }
 
     /* Request line + headers; identity encoding, close when done. */
@@ -472,11 +484,25 @@ HttpPhase http_poll(HttpFetch *f)
             if (!f->tls) { set_error(f, "not enough memory for a secure connection"); break; }
             f->tls->tcp = f->conn;
             TlsIo io = {tls_tcp_send, tls_tcp_recv, (void *)(intptr_t)f->conn};
-            tls_start(&f->tls->conn, f->url.host, io);
+            bool allow = f->insecure || (f->use_exceptions && tls_exception && tls_exception(f->url.host));
+            tls_start_ex(&f->tls->conn, f->url.host, io, allow ? TLS_ALLOW_UNTRUSTED : 0);
             f->phase = HTTP_SECURING;
         }   /* fall through */
         case HTTP_SECURING: {
             TlsState ts = tls_poll(&f->tls->conn);
+            if (ts == TLS_FAILED && f->tls->conn.cert_failed) {
+                f->cert_failed = true;
+                copy_field(f->cert_error, sizeof(f->cert_error), f->tls->conn.error);
+                copy_field(f->cert_subject, sizeof(f->cert_subject), f->tls->conn.cert_subject);
+                copy_field(f->cert_issuer, sizeof(f->cert_issuer), f->tls->conn.cert_issuer);
+                char msg[96] = "certificate problem: ";
+                size_t a = strlen(msg), b = strlen(f->cert_error);
+                if (a + b >= sizeof(msg)) b = sizeof(msg) - a - 1;
+                memcpy(msg + a, f->cert_error, b);
+                msg[a + b] = '\0';
+                set_error(f, msg);
+                break;
+            }
             if (ts == TLS_FAILED) {
                 char msg[96] = "secure connection failed: ";
                 size_t a = strlen(msg), b = strlen(f->tls->conn.error);
@@ -491,6 +517,11 @@ HttpPhase http_poll(HttpFetch *f)
                 break;
             }
             strncpy(f->tls_suite, tls_suite_name(f->tls->conn.suite), sizeof(f->tls_suite) - 1);
+            f->verified = f->tls->conn.verified;
+            copy_field(f->cert_error, sizeof(f->cert_error), f->tls->conn.cert_error);
+            copy_field(f->cert_subject, sizeof(f->cert_subject), f->tls->conn.cert_subject);
+            copy_field(f->cert_issuer, sizeof(f->cert_issuer), f->tls->conn.cert_issuer);
+            copy_field(f->cert_root, sizeof(f->cert_root), f->tls->conn.cert_root);
             f->phase = HTTP_SENDING;
             f->activity_ms = now;
         }   /* fall through */

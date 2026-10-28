@@ -28,6 +28,7 @@ static struct {
     uint64_t next_ms, started_ms, last_sent_ms;
     int rtt_min, rtt_max, rtt_sum;
     bool headers_only;
+    bool insecure;                  /* curl -k */
 } job;
 
 static HttpFetch curl_fetch;
@@ -179,17 +180,23 @@ bool netcmd_exec(const char *cmd, netcmd_print_fn print)
     if (job.kind != JOB_NONE) { print("Another network command is running (Ctrl+C to stop it)."); return true; }
     const char *arg = skip(cmd + (is_dns ? 8 : 4));
     if (!*arg) {
-        print(is_ping ? "usage: ping <host> [count]" : is_dns ? "usage: nslookup <host>" : "usage: curl [-I] <url>");
+        print(is_ping ? "usage: ping <host> [count]" : is_dns ? "usage: nslookup <host>" : "usage: curl [-I] [-k] <url>");
         return true;
     }
     if (!network_usable(print)) return true;
     memset(&job, 0, sizeof(job));
 
     if (is_curl) {
-        if (strncmp(arg, "-I ", 3) == 0) { job.headers_only = true; arg = skip(arg + 3); }
+        for (;;) {                  /* -I (headers only), -k / --insecure (skip the certificate check) */
+            if (strncmp(arg, "-I ", 3) == 0) { job.headers_only = true; arg = skip(arg + 3); }
+            else if (strncmp(arg, "-k ", 3) == 0) { job.insecure = true; arg = skip(arg + 3); }
+            else if (strncmp(arg, "--insecure ", 11) == 0) { job.insecure = true; arg = skip(arg + 11); }
+            else break;
+        }
         if (!curl_buf) curl_buf = (uint8_t *)pmm_alloc_bytes(CURL_BUF);
         if (!curl_buf) { print("curl: not enough memory"); return true; }
         http_start(&curl_fetch, arg, curl_buf, CURL_BUF);
+        curl_fetch.insecure = job.insecure;     /* read when the TLS handshake starts */
         if (curl_fetch.phase == HTTP_ERROR) {
             char l[LINE + 1]; l[0] = 0; cat(l, "curl: "); cat(l, curl_fetch.error); print(l);
             return true;
@@ -271,7 +278,13 @@ static void poll_curl(netcmd_print_fn print)
     HttpPhase phase = http_poll(&curl_fetch);
     char l[LINE + 1];
     if (phase == HTTP_ERROR) {
-        l[0] = 0; cat(l, "curl: "); cat(l, curl_fetch.error); print(l);
+        if (curl_fetch.cert_failed) {           /* the reason on its own line: lines are LINE wide */
+            print("curl: certificate problem:");
+            l[0] = 0; cat(l, "  "); cat(l, curl_fetch.cert_error); print(l);
+            print("curl: refusing to connect. Use curl -k to connect anyway (unsafe).");
+        } else {
+            l[0] = 0; cat(l, "curl: "); cat(l, curl_fetch.error); print(l);
+        }
         serial_printf("[NET] curl failed: %s\n", curl_fetch.error);
         job.kind = JOB_NONE;
         return;
@@ -284,6 +297,14 @@ static void poll_curl(netcmd_print_fn print)
     print(l);
     serial_printf("[NET] curl done status=%d bytes=%u redirects=%d truncated=%d\n", curl_fetch.head.status,
                   (unsigned)curl_fetch.body_len, curl_fetch.redirects, (int)curl_fetch.truncated);
+    if (curl_fetch.secure) {
+        l[0] = 0;
+        if (curl_fetch.verified) { cat(l, "Secure: "); cat(l, curl_fetch.cert_subject); cat(l, " (trusted root "); cat(l, curl_fetch.cert_root); cat(l, ")"); }
+        else { print("curl: warning: certificate NOT verified:"); cat(l, "  "); cat(l, curl_fetch.cert_error); }
+        print(l);
+        serial_printf("[NET] curl tls verified=%d %s\n", (int)curl_fetch.verified,
+                      curl_fetch.verified ? curl_fetch.cert_root : curl_fetch.cert_error);
+    }
     if (curl_fetch.redirects) {
         char u[URL_TEXT_MAX];
         url_format(&curl_fetch.url, u, sizeof(u), false);

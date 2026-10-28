@@ -50,6 +50,10 @@ typedef struct {
     int http_status;
     bool secure;
     char suite[40];
+    bool verified;              /* https certificate checked (NET-02) */
+    bool cert_warning;          /* showing "This connection is not private" */
+    char cert_error[96];        /* problem accepted with "Visit anyway", or the warning's reason */
+    char cert_subject[64], cert_issuer[64], cert_root[64];
     char ctype[64];
     /* stylesheet texts, by the document's sheet_urls index */
     uint8_t *sbuf;
@@ -191,6 +195,8 @@ size_t page_bookmarks(char *out, size_t cap);
 size_t page_downloads(char *out, size_t cap);
 size_t page_settings(char *out, size_t cap);
 size_t page_error(char *out, size_t cap, const char *url, const char *reason, bool https);
+/* "This connection is not private": reason, Go Back, Visit anyway (NET-02) */
+size_t page_cert_warning(char *out, size_t cap, const char *url, const char *host, const char *reason);
 size_t page_needs_js(char *out, size_t cap, const char *url);
 size_t page_image(char *out, size_t cap, const char *url);
 extern const char *const search_names[];

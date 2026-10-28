@@ -52,6 +52,14 @@ typedef struct {
     bool truncated;
     bool secure;                /* https: encrypted with TLS 1.3 */
     char tls_suite[40];         /* negotiated cipher suite */
+    bool insecure;              /* curl -k: connect despite certificate problems */
+    bool use_exceptions;        /* browser fetches: honour the "Visit anyway" hook */
+    bool verified;              /* https: certificate chain, name and dates checked */
+    bool cert_failed;           /* HTTP_ERROR because of the certificate */
+    char cert_error[96];        /* the certificate problem ("" when verified) */
+    char cert_subject[64];      /* leaf CN, issuer, trust anchor (page info) */
+    char cert_issuer[64];
+    char cert_root[64];
     HttpResponseHead head;
     /* internals */
     int conn;
@@ -76,6 +84,12 @@ void http_start_request(HttpFetch *f, const Url *url, bool post, const char *bod
  * value for a request URL ("" for none); set() receives each Set-Cookie value. */
 void http_set_cookie_hooks(void (*get)(const Url *url, char *out, size_t size),
                            void (*set)(const Url *url, const char *value));
+/* Per-host certificate exceptions (the browser's "Visit anyway"): for a
+ * fetch with use_exceptions set (after http_start*), when the hook returns
+ * true for a host, https to it finishes despite certificate problems
+ * (verified stays false). Never skips the CertificateVerify check, and
+ * other fetches (Terminal curl) never see the browser's exceptions. */
+void http_set_tls_exception_hook(bool (*allowed)(const char *host));
 /* Enables Accept-Encoding: gzip, deflate; bodies are decoded into buf and
  * copied back in place (at most min(cap, room after the headers)). */
 void http_set_inflate_buffer(uint8_t *buf, size_t cap);

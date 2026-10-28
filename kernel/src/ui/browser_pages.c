@@ -317,9 +317,11 @@ size_t page_settings(char *buf, size_t cap)
     put(&o, " &nbsp; <a class=btn href=\"ojjy:settings?cookies=clear\">Clear cookies</a></div><div class=row>History: ");
     put_num(&o, (uint64_t)history_count());
     put(&o, " pages &nbsp; <a class=btn href=\"ojjy:history?clear=1\">Clear history</a></div></div>"
-            "<h2>Security</h2><div class=card><div class=row>Connections to https:// sites are encrypted with TLS 1.3. "
-            "<b>Certificate checking is still being built</b>, so the browser cannot yet prove a site's identity: "
-            "avoid typing passwords into sites for now.</div></div>"
+            "<h2>Security</h2><div class=card><div class=row>Connections to https:// sites are encrypted with TLS 1.3, "
+            "and every site must prove who it is: its certificate is checked against the root authorities built "
+            "into ojjyOS, for the right name and dates. A lock in the address bar means the check passed. "
+            "Sites that fail it show a warning instead.</div><div class=row><span class=muted>Not checked yet: "
+            "revoked certificates (OCSP/CRL), and sites that only speak TLS 1.2.</span></div></div>"
             "<h2>About</h2><div class=card><div class=row><b>ojjyOS Web</b> &middot; part of ojjyOS 3, created by Jonas "
             "Lee. Its own HTML and CSS engine, network stack and TLS, written from scratch for the ojjyOS kernel.<br>"
             "<span class=muted>Your browsing data is stored in ~/Library/Web.</span></div></div></div></body></html>");
@@ -367,6 +369,59 @@ size_t page_error(char *buf, size_t cap, const char *url, const char *reason, bo
     put(&o, "</ul><p><a class=btn href=\"");
     put_esc(&o, url);
     put(&o, "\">Reload</a><a class=btn href=\"ojjy:newtab\">New Tab</a></p></div></body></html>");
+    return o.len;
+}
+
+static void put_url_param(Out *o, const char *s)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    for (; *s; s++) {
+        unsigned char c = (unsigned char)*s;
+        bool plain = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                     c == '-' || c == '.' || c == '_' || c == '~' || c == ':' || c == '/';
+        char e[4] = {(char)c, 0, 0, 0};
+        if (!plain) { e[0] = '%'; e[1] = hex[c >> 4]; e[2] = hex[c & 15]; }
+        put(o, e);
+    }
+}
+
+size_t page_cert_warning(char *buf, size_t cap, const char *url, const char *host, const char *reason)
+{
+    Out o = {buf, 0, cap};
+    buf[0] = '\0';
+    head(&o, "Privacy error");
+    const char *code = "NET::ERR_CERT_INVALID", *why = "The certificate is not valid.";
+    if (strstr_simple(reason, "expired") || strstr_simple(reason, "not valid until")) {
+        code = "NET::ERR_CERT_DATE_INVALID";
+        why = "The certificate is out of date. If the clock in Control Center is wrong, that can cause this too.";
+    } else if (strstr_simple(reason, "name mismatch") || strstr_simple(reason, "name not permitted")) {
+        code = "NET::ERR_CERT_COMMON_NAME_INVALID";
+        why = "The certificate was made for a different site.";
+    } else if (strstr_simple(reason, "issuer") || strstr_simple(reason, "self-signed") || strstr_simple(reason, "chain")) {
+        code = "NET::ERR_CERT_AUTHORITY_INVALID";
+        why = "The certificate was not issued by an authority that ojjyOS trusts.";
+    } else if (strstr_simple(reason, "weak")) {
+        code = "NET::ERR_CERT_WEAK_KEY";
+        why = "The site protects its certificate with a key that is too weak.";
+    }
+    put(&o, "<div class=wrap style=\"padding-top:64px\">"
+            "<div style=\"width:56px;height:56px;border-radius:28px;background:var(--accent);color:#fff;font-size:30px;"
+            "font-weight:700;text-align:center;line-height:56px\">!</div>"
+            "<h1>This connection is not private</h1><p>Someone could be pretending to be <b>");
+    put_esc(&o, host);
+    put(&o, "</b> to steal your passwords, messages or card details. ojjyOS Web stopped before sending anything.</p>"
+            "<div class=card><div class=row><b>Why:</b> ");
+    put_esc(&o, reason);
+    put(&o, "</div><div class=row>");
+    put(&o, why);
+    put(&o, "</div></div><p class=muted>");
+    put(&o, code);
+    put(&o, "</p><p><a class=\"btn sel\" href=\"ojjy:back\">Go Back</a></p>"
+            "<p class=muted style=\"margin-top:40px\">Advanced: <a href=\"ojjy:proceed?url=");
+    put_url_param(&o, url);
+    put(&o, "\">Visit ");
+    put_esc(&o, host);
+    put(&o, " anyway (unsafe)</a> &mdash; only until ojjyOS restarts.</p></div></body></html>");
     return o.len;
 }
 

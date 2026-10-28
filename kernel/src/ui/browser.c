@@ -247,6 +247,7 @@ static void start_res(int kind, int index)
         char referer[256];
         url_format(&t->url, referer, sizeof(referer), false);
         http_start_request(&r->fetch, &u, false, NULL, 0, NULL, referer, r->buf, RES_CAP - 1);
+        r->fetch.use_exceptions = true;
         if (r->fetch.phase == HTTP_ERROR) break;
         r->busy = true;
         r->kind = kind;
@@ -454,6 +455,9 @@ static void show_html(Tab *t, const Url *u, const char *html, size_t len)
     t->latin1 = false;
     t->have_page = true;
     t->secure = false;
+    t->verified = false;
+    t->cert_warning = false;
+    t->cert_error[0] = '\0';
     t->http_status = 200;
     t->ctype[0] = '\0';
     t->url = *u;
@@ -495,6 +499,93 @@ static void show_error(Tab *t, const Url *u, const char *reason)
     set_status(t, reason);
 }
 
+/* ------------------------------------------------------------------ */
+/* Certificate warnings and per-session exceptions (NET-02)            */
+/* ------------------------------------------------------------------ */
+
+#define CERT_EXCEPTIONS 16
+static char cert_ok[CERT_EXCEPTIONS][URL_HOST_MAX];
+static int cert_ok_count;
+
+static bool host_eq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = (*a >= 'A' && *a <= 'Z') ? (char)(*a + 32) : *a, y = (*b >= 'A' && *b <= 'Z') ? (char)(*b + 32) : *b;
+        if (x != y) return false;
+    }
+    return *a == *b;
+}
+
+/* http.c asks this before every https handshake ("Visit anyway"). */
+static bool cert_exception(const char *host)
+{
+    for (int i = 0; i < cert_ok_count; i++) if (host_eq(cert_ok[i], host)) return true;
+    return false;
+}
+
+static void cert_exception_add(const char *host)
+{
+    if (cert_exception(host)) return;
+    int slot = cert_ok_count < CERT_EXCEPTIONS ? cert_ok_count++ : CERT_EXCEPTIONS - 1;   /* full: replace the newest */
+    strncpy(cert_ok[slot], host, URL_HOST_MAX - 1);
+    cert_ok[slot][URL_HOST_MAX - 1] = '\0';
+    serial_printf("[WEB] certificate exception for %s (this session)\n", host);
+}
+
+static void show_cert_warning(Tab *t, const Url *u, const HttpFetch *f)
+{
+    char url[URL_TEXT_MAX];
+    url_format(u, url, sizeof(url), false);
+    char *g = gen_buf();
+    size_t n = page_cert_warning(g, 512 * 1024, url, u->host, f->cert_error);
+    show_html(t, u, g, n);
+    t->cert_warning = true;
+    strncpy(t->cert_error, f->cert_error, sizeof(t->cert_error) - 1);
+    t->cert_error[sizeof(t->cert_error) - 1] = '\0';
+    strncpy(t->cert_subject, f->cert_subject, sizeof(t->cert_subject) - 1);
+    strncpy(t->cert_issuer, f->cert_issuer, sizeof(t->cert_issuer) - 1);
+    strcpy(t->title, "Privacy error");
+    set_status(t, f->cert_error);
+    serial_printf("[WEB] cert warning %s: %s\n", u->host, f->cert_error);
+}
+
+static void show_fetch_error(Tab *t, const HttpFetch *f)
+{
+    if (f->cert_failed) show_cert_warning(t, &f->url, f);
+    else show_error(t, &f->url, f->error);
+}
+
+static void copy_security(Tab *t, const HttpFetch *f)
+{
+    t->secure = f->secure;
+    t->verified = f->verified;
+    t->cert_warning = false;
+    strncpy(t->suite, f->tls_suite, sizeof(t->suite) - 1);
+    strncpy(t->cert_error, f->cert_error, sizeof(t->cert_error) - 1);
+    t->cert_error[sizeof(t->cert_error) - 1] = '\0';
+    strncpy(t->cert_subject, f->cert_subject, sizeof(t->cert_subject) - 1);
+    strncpy(t->cert_issuer, f->cert_issuer, sizeof(t->cert_issuer) - 1);
+    strncpy(t->cert_root, f->cert_root, sizeof(t->cert_root) - 1);
+    if (f->secure)
+        serial_printf("[WEB] security %s %s %s\n", f->url.host, f->verified ? "verified" : "exception",
+                      f->verified ? f->cert_root : f->cert_error);
+}
+
+static int hex_digit(char c)
+{
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+static void percent_decode(char *s)
+{
+    char *w = s;
+    for (const char *r = s; *r; r++) {
+        if (*r == '%' && hex_digit(r[1]) >= 0 && hex_digit(r[2]) >= 0) { *w++ = (char)(hex_digit(r[1]) * 16 + hex_digit(r[2])); r += 2; }
+        else *w++ = *r;
+    }
+    *w = '\0';
+}
+
 static bool query_param(const char *path, const char *name, char *out, size_t size)
 {
     const char *q = path;
@@ -523,6 +614,27 @@ static void load_builtin(Tab *t, const Url *u)
     char v[32];
     const char *page = u->host;
     if (!g) return;
+    if (strcmp(page, "back") == 0) {                        /* the warning page's Go Back */
+        if (t->hist_pos > 0) { br_history_go(t, -1); return; }
+        Url home;
+        url_parse("ojjy:newtab", &home);
+        load_builtin(t, &home);
+        return;
+    }
+    if (strcmp(page, "proceed") == 0) {                     /* "Visit anyway": exception, then load */
+        static char target[URL_TEXT_MAX];
+        Url to;
+        if (query_param(u->path, "url", target, sizeof(target))) {
+            percent_decode(target);
+            if (url_parse(target, &to) && strcmp(to.scheme, "https") == 0) {
+                cert_exception_add(to.host);
+                br_navigate(t, &to, t->cert_warning);       /* replay: replaces the warning in history */
+                return;
+            }
+        }
+        show_error(t, u, "Unknown built-in page.");
+        return;
+    }
     if (strcmp(page, "newtab") == 0 || strcmp(page, "home") == 0) n = page_newtab(g, 512 * 1024);
     else if (strcmp(page, "history") == 0) {
         if (query_param(u->path, "clear", v, sizeof(v))) history_clear();
@@ -572,7 +684,8 @@ static void start_load(Tab *t, const Url *u, bool post)
     if (t->url.scheme[0] && strcmp(t->url.scheme, "ojjy") != 0) url_format(&t->url, referer, sizeof(referer), false);
     http_start_request(t->fetch, u, post, t->post_body, post ? strlen(t->post_body) : 0,
                        "application/x-www-form-urlencoded", referer, t->buf, PAGE_CAP - 1);
-    if (t->fetch->phase == HTTP_ERROR) { show_error(t, u, t->fetch->error); return; }
+    t->fetch->use_exceptions = true;            /* "Visit anyway" applies to this tab's pages */
+    if (t->fetch->phase == HTTP_ERROR) { show_fetch_error(t, t->fetch); return; }
     t->loading = true;
     t->started = net_now();
     char text[URL_TEXT_MAX];
@@ -864,7 +977,7 @@ static void fetch_done(Tab *t)
         size_t n = page_image(g, 512 * 1024, url);
         Url u = f->url;
         show_html(t, &u, g, n);
-        t->secure = f->secure;
+        copy_security(t, f);
         return;
     }
     /* the body sits inside t->buf (chunked data decoded in place) */
@@ -878,8 +991,7 @@ static void fetch_done(Tab *t)
     t->latin1 = is_latin1(t);
     t->have_page = true;
     t->http_status = f->head.status;
-    t->secure = f->secure;
-    strncpy(t->suite, f->tls_suite, sizeof(t->suite) - 1);
+    copy_security(t, f);
     t->url = f->url;
     t->sused = 0;
     memset(t->sheet_state, 0, sizeof(t->sheet_state));
@@ -1186,6 +1298,7 @@ void browser_open(void)
     }
     profile_load();
     profile_hooks_install();
+    http_set_tls_exception_hook(cert_exception);
     BR->show_bmbar = setting_bmbar();
     BR->opened = true;
     if (BR->count == 0) br_new_tab("ojjy:newtab", true);
@@ -1203,7 +1316,7 @@ void browser_poll(void)
         if (ph == HTTP_ERROR) {
             t->loading = false;
             serial_printf("[WEB] failed: %s\n", t->fetch->error);
-            if (strcmp(t->fetch->error, "stopped") != 0) show_error(t, &t->fetch->url, t->fetch->error);
+            if (strcmp(t->fetch->error, "stopped") != 0) show_fetch_error(t, t->fetch);
             continue;
         }
         if (net_now() - last_paint > 120) { last_paint = net_now(); ui_mark_dirty(); }   /* spinner, progress */

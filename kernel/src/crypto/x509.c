@@ -64,6 +64,15 @@ static bool der_read(Der *d, uint8_t *tag, X509Span *value, X509Span *whole)
     return true;
 }
 
+bool x509_der_next(X509Span *rest, uint8_t *tag, X509Span *value)
+{
+    Der d = der_of(rest);
+    if (!der_read(&d, tag, value, NULL)) return false;
+    rest->len -= (size_t)(d.p - rest->p);
+    rest->p = d.p;
+    return true;
+}
+
 static bool der_expect(Der *d, uint8_t tag, X509Span *value, X509Span *whole)
 {
     uint8_t t;

@@ -78,6 +78,9 @@ typedef struct {
     bool unknown_critical;
 } X509Cert;
 
+/* Next TLV from *rest (rest advances). False at the end or on bad DER. */
+bool x509_der_next(X509Span *rest, uint8_t *tag, X509Span *value);
+
 /* Parse one DER certificate. False = malformed (or trailing bytes). */
 bool x509_parse(const uint8_t *der, size_t len, X509Cert *out);
 /* Parse a SubjectPublicKeyInfo (root store entries). */

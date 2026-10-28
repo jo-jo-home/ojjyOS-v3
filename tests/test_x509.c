@@ -5,6 +5,7 @@
 #include "crypto/x509.h"
 #include "crypto/crypto.h"
 #include "x509_vectors.h"
+#include "x509_real.h"
 #include "test_support.h"
 
 void *malloc(unsigned long size);
@@ -298,6 +299,58 @@ int main(void)
         policy.root_count = 1;
         CHECK(VERIFY("rsa.example.test", SPAN(leaf_b), SPAN(int_b)) == X509_E_UNKNOWN_ISSUER, "root B removed");
         policy = saved;
+    }
+
+    /* --- the built-in trust store (roots_data.c from tools/mkroots.py) --- */
+    {
+        CHECK(x509_builtin_root_count >= 40, "at least 40 built-in roots");
+        int good = 0, strong = 0;
+        for (size_t i = 0; i < x509_builtin_root_count; i++) {
+            const X509Root *r = &x509_builtin_roots[i];
+            X509Key key;
+            X509Span name = {r->subject, r->subject_len};
+            char text[64];
+            bool named = x509_name_attr(&name, X509_ATTR_O, text, sizeof(text)) ||
+                         x509_name_attr(&name, X509_ATTR_CN, text, sizeof(text));
+            if (x509_parse_spki(r->spki, r->spki_len, &key) && key.type != X509_KEY_NONE && named && r->label[0]) good++;
+            if (key.type != X509_KEY_RSA || x509_key_bits(&key) >= 2048) strong++;
+        }
+        CHECK(good == (int)x509_builtin_root_count, "every built-in root has a usable key and a name");
+        CHECK(strong == (int)x509_builtin_root_count, "no built-in RSA root under 2048 bits");
+        static const char *const must[] = {
+            "ISRG Root X1", "ISRG Root X2", "DigiCert Global Root G2", "DigiCert Global Root CA", "GTS Root R1",
+            "GTS Root R4", "GlobalSign Root CA", "Amazon Root CA 1", "USERTrust RSA Certification Authority",
+            "USERTrust ECC Certification Authority", "Microsoft RSA Root Certificate Authority 2017",
+            "SSL.com TLS ECC Root CA 2022", "Sectigo Public Server Authentication Root E46",
+        };
+        for (size_t m = 0; m < sizeof(must) / sizeof(must[0]); m++) {
+            bool found = false;
+            for (size_t i = 0; i < x509_builtin_root_count; i++)
+                if (strcmp(x509_builtin_roots[i].label, must[m]) == 0) found = true;
+            CHECK(found, "a must-have web root is built in");
+        }
+    }
+
+    /* --- real chains from big sites, captured once (tests/gen_x509_real.py) --- */
+    {
+        X509Policy real = {x509_builtin_roots, x509_builtin_root_count, X509_REAL_NOW, 0};
+        int verified = 0, expired_later = 0, wrong_host = 0;
+        for (size_t i = 0; i < sizeof(x509_real) / sizeof(x509_real[0]); i++) {
+            X509Result r;
+            if (x509_verify_chain(x509_real[i].certs, x509_real[i].count, x509_real[i].host, &real, &r) == X509_OK)
+                verified++;
+            else
+                emit(r.reason);
+            X509Policy later = real;
+            later.now += 2LL * 366 * 86400;               /* every leaf is shorter-lived than 2 years */
+            if (x509_verify_chain(x509_real[i].certs, x509_real[i].count, x509_real[i].host, &later, &r) == X509_E_EXPIRED)
+                expired_later++;
+            if (x509_verify_chain(x509_real[i].certs, x509_real[i].count, "ojjyos.invalid", &real, &r) == X509_E_NAME)
+                wrong_host++;
+        }
+        CHECK(verified == 6, "six real chains verify with the built-in roots at capture time");
+        CHECK(expired_later == 6, "the same chains are expired two years later");
+        CHECK(wrong_host == 6, "the same chains refuse another host name");
     }
 
     /* --- malformed DER the parser must refuse --- */

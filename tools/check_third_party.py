@@ -3,7 +3,8 @@
 
 Checks that the third-party register keeps its required sections and key
 entries: the fonts/ table with both shipped typefaces and their licence,
-the packages/ section for future ojjypkg programs, and the Apple
+the packages/ section for future ojjypkg programs, the built-in CA roots
+(NET-02), and the Apple
 wallpapers policy (local only, never shipped or committed). Run from
 scripts/test.sh; roadmap card QA-40 re-runs it for releases.
 
@@ -36,6 +37,9 @@ def main() -> int:
     need(r"never committed", "wallpapers policy: 'never committed' promise missing")
     need(r"never.*pushed|never.*ship", "wallpapers policy: never shipped/pushed promise missing")
     need(r"/System/Legal/THIRD_PARTY\.txt", "in-image copy /System/Legal/THIRD_PARTY.txt not named")
+    need(r"^## CA root certificates", "no '## CA root certificates' section (NET-02 trust store)")
+    need(r"roots_data\.c", "CA roots: kernel/src/crypto/roots_data.c not named")
+    need(r"tools/mkroots\.py", "CA roots: generator tools/mkroots.py not named")
 
     if problems:
         for problem in problems:

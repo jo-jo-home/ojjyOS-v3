@@ -8,11 +8,11 @@
  */
 
 #include "net/tls.h"
-#include "net/net.h"
 #include "crypto/x509.h"
 #include "clock.h"
 #include "random.h"
 #include "serial.h"
+#include "timer.h"
 #include "string.h"
 
 #define CT_CCS        20
@@ -369,12 +369,12 @@ static void handle_certificate(TlsConn *c, const uint8_t *b, size_t len)
     c->leaf_key_len = (uint16_t)key->len;
     memcpy(c->leaf_key, key->p, key->len);
 
-    uint64_t started = net_now();
+    uint64_t started = timer_get_ticks();
     X509Policy policy = {x509_builtin_roots, x509_builtin_root_count, clock_now_unix(),
                          clock_ntp_synced() ? 0 : CLOCK_SLACK_UNSYNCED};
     static X509Result result;
     X509Status st = x509_verify_chain(certs, count, c->host, &policy, &result);
-    c->verify_ms = (uint32_t)(net_now() - started);
+    c->verify_ms = (uint32_t)(timer_get_ticks() - started);
     c->cert_status = (int)st;
     copy_text(c->cert_subject, sizeof(c->cert_subject), result.subject);
     copy_text(c->cert_issuer, sizeof(c->cert_issuer), result.issuer);
@@ -421,9 +421,9 @@ static void handle_cert_verify(TlsConn *c, const uint8_t *b, size_t len, const u
     key.e = c->leaf_e;
     key.n.p = key.point.p = c->leaf_key;
     key.n.len = key.point.len = c->leaf_key_len;
-    uint64_t started = net_now();
+    uint64_t started = timer_get_ticks();
     bool ok = x509_verify_message(alg, -1, &key, content, sizeof(content), b + 4, len - 4);
-    c->verify_ms += (uint32_t)(net_now() - started);
+    c->verify_ms += (uint32_t)(timer_get_ticks() - started);
     if (!ok) { fail_alert(c, ALERT_DECRYPT_ERROR, "bad signature: the server does not hold its certificate's key"); return; }
     serial_printf("[TLS] verify %u ms %s%s%s\n", (unsigned)c->verify_ms, c->host,
                   c->verified ? " verified by " : " NOT verified: ", c->verified ? c->cert_root : c->cert_error);

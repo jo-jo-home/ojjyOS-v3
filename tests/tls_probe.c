@@ -34,7 +34,7 @@ int64_t clock_now_unix(void) { return (int64_t)time(0); }
 bool clock_ntp_synced(void) { return true; }
 struct timespec_mac { long sec, nsec; };
 int clock_gettime(int, struct timespec_mac *);
-uint64_t net_now(void) { struct timespec_mac t; clock_gettime(6 /* CLOCK_UPTIME_RAW */, &t); return (uint64_t)t.sec * 1000 + (uint64_t)t.nsec / 1000000; }
+uint64_t timer_get_ticks(void) { struct timespec_mac t; clock_gettime(6 /* CLOCK_UPTIME_RAW */, &t); return (uint64_t)t.sec * 1000 + (uint64_t)t.nsec / 1000000; }
 
 struct sockaddr_in_mac { uint8_t len, family; uint16_t port; uint32_t addr; char zero[8]; };
 struct timeval_mac { long sec; int usec; };

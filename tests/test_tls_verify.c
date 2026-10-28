@@ -21,7 +21,7 @@ void random_bytes(void *out, size_t len)
 static int64_t fake_now = FLIGHT_NOW;
 int64_t clock_now_unix(void) { return fake_now; }
 bool clock_ntp_synced(void) { return true; }
-uint64_t net_now(void) { return 0; }
+uint64_t timer_get_ticks(void) { return 0; }
 
 static TlsConn conn;
 static uint8_t client_out[8192];

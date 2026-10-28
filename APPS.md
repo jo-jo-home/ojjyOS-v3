@@ -274,4 +274,13 @@ real Chrome: see `BROWSER_CHROME_PLAN.md` section 0).
   WebP (lossy, lossless, alpha) and SVG (`svg.c`, integer-only rasterizer).
 - Tests: `tests/test_web.c` (host, incl. fuzzing), `tests/web_render.c`
   (renders saved pages to images), `tests/qemu_web_tour.py` (live sites).
-- No JavaScript engine yet; TLS 1.2-only sites need Track N's work.
+- HTTPS identity (NET-02): `crypto/x509.c` + `x509_chain.c` check every
+  certificate chain against the built-in roots (`crypto/roots_data.c`),
+  the host name and dates; `net/tls.c` verifies CertificateVerify. A
+  failure shows "This connection is not private" (reason, Go Back, Visit
+  anyway = per-host exception until restart); the address bar shows a lock
+  (verified) or a crossed lock + "Not secure" (warning/exception); the lock
+  opens page info with the certificate, issuer and root. Terminal `curl`
+  refuses bad certificates unless `-k`. Live test: `tests/qemu_https.py`.
+- No JavaScript engine yet; TLS 1.2-only sites need NET-03; revocation
+  (OCSP/CRL) is not checked.

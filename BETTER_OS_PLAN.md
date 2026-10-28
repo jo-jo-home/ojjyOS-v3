@@ -108,10 +108,10 @@ tree).
 
 ## 3. Networking & web
 
-- [ ] **HTTPS certificate verification** (X.509 profile, RSA-2048 +
-  ECDSA-P256 verify against a small root store; `crypto/` already has
-  the primitives). Until then the About/limits text must keep saying
-  "encrypted, identity not verified".
+- [x] **HTTPS certificate verification** — done 2026-10-27 (NET-02; test: tests/test_x509.c, tests/test_tls_verify.c, tests/test_tls_local.py, tests/qemu_https.py --internet PASS under HVF + TCG).
+  X.509 profile, RSA + ECDSA P-256/P-384 verify against 51 built-in roots,
+  chain/name/date/CA checks, CertificateVerify, warning page + lock, curl -k;
+  the About/limits texts now describe it.
 - [ ] **NTP clock sync** at boot + after DHCP; disciplines the firmware
   clock for Auto appearance too.
 - [ ] **Downloads to ~/Downloads**, PNG decode (inflate) and

@@ -28,7 +28,7 @@ roughly by value to the "reliable boot -> input -> storage -> protected apps
 ## Networking & web
 - [x] (legacy) Network stack + working browser over http:// (BROWSER_APPS_PLAN.md).
 - [x] (legacy) HTTPS (TLS 1.3) in the browser (encrypted; identity not yet verified).
-- [ ] HTTPS certificate verification (X.509, RSA/ECDSA, root store).
+- [x] HTTPS certificate verification (X.509, RSA/ECDSA, root store). — done 2026-10-27 (NET-02; test: tests/test_x509.c, tests/test_tls_verify.c, tests/test_tls_local.py, tests/qemu_https.py --internet PASS under HVF + TCG)
 - [ ] PNG/GIF image decoding in the browser (inflate + palette); JPEG
       baseline decoding exists (`kernel/src/image/jpeg.c`), progressive not.
 - [ ] Downloads to ~/Downloads with Finder integration.

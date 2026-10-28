@@ -70,7 +70,7 @@ font/icon data). Version string 3.1.0 (`kernel/src/main.c`).
 | Item | State |
 |---|---|
 | Stack | `net/net.c`: Ethernet, ARP, IPv4, ICMP (ping), UDP, DHCP, DNS; `net/tcp.c` (8 connections) |
-| TLS | `net/tls.c`: TLS 1.3 client (x25519, ChaCha20-Poly1305, AES-GCM). **Certificates not verified yet** (Track N: N2–N3). No TLS 1.2 |
+| TLS | `net/tls.c`: TLS 1.3 client (x25519, ChaCha20-Poly1305, AES-GCM). Certificates verified since NET-02 (2026-10-27: `crypto/x509*.c`, 51 built-in roots, CertificateVerify). No TLS 1.2 |
 | Crypto | `crypto/`: SHA-256/384/512, AES-GCM, ChaCha20-Poly1305, x25519, big integers, RSA verify, ECDSA P-256/384 verify |
 | HTTP | `web/http.c`: HTTP/1.1 client, chunked, gzip/deflate, cookies hook, redirects, POST |
 | Tools | Terminal `ifconfig`, `ping`, `nslookup`, `curl` (`ui/netcmd.c`) |

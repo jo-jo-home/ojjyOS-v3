@@ -245,7 +245,7 @@ cat > "$SYSROOT/System/Web/home.html" << 'PAGE'
 <ul>
 <li>Type words into the address bar to search, or a web address to open it.</li>
 <li><b>Cmd+L</b> address bar, <b>Cmd+R</b> reload, <b>Cmd+[</b> / <b>Cmd+]</b> back and forward.</li>
-<li><code>https://</code> sites are encrypted with TLS 1.3. Certificates are not checked yet, so don't type passwords.</li>
+<li><code>https://</code> sites are encrypted with TLS 1.3 and must prove who they are: the lock in the address bar means the certificate checked out. Revoked certificates are not detected yet.</li>
 <li>No network? Turn on <b>Wi-Fi</b> in Control Center.</li>
 </ul>
 <pre>
@@ -338,6 +338,11 @@ suggestions, bookmarks bar, history, downloads, find in page, zoom and view sour
 </ul>
 <h3>Also new</h3>
 <ul>
+<li><b>HTTPS you can trust</b> &mdash; every https:// site must now prove who it is: ojjyOS checks
+its certificate chain against 51 built-in root authorities, the name and the dates, and the
+server's signature. A lock means the check passed; a bad certificate shows
+"This connection is not private" with the reason, Go Back and a small "Visit anyway".
+Terminal <code>curl</code> refuses bad certificates unless you add <code>-k</code>.</li>
 <li><b>Calendar, Calculator, Activity Monitor and About</b> &mdash; glass Calendar header and
 today circle, Calculator equation history and key feedback, Monitor tabs with memory bars and
 measured renderer frame times, and a clearer version card with Jonas Lee's credit.</li>

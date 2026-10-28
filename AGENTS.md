@@ -1,5 +1,47 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-27, night): NET-02 — HTTPS now proves who the server is
+
+Board 27c8ad, worktree `ojjyOS-v3-net-02` / branch `net-02` off main
+5402f4e (net-web has someone else's uncommitted netcmd.c line: untouched).
+Card `roadmap/13-networking.md` NET-02 (Track N's N2+N3). Commits
+6419311 (plan), 28d724d, af937a8, 811c041, 14487a9, ea9cc12, 3dff494,
+a08c72a + docs.
+
+- `crypto/x509.c/h`: strict DER + X.509 parser and signature checks
+  (PKCS#1 SHA-256/384/512, RSA-PSS, ECDSA P-256/P-384). `x509_chain.c`:
+  leaf checks (key size, RFC 6125 name incl. wildcard/IP SAN, dates with
+  48 h slack only before the first NTP sync, EKU, keyUsage, critical
+  extensions) then a path search through the sent certificates in any
+  order to a root (CA, pathLen, keyCertSign, EKU, name constraints).
+  `roots_data.c`: 51 roots from `tools/mkroots.py` (macOS store or
+  `--pem`; Entrust left out). THIRD_PARTY.md records them.
+- `net/tls.c`: checks the chain, verifies CertificateVerify (PKCS#1
+  refused, scheme must fit the key), alerts on failure, and accepts
+  Finished ONLY after CertificateVerify (before, a server could skip
+  both). `tls_start_ex(TLS_ALLOW_UNTRUSTED)` = Visit anyway / curl -k;
+  never skips the signature. Ed25519 no longer offered.
+- Browser: blue "This connection is not private" page (reason, Go Back =
+  `ojjy:back`, Visit anyway = `ojjy:proceed?url=` per-host exception until
+  restart, browser fetches only via `HttpFetch.use_exceptions`), lock /
+  crossed lock + "Not secure", page info with certificate/issuer/root.
+  Terminal `curl` refuses with the reason; `-k`/`--insecure` warns.
+- Bugs fixed on the way: `ecdsa_verify_raw` used the whole hash mod n (a
+  P-256 key signing with SHA-384 never verified; FIPS 186-4 truncation);
+  `url.c` dropped every `ojjy:` query, so Settings buttons never worked.
+
+Verified: test_x509.c 374, test_tls_verify.c 46 (replayed + re-encrypted
+forged flights; red with the old rules), test_tls_local.py 14 handshakes,
+test_web.c +5; host + ASan/UBSan 22/22; both dev builds 0 warnings;
+qemu_https.py --internet 17/17 under HVF and TCG; qemu_browser.py; smoke
+ARM TCG/HVF + Intel. TLS verify per handshake: TCG <= 252 ms, HVF 3-38 ms.
+Screenshots read. Evidence `build/net-02-*`. Limits: no revocation
+(OCSP/CRL), no TLS 1.2 (NET-03: badssl.com + craigslist, BUG-1001),
+policies not enforced, exceptions per host. Card stays `doing` only for
+the badssl.com Done-when item (TLS 1.2): Jonas may OK moving it to NET-03.
+Rebuild vectors: `python3 -I tests/gen_x509_vectors.py > tests/x509_vectors.h`
+(also gen_x509_real.py needs internet, gen_tls_flight.py).
+
 ## LATEST (2026-10-27): new GitHub README, 2026 copyright, repo description, privacy check
 
 Board c624c2 (taken over from OpenCode with Jonas's OK), worktree

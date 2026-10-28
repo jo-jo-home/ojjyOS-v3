@@ -140,6 +140,7 @@ The screenshots use the built-in **ojjyOS Waves** wallpaper.
 - **Network stack written from scratch:** Ethernet, ARP, IPv4, ICMP, UDP, DHCP, DNS and TCP.
 - **HTTP/1.1** with chunked transfer, gzip/deflate, cookies, redirects and POST.
 - **TLS 1.3 client** (x25519, ChaCha20-Poly1305, AES-GCM) on top of its own crypto: SHA-2, big-integer RSA and ECDSA P-256/P-384.
+- **HTTPS that checks who you're talking to:** its own X.509 parser checks the certificate chain against 51 built-in root authorities, plus the host name and dates, and verifies the server's handshake signature. Bad certificates get a "This connection is not private" page; the address bar shows a lock only when the check passed.
 - **Network time:** the clock syncs from `time.apple.com` (fallback `pool.ntp.org`) after DHCP and resyncs every 6 hours.
 - **ojjyOS Web engine:** HTML parser, CSS cascade (with `@layer`, `var()` and media queries), and block/inline/flex/grid/table/float layout. It decodes PNG, GIF, JPEG, WebP and SVG images.
 
@@ -149,7 +150,7 @@ ojjyOS is a long-term project, and these are the honest gaps today:
 
 - **No multitasking yet.** Desktop apps run inside the kernel, there is no preemptive scheduler, and only one CPU core is used.
 - **No real on-disk filesystem yet.** Files live in RAM and are saved to disk as checkpoints.
-- **HTTPS certificates are not verified yet,** so don't use the browser for anything sensitive. TLS 1.2-only sites and JavaScript are not supported either.
+- **HTTPS is checked, but not completely:** revoked certificates are not detected yet, so don't use the browser for anything sensitive. TLS 1.2-only sites and JavaScript are not supported either.
 - **Virtual machines only:** it runs under Apple's Virtualization.framework, QEMU or VirtualBox, not directly on Mac or PC hardware.
 - **Memory:** about 2.2 GB is usable until the memory update, whatever you assign.
 - No sound, and no Wi-Fi or Bluetooth hardware (virtual machines don't provide it).

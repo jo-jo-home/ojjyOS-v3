@@ -74,8 +74,8 @@ N2 (ASN.1/X.509) is the next step; nothing for N2 exists yet.
   `web_server.py`, live `qemu_net.py`, `qemu_browser.py`,
   `qemu_network_ui.py`. `bash scripts/mkfs.sh` must run once in a fresh
   worktree before `scripts/test.sh` (test_fs needs `build/system.ojfs`).
-- The About/limits text and docs currently say HTTPS is "encrypted, identity
-  not verified" — keep saying that until N3 lands, then update it.
+- (Done 2026-10-27, NET-02:) the About/limits texts and docs now say HTTPS
+  is checked, with revocation and TLS 1.2 named as the remaining gaps.
 
 **N2 starting notes (carry-forward from N1):** the X.509 layer calls the
 verify functions above directly — parse SPKI to n/e (RSA) or the
@@ -124,6 +124,12 @@ point not on curve. Run under ASan/UBSan.
 
 ## N2 — ASN.1 DER + X.509 parser
 
+DONE 2026-10-27 (card NET-02, step 1-2 commits `28d724d`, `af937a8`):
+`kernel/src/crypto/x509.c/h` + `x509_chain.c`, 374 host checks in
+`tests/test_x509.c` (36 OpenSSL-made certificates via
+`tests/x509_fixtures.py` + `gen_x509_vectors.py`, six frozen real chains,
+every truncation + 4000 corruptions, ASan/UBSan). See the Log.
+
 `kernel/src/crypto/x509.c/h`:
 - Strict DER reader (tag, definite length, nesting depth limit, never past
   the buffer).
@@ -145,6 +151,13 @@ intermediate, pathLen exceeded). Plus every truncation and 4000 random
 corruptions of a real certificate (must never crash; ASan clean).
 
 ## N3 — Certificate chain + CertificateVerify in TLS (the security fix)
+
+DONE 2026-10-27 (card NET-02, steps 3-8): root store
+`kernel/src/crypto/roots_data.c` (51 roots, `tools/mkroots.py`),
+`net/tls.c` chain + CertificateVerify + Finished-only-after-CV, browser
+warning page / lock / Visit anyway, `curl -k`, live `tests/qemu_https.py`.
+badssl.com only speaks TLS 1.2, so its live cases wait for NET-03; Let's
+Encrypt's expired test site and a GitHub IP cover the real cases. See Log.
 
 1. Root store: `tools/mkroots.py` generates `kernel/src/crypto/roots_data.c`
    from the macOS system roots (`security find-certificate -a -p
@@ -334,5 +347,34 @@ note for Track D), loading bar polish, readable error pages, find-in-page
   corruptions and full truncation sweeps. All pass normally and under
   ASan/UBSan; 16/16 suites green; both dev builds 0 warnings.
   Evidence: `build/n1-{host,san,arm,x86}.log`.
+
+- **N2 + N3 done (2026-10-27, card NET-02, board 27c8ad, branch `net-02`)**
+  — X.509 + certificate verification, end to end:
+  `crypto/x509.c` strict DER reader and certificate parser (minimal
+  lengths, exact buffer use, signed == unsigned algorithm, SPKI RSA/P-256/
+  P-384, validity, basicConstraints, keyUsage, EKU, SAN, nameConstraints,
+  unknown-critical flag; PKCS#1 SHA-256/384/512, RSASSA-PSS, ECDSA
+  SHA-256/384); `crypto/x509_chain.c` leaf checks then a depth-first path
+  search through the sent certificates in any order to a trusted root, the
+  failure furthest along a path is the reason shown; `crypto/roots_data.c`
+  51 roots from `tools/mkroots.py`; `net/tls.c` checks the chain at the
+  Certificate message, verifies CertificateVerify (PKCS#1 refused, scheme
+  must fit the key), sends a fatal alert on failure, and accepts Finished
+  only after CertificateVerify (before, a server could skip both);
+  `TLS_ALLOW_UNTRUSTED` for Visit anyway / `curl -k` (never skips the
+  signature). Real bugs found on the way: `ecdsa_verify_raw` reduced the
+  whole hash mod n instead of keeping its leftmost curve-size bits (a P-256
+  key signing with SHA-384 never verified; FIPS 186-4 6.4), and url.c
+  dropped the query of every `ojjy:` URL (Settings buttons never worked).
+  Tests: test_x509.c 374, test_tls_verify.c 46 (replayed + re-encrypted
+  forged flights; red with the old Finished rule and with the signature
+  check skipped), test_tls_local.py 14 local handshakes, qemu_https.py
+  17/17 under HVF and TCG with internet, qemu_browser.py, smoke TCG/HVF/
+  Intel, host + ASan/UBSan 22/22, both dev builds 0 warnings. Timing per
+  handshake: TCG 19-252 ms, HVF 3-38 ms (no split needed). Evidence:
+  `build/net-02-*`. Limits: no revocation (OCSP/CRL), no TLS 1.2 (NET-03:
+  badssl.com, craigslist), policies not enforced, directoryName name
+  constraints ignored, exceptions per host (not per certificate) until
+  restart, 8 certificates per chain.
 
 (append one entry per finished step: what, evidence directory, commit)

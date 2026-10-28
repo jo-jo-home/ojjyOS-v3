@@ -240,7 +240,7 @@ Kernel / platform (`AGENTS.md` §0 item 4, §4.2; `PROTECTED_APPS.md`):
 - [ ] Intel: PCI, e1000/virtio-pci NIC, absolute USB tablet.
 
 Networking & web (`ROADMAP.md`, `BROWSER_APPS_PLAN.md`):
-- [ ] HTTPS certificate verification (X.509, RSA/ECDSA, root store).
+- [x] HTTPS certificate verification (X.509, RSA/ECDSA, root store). — done 2026-10-27 (NET-02; test: tests/test_x509.c, tests/test_tls_verify.c, tests/test_tls_local.py, tests/qemu_https.py --internet PASS under HVF + TCG)
 - [ ] Images in the browser (PNG inflate; progressive JPEG on top of
       `kernel/src/image/jpeg.c`).
 - [ ] Downloads to ~/Downloads; NTP clock sync.
@@ -259,7 +259,7 @@ Desktop & apps (`ROADMAP.md`):
 - Only one bounded protected program runs at a time (ARM64).
 - Wi-Fi/Bluetooth: no such hardware in the VM; the Wi-Fi tile controls the
   virtual Ethernet NIC; Bluetooth reports "no hardware".
-- HTTPS is encrypted but the server identity is not verified.
+- HTTPS checks certificates (NET-02) but not revocation (OCSP/CRL); TLS 1.2-only sites fail (NET-03).
 - The wallpaper setting is system-wide, not per user.
 - No hard real-time latency guarantee (synchronous block I/O, snapshot CRC).
 

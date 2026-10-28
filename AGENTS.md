@@ -1,6 +1,6 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-28): NET-02 review: a web page could add a certificate exception (FIX ON BRANCH, PAUSED)
+## LATEST (2026-10-28): NET-02 review: a web page could add a certificate exception (DONE, delivered)
 
 Board f0ce7f, worktree `ojjyOS-v3-check-net02` / branch `check-net02` off
 main a374079. Jonas asked for a check of NET-02 (board 27c8ad).
@@ -24,17 +24,25 @@ schemes now fail in `web/http.c`. Test: `tests/test_web.c` +9 checks (red
 with the old allow-everything rule: 4 FAILs), host + ASan/UBSan pass, both
 dev builds 0 warnings. New live step 1b in `tests/qemu_https.py`
 (`web_server.py /sneaky?to=` page with a meta refresh to ojjy:proceed).
-**Handoff.** Done: the fix + host tests, committed on `check-net02`. Next:
-1. `OJJY_ACCEL=hvf python3 -B tests/qemu_https.py --image build/dev-aarch64/ojjyos3.img --output build/check/https-hvf2`
-   (dev image already built here; the first run was stopped at setup when
-   Jonas paused) → expect PASS incl. "page cannot add an exception" and
-   "host still warns after the hostile page"; read the screenshots.
-2. `qemu_browser.py` + smoke (TCG/HVF) for the browser change.
-3. Card NET-02 `**Log.**` follow-up line, then fast-forward main (rebase if
-   it moved), rebuild the installed image only with Jonas's VM shut down,
-   ready_to_test note, ask Jonas about pushing (repo is PUBLIC).
-Traps: don't touch ojjyOS-v3-net (netcmd.c [CLOCK] line) or ojjyOS-v3-qa
-(release.html TextEdit line): other sessions' uncommitted work.
+**Done (2026-10-28, afternoon).** Live: `qemu_https.py` 9/9 under HVF
+incl. new step 1b ("page cannot add an exception", "host still warns after
+the hostile page"; screenshots read, evidence `build/check/https-hvf3`),
+`qemu_browser.py` HVF, smoke ARM HVF + TCG + Intel (`build/check/live.log`),
+host suite again. The first 1b run crashed in the test typer (no key for
+`%`): `tests/qemu_smoke.py` types `%` as Shift+5 now. Card NET-02 has a
+review `**Log.**` line. main fast-forwarded to the review commits; Jonas's
+`ojjyOS-v3` checkout (branch ui-polish-3, = main) fast-forwarded; no VM was
+running; installed ARM image rebuilt 0 warnings (`build/check-net02-deliver-arm.log`),
+saved user data SHA-256 identical before/after (a1bcea66…), old disk backed
+up by finalize_image in `build/aarch64/backups/`; delivered image passed
+`qemu_https.py` 9/9 on a private copy (`build/check-net02-delivery`);
+READY_TO_TEST.json rewritten. Intel installed image not rebuilt (not
+needed to try it). Not pushed yet: ask Jonas (repo is PUBLIC).
+Leftovers for Jonas to decide (not urgent): the uncommitted lines in
+`ojjyOS-v3-net` (netcmd.c [CLOCK]) and `ojjyOS-v3-qa` (release.html
+TextEdit) are already on main, and every old worktree branch is fully
+merged into main, so those worktrees can be removed once Jonas agrees.
+Next card: NET-03 (TLS 1.2 client).
 
 ## LATEST (2026-10-27, night): NET-02 — HTTPS now proves who the server is
 

@@ -37,8 +37,9 @@ qemu_https.py --internet 17/17 under HVF and TCG; qemu_browser.py; smoke
 ARM TCG/HVF + Intel. TLS verify per handshake: TCG <= 252 ms, HVF 3-38 ms.
 Screenshots read. Evidence `build/net-02-*`. Limits: no revocation
 (OCSP/CRL), no TLS 1.2 (NET-03: badssl.com + craigslist, BUG-1001),
-policies not enforced, exceptions per host. Card stays `doing` only for
-the badssl.com Done-when item (TLS 1.2): Jonas may OK moving it to NET-03.
+policies not enforced, exceptions per host. Card DONE: with Jonas's OK the
+badssl.com Done-when item (TLS 1.2 only) moved to NET-03. Pushed with
+Jonas's OK (GitHub main 246a5aa, then this closing records commit).
 Rebuild vectors: `python3 -I tests/gen_x509_vectors.py > tests/x509_vectors.h`
 (also gen_x509_real.py needs internet, gen_tls_flight.py).
 Delivered: main fast-forwarded, Jonas's `ojjyOS-v3` checkout fast-forwarded
@@ -46,7 +47,7 @@ Delivered: main fast-forwarded, Jonas's `ojjyOS-v3` checkout fast-forwarded
 byte-identical (user-data SHA-256 unchanged), delivered image live-tested
 on a private copy (build/net-02-delivery), build/READY_TO_TEST.json has
 the clicks. Intel installed image not rebuilt (not needed to try it).
-Next: Jonas's call on the badssl item, then NET-03 (TLS 1.2).
+Next: NET-03 (TLS 1.2 client: craigslist + the badssl.com cases).
 
 ## LATEST (2026-10-27): new GitHub README, 2026 copyright, repo description, privacy check
 

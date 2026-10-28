@@ -20,7 +20,7 @@ outside explicit developer flags.
 ## P0 items owned by Track N
 
 ### NET-02 — HTTPS certificate verification (X.509 + chain + CertificateVerify)
-- Phase: P0 · Size: L · Status: doing
+- Phase: P0 · Size: L · Status: done
 - Depends: —
 - Files: NET_WEB_PLAN.md N2–N3 (Track N), kernel/src/net/tls.c, kernel/src/crypto/x509*.c/h (new), kernel/src/crypto/roots_data.c (new), tools/mkroots.py (new), kernel/src/web/http.c/h, kernel/src/ui/browser*.c/h, kernel/src/ui/netcmd.c, tests/test_x509.c (new), tests/test_tls_verify.c (new), tests/qemu_https.py (new)
 
@@ -50,22 +50,13 @@ card also edits the browser files Track D used to own.
 - [x] TLS verifies CertificateVerify with the leaf key and refuses PKCS#1 v1.5 there (host tests + local handshakes). — done 2026-10-27 (test: tests/test_tls_verify.c 46/46 — flipped signature, PKCS#1 and wrong-curve schemes refused, also with ALLOW_UNTRUSTED; tests/test_tls_local.py ECDSA P-256/P-384 + RSA-PSS)
 - [x] The browser shows a real lock for verified HTTPS, and a blue "This connection is not private" page with the reason, Go Back and Visit anyway (per-host, per-session; crossed lock) for bad certificates (live). — done 2026-10-27 (test: tests/qemu_https.py HVF + TCG; screenshots read in build/net-02-live-hvf)
 - [x] Terminal `curl https://…` prints the reason and refuses unless `curl -k` (live). — done 2026-10-27 (test: tests/qemu_https.py curl refuses / curl -k; build/net-02-live-hvf/07-terminal-curl.png)
-- [~] Real sites load with a lock and the badssl.com cases show the right reason under HVF (or the lack of internet is recorded and host tests cover it). — partly 2026-10-27: real sites verified with a lock (example.com, Wikipedia, Apple, Let's Encrypt; build/net-02-live-hvf) and real expired (expired-isrgrootx1.letsencrypt.org) / wrong-host (GitHub IP) warnings show the right reason, self-signed and untrusted-root covered by the local servers. Missing: the badssl.com hosts themselves only speak TLS 1.2, so they fail with handshake_failure before any certificate is seen; needs NET-03 (or Jonas's OK to move this part there).
+- [x] Real sites load with a lock under HVF. — done 2026-10-27 (test: tests/qemu_https.py --internet: example.com, Wikipedia, Apple, Let's Encrypt verified with the lock in Terminal and the browser (build/net-02-live-hvf); real expired (expired-isrgrootx1.letsencrypt.org) and wrong-host (GitHub IP) sites show the warning with the right reason; self-signed and untrusted-root covered by the local servers)
+- [-] The badssl.com cases show the right reason under HVF. — dropped 2026-10-27: moved to NET-03 with Jonas's OK; badssl.com only speaks TLS 1.2, so its hosts fail with handshake_failure before any certificate arrives (NET-03's Done-when lists them)
 - [x] Verification time is logged and stays under ~300 ms per handshake under TCG (or is split across poll turns). — done 2026-10-27 (test: `[TLS] verify` in build/net-02-live-tcg serial ≤ 226 ms, step 5 ≤ 252 ms; HVF 3–38 ms)
 - [x] Definition of Done: both dev builds 0 warnings, scripts/test.sh + sanitizer pass, smoke TCG + HVF pass, evidence in `build/net-02-*`. — done 2026-10-27 (test: build/net-02-step6/build-*.log 0 warnings; build/net-02-final host + sanitized 22/22; build/net-02-smoke-{tcg,hvf,intel} PASS)
 **Tests.** As specified there: tests/test_x509.c, tests/test_tls_verify.c,
 tests/test_tls_local.py (host), tests/qemu_https.py + qemu_browser.py (live).
-**Handoff (2026-10-27).** Everything is built, tested and delivered (all
-nine steps ticked; the installed image has it). The card stays `doing`
-for ONE Done-when item only: the badssl.com hosts speak TLS 1.2 only and
-fail with handshake_failure before a certificate arrives, so they cannot
-show a certificate reason until NET-03. Next: Jonas decides whether that
-part moves to NET-03 (then set `Status: done` and add the **Log.** line;
-NET-03 already lists the badssl cases), or NET-03 is done first. Trap:
-NET-03 depends on NET-02, so `roadmap.py next` will not offer NET-03
-while this card is `doing`. Rebuild vectors with gen_x509_vectors.py /
-gen_x509_real.py (internet) / gen_tls_flight.py; refresh roots with
-tools/mkroots.py.
+**Log.** Done 2026-10-27 (commits 6419311..246a5aa, pushed with Jonas's OK; closed with this records commit): `crypto/x509.c/h` strict DER + X.509 parser and signatures, `x509_chain.c` leaf + path checks, `roots_data.c` 51 roots (`tools/mkroots.py`), `net/tls.c` chain + CertificateVerify + Finished only after CertificateVerify, `TLS_ALLOW_UNTRUSTED`; browser warning page / lock / crossed lock / Visit anyway (per host until restart, browser fetches only), `curl -k`. Fixed on the way: ECDSA hash truncation, `ojjy:` URL queries dropped (Settings buttons). Verified: test_x509 374, test_tls_verify 46, test_tls_local 14 (normal + ASan/UBSan, 22/22 suites), qemu_https.py 17/17 HVF + TCG with internet, qemu_browser.py, smoke ARM TCG/HVF + Intel, both builds 0 warnings, installed image rebuilt with saved data unchanged and live-tested. TLS verify: TCG <= 252 ms, HVF 3-38 ms. Evidence `build/net-02-*`. Limits: no revocation (OCSP/CRL), no TLS 1.2 (NET-03 now also owns the badssl.com cases), certificate policies not enforced, directoryName constraints ignored, exceptions per host, 8 certificates per chain.
 **Pitfalls.** —
 **Refs.** RFC 5280, RFC 8446 §4.4.3, RFC 6125.
 

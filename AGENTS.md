@@ -41,6 +41,12 @@ policies not enforced, exceptions per host. Card stays `doing` only for
 the badssl.com Done-when item (TLS 1.2): Jonas may OK moving it to NET-03.
 Rebuild vectors: `python3 -I tests/gen_x509_vectors.py > tests/x509_vectors.h`
 (also gen_x509_real.py needs internet, gen_tls_flight.py).
+Delivered: main fast-forwarded, Jonas's `ojjyOS-v3` checkout fast-forwarded
+(no VM running), installed ARM image rebuilt 0 warnings with saved data
+byte-identical (user-data SHA-256 unchanged), delivered image live-tested
+on a private copy (build/net-02-delivery), build/READY_TO_TEST.json has
+the clicks. Intel installed image not rebuilt (not needed to try it).
+Next: Jonas's call on the badssl item, then NET-03 (TLS 1.2).
 
 ## LATEST (2026-10-27): new GitHub README, 2026 copyright, repo description, privacy check
 

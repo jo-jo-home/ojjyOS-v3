@@ -50,15 +50,18 @@ class Cert:
 
 
 class Pki:
-    def __init__(self, workdir):
+    def __init__(self, workdir, valid_from=VALID_FROM, valid_until=VALID_UNTIL):
         self.work = workdir
+        self.valid_from, self.valid_until = valid_from, valid_until
         os.makedirs(workdir, exist_ok=True)
         self.serial = 4096
         self.certs = {}
 
     def cert(self, name, key_kind, cn, issuer=None, ext=(), digest="sha256", pss=False,
-             not_before=VALID_FROM, not_after=VALID_UNTIL, org="ojjyOS Test"):
+             not_before=None, not_after=None, org="ojjyOS Test"):
         """issuer: a Cert (signs) or None (self-signed). ext: openssl.cnf lines."""
+        not_before = not_before or self.valid_from
+        not_after = not_after or self.valid_until
         path = os.path.join(self.work, name)
         cert = Cert(name, path, key_kind, cn, "", not_before, not_after, issuer)
         openssl("genpkey", *KEY_OPTS[key_kind], "-out", cert.key)
@@ -88,9 +91,10 @@ LEAF = ["basicConstraints = critical,CA:false", "keyUsage = critical,digitalSign
         "extendedKeyUsage = serverAuth"]
 
 
-def build(workdir):
-    """The PKI the C tests expect (names are referenced from test_x509.c)."""
-    p = Pki(workdir)
+def build(workdir, valid_from=VALID_FROM, valid_until=VALID_UNTIL):
+    """The PKI the C tests expect (names are referenced from test_x509.c).
+    The live handshake test passes dates around today instead."""
+    p = Pki(workdir, valid_from, valid_until)
     # A: RSA-4096 root -> P-384 intermediate (pathLen 0) -> P-256 leaf
     root_a = p.cert("root_a", "rsa4096", "ojjyOS Test Root A", None, CA)
     int_a = p.cert("int_a", "p384", "ojjyOS Test Intermediate A", root_a,

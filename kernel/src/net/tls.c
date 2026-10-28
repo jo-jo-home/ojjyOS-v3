@@ -8,7 +8,11 @@
  */
 
 #include "net/tls.h"
+#include "net/net.h"
+#include "crypto/x509.h"
+#include "clock.h"
 #include "random.h"
+#include "serial.h"
 #include "string.h"
 
 #define CT_CCS        20
@@ -28,6 +32,15 @@
 
 #define SUITE_AES128_GCM   0x1301
 #define SUITE_CHACHA20     0x1303
+
+#define ALERT_BAD_CERTIFICATE      42
+#define ALERT_CERTIFICATE_EXPIRED  45
+#define ALERT_ILLEGAL_PARAMETER    47
+#define ALERT_UNKNOWN_CA           48
+#define ALERT_DECRYPT_ERROR        51
+
+/* Until the first NTP sync the RTC is only the firmware's guess. */
+#define CLOCK_SLACK_UNSYNCED  (48 * 3600)
 
 static const uint8_t hrr_random[32] = {
     0xcf, 0x21, 0xad, 0x74, 0xe5, 0x9a, 0x61, 0x11, 0xbe, 0x1d, 0x8c, 0x02, 0x1e, 0x65, 0xb8, 0x91,
@@ -141,6 +154,18 @@ static void put_encrypted(TlsConn *c, uint8_t inner_type, const uint8_t *data, s
     c->out_len += total + 5;
 }
 
+/* Tell the server why we stop (encrypted fatal alert), then fail. */
+static void fail_alert(TlsConn *c, uint8_t desc, const char *msg)
+{
+    if (c->state == TLS_FAILED) return;
+    if (c->rd_encrypted) {
+        uint8_t alert[2] = {2, desc};
+        put_encrypted(c, CT_ALERT, alert, sizeof(alert));
+        flush(c);
+    }
+    fail(c, msg);
+}
+
 static void send_handshake(TlsConn *c, const uint8_t *msg, size_t len, bool encrypted)
 {
     sha256_update(&c->transcript, msg, len);
@@ -159,11 +184,18 @@ static bool host_is_ip(const char *h)
 
 void tls_start(TlsConn *c, const char *host, TlsIo io)
 {
+    tls_start_ex(c, host, io, 0);
+}
+
+void tls_start_ex(TlsConn *c, const char *host, TlsIo io, unsigned flags)
+{
     /* Everything before the big buffers, then the buffer fill levels. */
     memset(c, 0, __builtin_offsetof(TlsConn, in));
     c->in_len = c->hs_len = c->app_off = c->app_len = c->out_off = c->out_len = 0;
     c->state = TLS_HANDSHAKE;
     c->io = io;
+    c->flags = flags;
+    c->cert_status = -1;
     strncpy(c->host, host, sizeof(c->host) - 1);
     c->host[sizeof(c->host) - 1] = '\0';
     sha256_init(&c->transcript);
@@ -194,8 +226,11 @@ void tls_start(TlsConn *c, const char *host, TlsIo io)
     }
     static const uint8_t fixed[] = {
         0x00, 0x0a, 0x00, 0x04, 0x00, 0x02, 0x00, 0x1d,                         /* groups: x25519 */
-        0x00, 0x0d, 0x00, 0x14, 0x00, 0x12, 0x04, 0x03, 0x08, 0x04, 0x04, 0x01, /* signature algorithms */
-        0x05, 0x03, 0x08, 0x05, 0x05, 0x01, 0x08, 0x06, 0x06, 0x01, 0x08, 0x07,
+        /* signature_algorithms: only what x509.c verifies. ECDSA P-256/P-384 and
+         * RSA-PSS for CertificateVerify; the PKCS#1 entries are for signatures
+         * inside certificates only (RFC 8446 4.2.3). No Ed25519. */
+        0x00, 0x0d, 0x00, 0x12, 0x00, 0x10, 0x04, 0x03, 0x05, 0x03, 0x08, 0x04, 0x08, 0x05,
+        0x08, 0x06, 0x04, 0x01, 0x05, 0x01, 0x06, 0x01,
         0x00, 0x2b, 0x00, 0x03, 0x02, 0x03, 0x04,                               /* supported_versions: 1.3 */
         0x00, 0x10, 0x00, 0x0b, 0x00, 0x09, 0x08, 'h', 't', 't', 'p', '/', '1', '.', '1', /* ALPN */
         0x00, 0x2d, 0x00, 0x02, 0x01, 0x01,                                     /* psk_key_exchange_modes */
@@ -281,22 +316,118 @@ static void handle_encrypted_extensions(TlsConn *c, const uint8_t *b, size_t len
     c->stage = 2;
 }
 
+static uint8_t alert_for(X509Status st)
+{
+    switch (st) {
+        case X509_E_EXPIRED: case X509_E_NOT_YET_VALID: return ALERT_CERTIFICATE_EXPIRED;
+        case X509_E_UNKNOWN_ISSUER: case X509_E_SELF_SIGNED: return ALERT_UNKNOWN_CA;
+        default: return ALERT_BAD_CERTIFICATE;
+    }
+}
+
+static void copy_text(char *dst, size_t size, const char *src)
+{
+    strncpy(dst, src, size - 1);
+    dst[size - 1] = '\0';
+}
+
 static void handle_certificate(TlsConn *c, const uint8_t *b, size_t len)
 {
-    /* context<0..255>, certificate_list<0..2^24-1> of (cert_data<1..2^24-1>, extensions) */
-    if (len < 4) { fail(c, "malformed Certificate"); return; }
-    size_t o = 1 + b[0];
-    if (o + 3 > len) { fail(c, "malformed Certificate"); return; }
-    size_t list = rd24(b + o); o += 3;
-    if (o + list > len) { fail(c, "malformed Certificate"); return; }
-    if (list >= 3) {
+    /* context<0..255>, certificate_list<0..2^24-1> of (cert_data<1..2^24-1>, extensions<0..2^16-1>) */
+    if (len < 4 || b[0] != 0) { fail_alert(c, ALERT_ILLEGAL_PARAMETER, "malformed Certificate"); return; }
+    size_t o = 1;
+    size_t end = o + 3 + rd24(b + o);
+    o += 3;
+    if (end != len) { fail_alert(c, ALERT_ILLEGAL_PARAMETER, "malformed Certificate"); return; }
+    X509Span certs[TLS_MAX_CERTS];
+    size_t count = 0;
+    while (o < end) {
+        if (end - o < 3) { fail_alert(c, ALERT_ILLEGAL_PARAMETER, "malformed Certificate"); return; }
         size_t cl = rd24(b + o);
-        if (o + 3 + cl <= len) {
-            c->cert_len = cl < sizeof(c->cert) ? cl : 0;      /* very large leaves are skipped */
-            if (c->cert_len) memcpy(c->cert, b + o + 3, cl);
+        o += 3;
+        if (cl == 0 || cl > end - o || end - o - cl < 2) { fail_alert(c, ALERT_ILLEGAL_PARAMETER, "malformed Certificate"); return; }
+        if (count < TLS_MAX_CERTS) { certs[count].p = b + o; certs[count].len = cl; count++; }
+        o += cl;
+        size_t el = rd16(b + o);                    /* per-certificate extensions: skipped */
+        o += 2;
+        if (el > end - o) { fail_alert(c, ALERT_ILLEGAL_PARAMETER, "malformed Certificate"); return; }
+        o += el;
+    }
+    if (!count) { fail_alert(c, ALERT_BAD_CERTIFICATE, "the server sent no certificate"); return; }
+
+    /* The leaf's key is needed for CertificateVerify after this message is gone. */
+    static X509Cert leaf;                           /* static: kernel stacks are small */
+    if (!x509_parse(certs[0].p, certs[0].len, &leaf)) {
+        fail_alert(c, ALERT_BAD_CERTIFICATE, "malformed certificate"); return;
+    }
+    const X509Span *key = leaf.key.type == X509_KEY_RSA ? &leaf.key.n : &leaf.key.point;
+    if (leaf.key.type == X509_KEY_NONE || key->len > sizeof(c->leaf_key)) {
+        fail_alert(c, ALERT_BAD_CERTIFICATE, "unsupported server key type"); return;
+    }
+    c->leaf_key_type = leaf.key.type;
+    c->leaf_e = leaf.key.e;
+    c->leaf_key_len = (uint16_t)key->len;
+    memcpy(c->leaf_key, key->p, key->len);
+
+    uint64_t started = net_now();
+    X509Policy policy = {x509_builtin_roots, x509_builtin_root_count, clock_now_unix(),
+                         clock_ntp_synced() ? 0 : CLOCK_SLACK_UNSYNCED};
+    static X509Result result;
+    X509Status st = x509_verify_chain(certs, count, c->host, &policy, &result);
+    c->verify_ms = (uint32_t)(net_now() - started);
+    c->cert_status = (int)st;
+    copy_text(c->cert_subject, sizeof(c->cert_subject), result.subject);
+    copy_text(c->cert_issuer, sizeof(c->cert_issuer), result.issuer);
+    copy_text(c->cert_root, sizeof(c->cert_root), result.root);
+    if (st == X509_OK) {
+        c->verified = true;
+    } else {
+        copy_text(c->cert_error, sizeof(c->cert_error), result.reason);
+        if (!(c->flags & TLS_ALLOW_UNTRUSTED)) {
+            c->cert_failed = true;
+            fail_alert(c, alert_for(st), result.reason);
+            return;
         }
     }
     c->stage = 3;
+}
+
+/* CertificateVerify (RFC 8446 4.4.3): the server signs the transcript up to
+ * Certificate with the leaf key, proving it holds that key. */
+static void handle_cert_verify(TlsConn *c, const uint8_t *b, size_t len, const uint8_t th[32])
+{
+    if (len < 4 || 4 + (size_t)rd16(b + 2) != len) { fail_alert(c, ALERT_DECRYPT_ERROR, "malformed CertificateVerify"); return; }
+    uint16_t scheme = rd16(b);
+    int alg = 0;
+    if (scheme == 0x0403 && c->leaf_key_type == X509_KEY_EC_P256) alg = X509_SIG_ECDSA_SHA256;
+    else if (scheme == 0x0503 && c->leaf_key_type == X509_KEY_EC_P384) alg = X509_SIG_ECDSA_SHA384;
+    else if (scheme == 0x0804 && c->leaf_key_type == X509_KEY_RSA) alg = X509_SIG_RSA_PSS_SHA256;
+    else if (scheme == 0x0805 && c->leaf_key_type == X509_KEY_RSA) alg = X509_SIG_RSA_PSS_SHA384;
+    else if (scheme == 0x0806 && c->leaf_key_type == X509_KEY_RSA) alg = X509_SIG_RSA_PSS_SHA512;
+    if (!alg) {
+        fail_alert(c, ALERT_ILLEGAL_PARAMETER, (scheme >> 8) <= 6 && (scheme & 0xff) == 1
+                   ? "the server signed the handshake with PKCS#1 v1.5 (not allowed in TLS 1.3)"
+                   : "the server signed the handshake with an unsupported scheme");
+        return;
+    }
+    static const char context[] = "TLS 1.3, server CertificateVerify";
+    uint8_t content[64 + sizeof(context) + 32];   /* sizeof includes the 0 separator */
+    memset(content, 0x20, 64);
+    memcpy(content + 64, context, sizeof(context));
+    memcpy(content + 64 + sizeof(context), th, 32);
+    X509Key key;
+    memset(&key, 0, sizeof(key));
+    key.type = c->leaf_key_type;
+    key.e = c->leaf_e;
+    key.n.p = key.point.p = c->leaf_key;
+    key.n.len = key.point.len = c->leaf_key_len;
+    uint64_t started = net_now();
+    bool ok = x509_verify_message(alg, -1, &key, content, sizeof(content), b + 4, len - 4);
+    c->verify_ms += (uint32_t)(net_now() - started);
+    if (!ok) { fail_alert(c, ALERT_DECRYPT_ERROR, "bad signature: the server does not hold its certificate's key"); return; }
+    serial_printf("[TLS] verify %u ms %s%s%s\n", (unsigned)c->verify_ms, c->host,
+                  c->verified ? " verified by " : " NOT verified: ", c->verified ? c->cert_root : c->cert_error);
+    c->stage = 4;
 }
 
 static void send_client_finished(TlsConn *c)
@@ -369,8 +500,13 @@ static void process_handshake(TlsConn *c)
         if (len > TLS_HS_MAX - 4) { fail(c, "handshake message too large"); return; }
         if (c->hs_len - o < 4 + len) break;
         const uint8_t *msg = c->hs + o, *body = msg + 4;
-        if (type == HS_FINISHED && c->stage >= 2 && c->state == TLS_HANDSHAKE) {
+        if (type == HS_FINISHED && c->stage == 4 && c->state == TLS_HANDSHAKE) {
             handle_finished(c, msg, 4 + len);           /* hashes itself after verifying */
+        } else if (type == HS_CERT_VERIFY && c->stage == 3 && c->state == TLS_HANDSHAKE) {
+            uint8_t th[32];
+            transcript_hash(c, th);                     /* signed: everything before this message */
+            sha256_update(&c->transcript, msg, 4 + len);
+            handle_cert_verify(c, body, len, th);
         } else if (c->state == TLS_OPEN) {
             if (type == HS_KEY_UPDATE) handle_key_update(c, body, len);
             /* NewSessionTicket and others: ignored (no resumption) */
@@ -380,7 +516,6 @@ static void process_handshake(TlsConn *c)
             else if (type == HS_ENCRYPTED_EXT && c->stage == 1) handle_encrypted_extensions(c, body, len);
             else if (type == HS_CERT_REQUEST && c->stage == 2) c->cert_requested = true;
             else if (type == HS_CERTIFICATE && c->stage == 2) handle_certificate(c, body, len);
-            else if (type == HS_CERT_VERIFY && c->stage == 3) c->stage = 4;
             else { fail(c, "unexpected handshake message from the server"); return; }
         }
         o += 4 + len;

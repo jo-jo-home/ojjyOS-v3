@@ -122,6 +122,7 @@ def c_array(name, data):
 def main():
     ap = argparse.ArgumentParser(description="Generate kernel/src/crypto/roots_data.c")
     ap.add_argument("--pem", help="PEM bundle instead of the macOS system roots")
+    ap.add_argument("--all", action="store_true", help="every root in the bundle (test trust stores)")
     args = ap.parse_args()
     if args.pem:
         source = args.pem
@@ -138,7 +139,7 @@ def main():
             print("mkroots: skipped an unparseable certificate", file=sys.stderr)
     now = time.time()
     chosen, seen = [], set()
-    for label in WANTED:
+    for label in ([c["label"] for c in certs] if args.all else WANTED):
         found = [c for c in certs if c["label"] == label]
         if not found:
             print(f"mkroots: wanted root not in source: {label}", file=sys.stderr)

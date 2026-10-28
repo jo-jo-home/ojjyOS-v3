@@ -68,6 +68,7 @@ COMMON_C_SOURCES = src/main.c \
                    src/crypto/bignum.c \
                    src/crypto/rsa.c \
                    src/crypto/ecdsa.c \
+                   src/crypto/x509.c \
                    src/crypto/x25519.c \
                    src/crypto/aes_gcm.c \
                    src/crypto/chacha_poly.c \

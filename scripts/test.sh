@@ -34,6 +34,7 @@ fi
     kernel/src/image/{inflate,png,gif,image,jpeg,webp,svg}.c kernel/src/crypto/{sha256,chacha_poly}.c kernel/src/{random,string}.c -o "$OUT/test_web"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_crypto.c kernel/src/crypto/{sha256,x25519,aes_gcm,chacha_poly}.c kernel/src/string.c -o "$OUT/test_crypto"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_pubkey.c kernel/src/crypto/{sha256,sha512,bignum,rsa,ecdsa}.c kernel/src/string.c -o "$OUT/test_pubkey"
+"$HOST_CC" "${FLAGS[@]}" -Itests tests/test_x509.c kernel/src/crypto/{x509,sha256,sha512,bignum,rsa,ecdsa}.c kernel/src/string.c -o "$OUT/test_x509"
 "$HOST_CC" "${FLAGS[@]}" tests/test_gfx.c kernel/src/{gfx,string}.c -o "$OUT/test_gfx"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_jpeg.c kernel/src/image/jpeg.c kernel/src/string.c -o "$OUT/test_jpeg"
 "$HOST_CC" "${FLAGS[@]}" -DWALLPACK_HOST_TEST tests/test_wallpack.c kernel/src/image/wallpack.c kernel/src/string.c -o "$OUT/test_wallpack"
@@ -47,7 +48,7 @@ open(sys.argv[2], "wb").write(w.build_pack(items))' tools/import_wallpapers.py "
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_app_polish.c kernel/src/ui/{calculator,calcmath,app_metrics}.c kernel/src/string.c -o "$OUT/test_app_polish"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_notes.c kernel/src/ui/notes.c kernel/src/fs/{ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_notes"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_textedit.c kernel/src/ui/textedit.c kernel/src/string.c -o "$OUT/test_textedit"
-for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_calc test_app_polish test_notes test_textedit test_clock test_gfx test_jpeg; do
+for test in test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_x509 test_calc test_app_polish test_notes test_textedit test_clock test_gfx test_jpeg; do
     echo "Running $test"
     "$OUT/$test"
 done

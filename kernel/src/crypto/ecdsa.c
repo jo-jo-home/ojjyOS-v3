@@ -314,8 +314,10 @@ bool ecdsa_verify_raw(int curve_id, const uint8_t *pub, size_t pub_len,
     if (bn_is_zero(&r) || bn_cmp(&r, &ec.n) >= 0) return false;
     if (bn_is_zero(&s) || bn_cmp(&s, &ec.n) >= 0) return false;
 
-    /* e = hash mod n */
+    /* e = the leftmost bit-length-of-n bits of the hash, mod n (FIPS 186-4
+     * 6.4; both orders are whole bytes long, so truncation is by bytes). */
     static BigNum hash_bn;
+    if (hash_len > (size_t)cb) hash_len = (size_t)cb;
     bn_set_bytes(&hash_bn, hash, hash_len);
     if (!bn_mod_reduce(&e, &hash_bn, &ec.n)) return false;
 

@@ -1,6 +1,7 @@
 # HW-13: measured memory limits and implementation decision
 
-Created by Jonas Lee. Part 1, 2026-10-29. **Design, not implemented.**
+Created by Jonas Lee. Parts 1–2, 2026-10-29. **Runtime PMM implemented;
+high mappings/callers remain a design for parts 3–4.**
 Baseline: `043894c`; branch `hw-13`, worktree `ojjyOS-v3-hw-13`.
 The HW-13 card owns the five-part checklist and handoff. Main must not
 move until part 5. The existing launch memory warning remains until then.
@@ -245,6 +246,40 @@ fast-forwards main only after combined-source tests and safely delivers
 with stopped VMs and before/after saved-data/settings hashes.
 
 ## 6. Reproduction and handoff
+
+### Part 2 implementation notes (2026-10-29)
+
+`memory.c` now implements the runtime per-region design without changing
+any allocation caller or page table. `pmm_init_ranges` is a boot-only,
+failure-closed entry; `pmm_init` supplies the actual kernel linker bounds.
+It validates the complete map before touching bootstrap RAM, reserves
+LOW runtime metadata and incoming map/BootInfo/framebuffer ranges, and
+copies descriptors LOW. An empty descriptor is ignored; nonempty physical
+ranges must be page aligned. Padded/odd descriptor strides are supported.
+
+`PmmStats` uses byte units: total = described RAM types 1–10, usable =
+initial managed capacity after reservations, low_free = currently
+allocatable free bytes, high_free = tracked but inactive capacity.
+The legacy free getter returns only low_free. HIGH always returns zero;
+ANY currently selects LOW. No high-readiness enable switch is exposed yet.
+`pmm_free_page` requires an aligned eligible page actually owned by the
+allocator, preventing reserved-page and hole frees from creating memory.
+
+The existing `Total usable memory` receipt remains alongside the new
+RAM/usable line for compatibility with current boot tests. It now means
+managed capacity (including inactive high capacity), not launch settings
+or the largest address. Final UI wording remains part 5.
+
+Part-2 live evidence is in `build/hw-13-part2/`. VZ8 logs 8191 MiB RAM,
+8171 MiB initial managed capacity, 585228 free LOW pages and 1506699
+inactive HIGH pages, with 528384 bytes of metadata at `0x70000000`.
+The 97-page LOW reduction from the part-1 baseline is the 129-page runtime
+metadata reservation minus the removed 32-page static bitmap. Both dev
+builds have zero warnings; full private TCG/HVF/Intel smokes pass. The
+native memory boot succeeds but the full VZ script still fails BUG-1008
+after a +1118 ms NTP correction; the separate clock repair is not part 2.
+Final `host-complete.log` and `sanitized-complete.log` pass the full suites,
+including 38 PMM checks and 200000 randomized allocation/free operations.
 
 Always start with `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"`.
 `scripts/mkfs.sh` once in a new worktree, then `scripts/test.sh` (the default

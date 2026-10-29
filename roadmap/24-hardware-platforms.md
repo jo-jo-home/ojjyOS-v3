@@ -126,12 +126,12 @@ implementation.
 
 **Steps.**
 - [x] (part 1) Memory maps measured and Decision written — done 2026-10-29 (verified: `build/hw-13-part1/memory-maps.txt`, all 242 descriptors from five private boots; complete maps/counts/BARs, `summary.json` and `preservation.json`; host + ASan/UBSan and both uninstrumented dev builds pass with zero warnings). Files: this card, docs/hw-13-memory-design.md, D-026, MEM-03/04 preparation boxes and context. Trap: removed temporary memory.c logging; VZ 4/8 full test clock failures remain explicitly reported as BUG-1008, not hidden.
-- [ ] (part 2) In memory.c/h and new tests/test_pmm.c, bootstrap runtime region/bitmap metadata plus a LOW copy of the firmware map, reserve all live ranges, add LOW/HIGH/ANY APIs with high disabled, preserve legacy LOW wrappers and emit `[PMM] <total> MB RAM, <usable> MB usable` with defined low/high/free counts. Tests: fake sparse/unsorted/many-region/>4-GiB/64-GiB maps, malformed/overlap/overflow/reservation/OOM/bad-free cases, random invariants normal + ASan/UBSan, both zero-warning builds. Trap: metadata cannot allocate itself through an uninitialized PMM; high PA is never an immediately dereferenceable pointer. Stop green without changing caller policies.
+- [x] (part 2) In memory.c/h and new tests/test_pmm.c, bootstrap runtime region/bitmap metadata plus a LOW copy of the firmware map, reserve all live ranges, add LOW/HIGH/ANY APIs with high disabled, preserve legacy LOW wrappers and emit `[PMM] <total> MB RAM, <usable> MB usable` with defined low/high/free counts. Tests: fake sparse/unsorted/many-region/>4-GiB/64-GiB maps, malformed/overlap/overflow/reservation/OOM/bad-free cases, random invariants normal + ASan/UBSan, both zero-warning builds. Trap: metadata cannot allocate itself through an uninitialized PMM; high PA is never an immediately dereferenceable pointer. Stop green without changing caller policies. — done 2026-10-29 (test: build/hw-13-part2/host-complete.log and sanitized-complete.log, 38 PMM checks plus 200000 random operations; both final builds zero warnings; TCG/HVF/Intel full smokes pass; native VZ8 memory boot verified, full clock gate still fails inherited BUG-1008 after NTP, explicitly not credited as a full VZ test pass).
 - [ ] (part 3) Implement MEM-03 HW13-A and MEM-04 HW13-A shared groundwork in ARM user_arch.c, memory.c/h and kernel/mm/kvm.c/h; LOW page tables, TTBR1 RAM-only alias, checked translation and mapped-buffer API; user_image.c high frames and complete load/copy/wipe/cache conversion; browser.c arenas/decode scratch and web/http.c TLS pool opt in. Tests: descriptor/translation host cases plus private VZ 4/8 GiB and QEMU HVF 4 GiB actual high PA write/read/free and high-backed protected execution with cleanup equality, forbidden kernel-alias/guard/MMIO/W^X accesses. Trap: original descriptor storage is itself high; remove conflicting high RAM Device identity aliases, never cache-map the PCI BARs or expose the alias to EL0. Tick matching MEM preparation boxes only after proof.
 - [ ] (part 4) Implement MEM-03 HW13-X and MEM-04 HW13-X in paging.c/h and kernel/mm/kvm.c/h, real Intel high mapped allocations, supervisor/NX/PA-width guards, allocate all missing table levels and propagate failure. Add tests for simultaneous >2.5 GiB ownership (target 3 GiB), every-page PA-derived write/read verification, logged low/high peak bytes and high PA bounds, all frees/recovery; run on VZ/ARM HVF and Intel 4 GiB. Tests: both zero-warning builds, normal/sanitized hosts and full TCG/HVF/Intel/VZ protected/persistence/browser/TLS regression matrix. Trap: sum of repeated one-page allocations is not peak memory use; no fake Intel ring-3 claim. Repair BUG-1008 in tests/vz_boot.py with a deterministic NTP-aware clock assertion test, not a skipped clock gate; remove its tracker line only with verified fix.
 - [ ] (part 5) In compositor.c show measured RAM/managed/free correctly in About and Activity Monitor; remove LaunchWindow.swift temporaryMemoryNote only after actual high-memory proof; review light/dark screenshots, update docs/AGENTS/TODO/card/STATUS, retest combined source, fast-forward main and data-preserving delivery only with no running VM. Tests: serial/UI agreement at VZ 2/4/8 GiB, host/Swift/build/live regression gates, before/after saved-data/settings hashes, private delivered-image boot, ready_to_test note. Trap: requested launch RAM and highest physical address are not usable RAM; never modify an installed live disk. Only part 5 may land main.
 **Done when.**
-- [ ] (part 2) Host fake-map and sanitizer tests prove dynamic metadata/reservations/zones/statistics without static growth or high-pointer dereferences; legacy callers still receive LOW pages. Files/tests/trap: memory.c/h + test_pmm.c, both builds; do not equate tracking high pages with using them.
+- [x] (part 2) Host fake-map and sanitizer tests prove dynamic metadata/reservations/zones/statistics without static growth or high-pointer dereferences; legacy callers still receive LOW pages. Files/tests/trap: memory.c/h + test_pmm.c, both builds; do not equate tracking high pages with using them. — done 2026-10-29 (test: 38 PMM assertions normal/sanitized, including exact 4-GiB LOW endpoint and disabled HIGH; build/hw-13-part2/native-memory-proof.json records VZ8 8191 MB RAM / 8171 MB usable with 1506699 HIGH pages tracked but disabled; all existing callers unchanged).
 - [ ] (part 3) Actual high frames and chosen high-backed CPU buffers work under VZ 4/8 GiB and ARM HVF 4 GiB with unchanged protected isolation and cleanup equality. Files/tests/trap: ARM/user_image/browser/http/kvm tests; a successful boot or printed total alone is insufficient.
 - [ ] (part 4) Intel uses high RAM through valid mappings and the live peak-owned >2.5 GiB write/read/free test and complete regression matrix pass. Files/tests/trap: paging/kvm/live memory tests; every held page is distinct, firmware/Device addresses are never RAM.
 - [ ] (part 5) Multiple VZ RAM settings produce matching real PMM/About/Monitor figures; temporary memory warning removed, reviewed screenshots and data-preserving installed delivery verified. Files/tests/trap: compositor/LaunchWindow/delivery; no UI-only placeholder claim.
@@ -149,23 +149,41 @@ BAR0s move from 0x1000x0000 to 0x1800x0000 and 0x2800x0000. All five
 maps complete; VZ 4/8 full boot-test clock gate failed after NTP correction
 (BUG-1008), despite main-loop/device/DHCP success. Final host/sanitized
 suites and uninstrumented builds green. No installed delivery or main move.
-**Handoff.** Next session is **hw13-2 only**, on `hw-13` in
+**Log.** 2026-10-29 part 2: runtime PMM metadata implemented in memory.c/h,
+legacy APIs and ANY remain LOW, HIGH fails closed. New 38-assertion host
+suite covers 64 GiB, 260 regions, 200000 random operations, malformed maps,
+reservations, low-only exhaustion/free and boundary checks. Both full host
+and ASan/UBSan suites pass, both dev builds zero warnings, private full
+TCG/HVF/Intel smokes pass. VZ8 reaches main loop/device/DHCP and logs
+8191 MB RAM / 8171 MB usable; metadata 528384 bytes, LOW 585228 pages,
+HIGH 1506699 tracked/disabled. The full VZ test still fails BUG-1008's
+uncorrected clock expectation after a +1118 ms NTP correction; not fixed,
+skipped or claimed green here. Evidence build/hw-13-part2/matrix.json and
+native-memory-proof.json, plus host-complete/sanitized-complete logs.
+No page tables/callers/UI/installed images/main changed.
+**Handoff.** Next session is **hw13-3 only**, on `hw-13` in
 `~/Developer/ojjyOS-kernel/ojjyOS-v3-hw-13`; take paused board `f5c05f`.
 Read Decision plus docs/hw-13-memory-design.md and MEM-03/04 shared boxes.
 Re-run `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"` then
 `bash scripts/test.sh` before coding; the default LibreSSL failed TLS
-fixture date flags, Homebrew OpenSSL passes. Part 1 raw evidence and
-logging patch/scripts are in ignored build/hw-13-part1; do not ship the
-probe images or assume their maps are new allocator proof. Implement only
-part 2 runtime metadata/LOW-safe APIs and fake-map tests, retaining high
-allocation disabled until part 3 mappings. Check bounds, kernel/firmware/
-map/framebuffer/self-reservations and owned frees. Original map addresses
-are high at 4/8 GiB, so copy them LOW while firmware tables are still live.
-Kernel links at 0x71000000 today, not old 0x41000000. Final checks:
-normal/sanitized hosts, both zero-warning dev builds, roadmap check/status
-and strict checklist. Leave future boxes open, update Handoff, commit and
-pause; main/installed images stay untouched until hw13-5. BUG-1008 is a
-known test-clock contract gap scheduled for part 4, not an allocator bug.
+fixture date flags, Homebrew OpenSSL passes. Parts 1 and 2 are complete.
+Runtime pmm_init_ranges bootstraps metadata and copies the map LOW; stats
+have total/usable/low_free/high_free/metadata fields (byte units). HIGH is
+deliberately disabled and ANY still LOW; no enable hook or high-access
+backend exists yet. Part 3 must implement ARM mappings/translation before
+allowing any HIGH allocation, then convert all selected loader/copy/wipe/
+cache and CPU-only buffer callers together. Follow MEM-03/04 HW13-A shared
+boxes; do not tick Intel/part-4 or UI/part-5 boxes. Host tests use
+OJJY_PMM_HOST_TEST physical storage translation (not production pointers).
+Part-2 final source and evidence fingerprints are under build/hw-13-part2;
+three full QEMU smokes pass. Native VZ8 memory boot succeeded but the full
+clock gate FAILED inherited BUG-1008; keep reporting it until its separate
+deterministic NTP-aware test repair (part 4), never silently skip it.
+Kernel links at 0x71000000. Run normal/sanitized hosts, both zero-warning
+dev builds and relevant high-page live/isolation checks; then checklist,
+update Handoff, commit and pause. main/installed images stay untouched
+until hw13-5. The part-1 commit 3d81716 was pushed with explicit approval;
+part-2 commits require a NEW push yes.
 
 ### HW-14 — QEMU script and ojjy Control use the launch settings
 - Phase: P2 · Size: S · Status: todo

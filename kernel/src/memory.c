@@ -9,304 +9,224 @@
 #include "string.h"
 #include "boot_info.h"
 
-/* Bitmap for tracking physical pages */
-#define MAX_MEMORY_GB       4ULL
-#define MAX_MEMORY_BYTES    (MAX_MEMORY_GB * 1024ULL * 1024ULL * 1024ULL)
-#define MAX_PAGES           (MAX_MEMORY_BYTES / PAGE_SIZE)
-#define BITMAP_SIZE         (MAX_PAGES / 8)
+/* Runtime PMM metadata: two bits per reclaimable page, no physical-span cap.
+ * Existing callers remain LOW until the architecture has high RAM mappings.
+ * Created by Jonas Lee. */
+#define LOW_END (1ULL << 32)
+#define LIMIT64 (~0ULL)
+typedef struct {
+    uint64_t base, pages, cursor;
+    uint8_t *eligible, *allocated;
+} PmmRegion;
+extern char _kernel_start[], _kernel_end[];
+static PmmRegion *regions;
+static uint64_t region_count;
+static PmmStats stats;
+static bool pmm_ready;
 
-/* Static bitmap (4GB max = 128KB bitmap) */
-static uint8_t page_bitmap[BITMAP_SIZE];
+#ifdef OJJY_PMM_HOST_TEST
+extern void *pmm_host_pointer(uint64_t physical, size_t bytes);
+extern uint64_t pmm_host_address(const void *pointer);
+#define physical_pointer(a,n) pmm_host_pointer((a),(n))
+#define boot_address(p) pmm_host_address((const void *)(uintptr_t)(p))
+#else
+#define physical_pointer(a,n) ((void *)(uintptr_t)(a))
+#define boot_address(p) ((uint64_t)(uintptr_t)(p))
+#endif
 
-/* Start and end of kernel image (including .bss), provided by linker script */
-extern char _kernel_start[];
-extern char _kernel_end[];
-
-/* Memory statistics */
-static uint64_t total_memory = 0;
-static uint64_t free_memory = 0;
-static uint64_t bitmap_pages = 0;
-static bool pmm_ready = false;   /* No allocations before pmm_init */
-
-/*
- * Mark a page as used
- */
-static void pmm_set_page_used(uint64_t page_index)
+static bool overlap(uint64_t a, uint64_t end, uint64_t b, uint64_t bend)
+{ return a < end && b < bend && a < bend && b < end; }
+static bool bit(const uint8_t *b, uint64_t n) { return (b[n/8] >> (n%8)) & 1; }
+static void set_bit(uint8_t *b, uint64_t n, bool value)
+{ if (value) b[n/8] |= 1u << (n%8); else b[n/8] &= ~(1u << (n%8)); }
+static bool reclaimable(const EfiMemoryDescriptor *d)
 {
-    page_bitmap[page_index / 8] |= (1 << (page_index % 8));
+    return !(d->attribute & (1ULL << 63)) &&
+        (d->type == 3 || d->type == 4 || d->type == 7);
+}
+static void descriptor(const BootInfo *info, uint64_t i, EfiMemoryDescriptor *d)
+{ memcpy(d, (const uint8_t *)(uintptr_t)info->mmap_addr + i*info->mmap_desc_size, sizeof(*d)); }
+
+/* All boot exclusions are byte ranges, rounded implicitly by overlap with
+ * whole pages. Original loader-owned objects remain reserved too. */
+static bool excluded(uint64_t start, uint64_t end, const BootInfo *info,
+                     uint64_t ks, uint64_t ke, uint64_t meta, uint64_t mend)
+{
+    return start < 0x100000 || overlap(start,end,ks,ke) ||
+        overlap(start,end,boot_address(info),boot_address(info)+sizeof(*info)) ||
+        overlap(start,end,boot_address(info->mmap_addr),boot_address(info->mmap_addr)+info->mmap_size) ||
+        overlap(start,end,info->fb_addr,info->fb_addr+(uint64_t)info->fb_pitch*info->fb_height) ||
+        overlap(start,end,meta,mend);
 }
 
-/*
- * Mark a page as free
- */
-static void pmm_set_page_free(uint64_t page_index)
+/* A separate entry makes bootstrap reservations host-testable without
+ * pretending host linker symbols are guest physical addresses. */
+bool pmm_init_ranges(BootInfo *info, uint64_t ks, uint64_t ke)
 {
-    page_bitmap[page_index / 8] &= ~(1 << (page_index % 8));
-}
-
-/*
- * Check if a page is used
- */
-static bool pmm_is_page_used(uint64_t page_index)
-{
-    return (page_bitmap[page_index / 8] & (1 << (page_index % 8))) != 0;
-}
-
-/*
- * Convert UEFI memory type to string
- */
-static const char *memory_type_string(uint32_t type)
-{
-    switch (type) {
-        case EFI_RESERVED_MEMORY_TYPE: return "Reserved";
-        case EFI_LOADER_CODE: return "Loader Code";
-        case EFI_LOADER_DATA: return "Loader Data";
-        case EFI_BOOT_SERVICES_CODE: return "Boot Services Code";
-        case EFI_BOOT_SERVICES_DATA: return "Boot Services Data";
-        case EFI_RUNTIME_SERVICES_CODE: return "Runtime Services Code";
-        case EFI_RUNTIME_SERVICES_DATA: return "Runtime Services Data";
-        case EFI_CONVENTIONAL_MEMORY: return "Conventional";
-        case EFI_UNUSABLE_MEMORY: return "Unusable";
-        case EFI_ACPI_RECLAIM_MEMORY: return "ACPI Reclaim";
-        case EFI_ACPI_MEMORY_NVS: return "ACPI NVS";
-        case EFI_MEMORY_MAPPED_IO: return "MMIO";
-        case EFI_MEMORY_MAPPED_IO_PORT_SPACE: return "MMIO Port";
-        case EFI_PAL_CODE: return "PAL Code";
-        default: return "Unknown";
+    pmm_ready = false; regions = NULL; region_count = 0;
+    memset(&stats,0,sizeof(stats));
+    if (!info || !info->mmap_addr || info->mmap_desc_size < sizeof(EfiMemoryDescriptor) ||
+        !info->mmap_size || info->mmap_size % info->mmap_desc_size ||
+        info->mmap_addr > LIMIT64-info->mmap_size || ks > ke ||
+        info->fb_addr > LIMIT64-(uint64_t)info->fb_pitch*info->fb_height) return false;
+    uint64_t count = info->mmap_size / info->mmap_desc_size;
+    uint64_t bytes = info->mmap_size, nr = 0, total = 0;
+    /* Validate before modifying any candidate RAM. Unknown/Device types
+     * are not RAM. Zero-length entries are ignored; nonzero must align. */
+    for (uint64_t i=0; i<count; i++) {
+        EfiMemoryDescriptor d; descriptor(info,i,&d);
+        if (!d.num_pages) continue;
+        if ((d.phys_addr & PAGE_MASK) || d.num_pages > (LIMIT64-d.phys_addr)/PAGE_SIZE) return false;
+        uint64_t end=d.phys_addr+d.num_pages*PAGE_SIZE;
+        for (uint64_t j=0; j<i; j++) {
+            EfiMemoryDescriptor other; descriptor(info,j,&other);
+            if (other.num_pages && overlap(d.phys_addr,end,other.phys_addr,
+                                           other.phys_addr+other.num_pages*PAGE_SIZE)) return false;
+        }
+        if (d.type >= 1 && d.type <= 10) {
+            uint64_t size=d.num_pages*PAGE_SIZE;
+            if (total > LIMIT64-size) return false;
+            total += size;
+        }
+        if (!reclaimable(&d)) continue;
+        uint64_t pieces=(d.phys_addr < LOW_END && end > LOW_END) ? 2 : 1;
+        uint64_t bitmap=(d.num_pages+7)/8;
+        /* Splitting at the zone boundary can cost one padding byte. */
+        uint64_t overhead=pieces*sizeof(PmmRegion)+2;
+        if (bytes>LIMIT64-overhead || bitmap>(LIMIT64-bytes-overhead)/2) return false;
+        bytes += pieces*sizeof(PmmRegion)+2*bitmap+2;
+        nr += pieces;
     }
-}
-
-/*
- * Print memory map (for debugging)
- */
-void pmm_print_map(BootInfo *info)
-{
-    serial_printf("[PMM] Memory Map:\n");
-
-    uint64_t mmap_addr = info->mmap_addr;
-    uint64_t mmap_size = info->mmap_size;
-    uint64_t desc_size = info->mmap_desc_size;
-
-    uint64_t entries = mmap_size / desc_size;
-
-    for (uint64_t i = 0; i < entries; i++) {
-        EfiMemoryDescriptor *desc = (EfiMemoryDescriptor *)(mmap_addr + i * desc_size);
-
-        uint64_t size = desc->num_pages * PAGE_SIZE;
-        const char *type = memory_type_string(desc->type);
-
-        serial_printf("  [%2d] 0x%p - 0x%p (%6d KB) %s\n",
-            i,
-            desc->phys_addr,
-            desc->phys_addr + size,
-            size / 1024,
-            type);
+    if (!nr || bytes > LIMIT64-PAGE_MASK) return false;
+    bytes=(bytes+PAGE_MASK)&~PAGE_MASK;
+    uint64_t chosen=0;
+    for (uint64_t i=0; i<count && !chosen; i++) {
+        EfiMemoryDescriptor d; descriptor(info,i,&d);
+        if (d.type != 7 || !reclaimable(&d)) continue;
+        uint64_t end=d.phys_addr+d.num_pages*PAGE_SIZE;
+        if (end > LOW_END) end=LOW_END;
+        uint64_t a=d.phys_addr < 0x100000 ? 0x100000 : d.phys_addr;
+        for (; a <= end && bytes <= end-a; a+=PAGE_SIZE) {
+            if (!excluded(a,a+bytes,info,ks,ke,0,0)) { chosen=a; break; }
+        }
     }
+    if (!chosen) return false;
+    uint8_t *arena=physical_pointer(chosen,bytes);
+    if (!arena) return false;
+    memset(arena,0,bytes);
+    stats.total_bytes=total;
+    /* Regions first for native alignment; copied map last need not align. */
+    regions=(PmmRegion *)arena;
+    uint8_t *bits=arena+nr*sizeof(PmmRegion);
+    for (uint64_t i=0; i<count; i++) {
+        EfiMemoryDescriptor d; descriptor(info,i,&d);
+        if (!d.num_pages || !reclaimable(&d)) continue;
+        uint64_t a=d.phys_addr, end=a+d.num_pages*PAGE_SIZE;
+        while (a<end) {
+            uint64_t stop=(a<LOW_END && end>LOW_END) ? LOW_END : end;
+            PmmRegion *r=&regions[region_count++];
+            r->base=a; r->pages=(stop-a)/PAGE_SIZE;
+            uint64_t n=(r->pages+7)/8;
+            r->eligible=bits; r->allocated=bits+n; bits+=2*n;
+            /* Most pages are eligible; only exclusions need page inspection. */
+            memset(r->eligible,0xff,n);
+            for (uint64_t p=0; p<r->pages; p++) {
+                uint64_t pa=a+p*PAGE_SIZE;
+                if (excluded(pa,pa+PAGE_SIZE,info,ks,ke,chosen,chosen+bytes))
+                    set_bit(r->eligible,p,false);
+                else if (a<LOW_END) stats.low_free_bytes+=PAGE_SIZE;
+                else stats.high_free_bytes+=PAGE_SIZE;
+            }
+            a=stop;
+        }
+    }
+    memcpy(bits,(const void *)(uintptr_t)info->mmap_addr,info->mmap_size);
+    info->mmap_addr=chosen+(uint64_t)(bits-arena);
+#ifdef OJJY_PMM_HOST_TEST
+    /* Host consumers use the translated copy; real BootInfo keeps its PA. */
+    info->mmap_addr=(uint64_t)(uintptr_t)bits;
+#endif
+    stats.metadata_base=chosen; stats.metadata_bytes=bytes;
+    stats.usable_bytes=stats.low_free_bytes+stats.high_free_bytes;
+    stats.regions=region_count;
+    pmm_ready=true;
+    return true;
 }
 
-/*
- * Initialize physical memory manager
- */
 void pmm_init(BootInfo *info)
 {
-    serial_printf("[PMM] Initializing physical memory manager...\n");
-
-    /* Clear bitmap (mark all pages as used initially) */
-    memset(page_bitmap, 0xFF, sizeof(page_bitmap));
-
-    uint64_t mmap_addr = info->mmap_addr;
-    uint64_t mmap_size = info->mmap_size;
-    uint64_t desc_size = info->mmap_desc_size;
-
-    if (desc_size == 0) {
-        serial_printf("[PMM] ERROR: Invalid memory map descriptor size!\n");
-        return;
+    if (!pmm_init_ranges(info,(uint64_t)(uintptr_t)_kernel_start,(uint64_t)(uintptr_t)_kernel_end)) {
+        serial_puts("[PMM] ERROR: invalid map or no low bootstrap metadata storage\n"); return;
     }
+    serial_printf("[PMM] %llu MB RAM, %llu MB usable\n",stats.total_bytes>>20,stats.usable_bytes>>20);
+    serial_printf("[PMM] Low free=%llu pages, high tracked=%llu pages (disabled); metadata=%llu bytes at %p\n",
+                  stats.low_free_bytes/PAGE_SIZE,stats.high_free_bytes/PAGE_SIZE,stats.metadata_bytes,stats.metadata_base);
+    /* Compatibility receipt used by existing boot tests (managed capacity). */
+    serial_printf("[PMM] Total usable memory: %llu MB\n",stats.usable_bytes>>20);
+    serial_printf("[PMM] Free memory:  %llu MB\n",stats.low_free_bytes>>20);
+}
 
-    uint64_t entries = mmap_size / desc_size;
-
-    /* First pass: calculate usable memory and mark free regions */
-    for (uint64_t i = 0; i < entries; i++) {
-        EfiMemoryDescriptor *desc = (EfiMemoryDescriptor *)(mmap_addr + i * desc_size);
-
-        uint64_t size = desc->num_pages * PAGE_SIZE;
-
-        /* Count only memory the OS can actually use */
-        if (desc->type == EFI_CONVENTIONAL_MEMORY ||
-            desc->type == EFI_LOADER_CODE ||
-            desc->type == EFI_LOADER_DATA ||
-            desc->type == EFI_BOOT_SERVICES_CODE ||
-            desc->type == EFI_BOOT_SERVICES_DATA ||
-            desc->type == EFI_ACPI_RECLAIM_MEMORY) {
-            total_memory += size;
-        }
-
-        /* Mark conventional memory (and boot services memory) as free */
-        if (desc->type == EFI_CONVENTIONAL_MEMORY ||
-            desc->type == EFI_BOOT_SERVICES_CODE ||
-            desc->type == EFI_BOOT_SERVICES_DATA) {
-
-            /* Mark each page as free */
-            uint64_t start_page = desc->phys_addr / PAGE_SIZE;
-            uint64_t end_page = start_page + desc->num_pages;
-
-            for (uint64_t page = start_page; page < end_page; page++) {
-                if (page < sizeof(page_bitmap) * 8) {
-                    pmm_set_page_free(page);
-                    free_memory += PAGE_SIZE;
-                }
+uint64_t pmm_alloc_contiguous_zone(uint64_t pages, PmmZone zone)
+{
+    /* No architecture readiness hook exists yet: HIGH always fails closed. */
+    if (!pmm_ready || !pages || pages > LOW_END/PAGE_SIZE ||
+        (zone!=PMM_LOW && zone!=PMM_ANY)) return 0;
+    for (uint64_t i=0; i<region_count; i++) {
+        PmmRegion *r=&regions[i];
+        if (r->base>=LOW_END || pages>r->pages) continue;
+        /* Next-fit, two non-wrapping ranges. No contiguous run crosses a hole. */
+        for (unsigned pass=0; pass<2; pass++) {
+            uint64_t first=pass ? 0 : r->cursor, end=r->pages;
+            uint64_t run=0;
+            for (uint64_t p=first; p<end; p++) {
+                if (!bit(r->eligible,p) || bit(r->allocated,p)) { run=0; continue; }
+                if (++run<pages) continue;
+                uint64_t start=p+1-pages, pa=r->base+start*PAGE_SIZE;
+                void *ptr=physical_pointer(pa,pages*PAGE_SIZE);
+                if (!ptr) return 0;
+                for (uint64_t n=start; n<=p; n++) set_bit(r->allocated,n,true);
+                r->cursor=(p+1)%r->pages;
+                stats.low_free_bytes-=pages*PAGE_SIZE;
+                memset(ptr,0,pages*PAGE_SIZE);
+                return pa;
             }
         }
     }
-
-    /* Reserve first 1MB (legacy area, BIOS, VGA memory, boot info at 0x500) */
-    for (uint64_t page = 0; page < 256; page++) {
-        if (!pmm_is_page_used(page)) {
-            pmm_set_page_used(page);
-            free_memory -= PAGE_SIZE;
-        }
-    }
-
-    /* Reserve the actual kernel image (_kernel_start .. _kernel_end, .bss included).
-     * The kernel BSS is several MB (wallpaper buffers, ramfs pools), so we use
-     * linker symbols on both x86_64 (0x100000) and aarch64 (0x71000000). */
-    uint64_t kernel_start_page = (uint64_t)(uintptr_t)_kernel_start / PAGE_SIZE;
-    uint64_t kernel_end_page = ((uint64_t)(uintptr_t)_kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
-    if (kernel_start_page < 256) {
-        kernel_start_page = 256;
-    }
-    if (kernel_end_page < kernel_start_page) {
-        kernel_end_page = kernel_start_page;
-    }
-    for (uint64_t page = kernel_start_page; page < kernel_end_page; page++) {
-        if (page < MAX_PAGES && !pmm_is_page_used(page)) {
-            pmm_set_page_used(page);
-            free_memory -= PAGE_SIZE;
-        }
-    }
-
-    /* Never hand out the scanout: some firmware reports the framebuffer
-     * inside boot-services memory, which is otherwise reclaimed above. */
-    if (info->fb_addr && info->fb_pitch && info->fb_height) {
-        uint64_t first = info->fb_addr / PAGE_SIZE;
-        uint64_t last = (info->fb_addr + (uint64_t)info->fb_pitch * info->fb_height + PAGE_SIZE - 1) / PAGE_SIZE;
-        for (uint64_t page = first; page < last && page < MAX_PAGES; page++) {
-            if (!pmm_is_page_used(page)) { pmm_set_page_used(page); free_memory -= PAGE_SIZE; }
-        }
-    }
-
-    bitmap_pages = sizeof(page_bitmap) * 8;
-    pmm_ready = true;
-
-    serial_printf("[PMM] Total usable memory: %d MB\n",
-        (int)(total_memory / (1024 * 1024)));
-    serial_printf("[PMM] Free memory:  %d MB\n",
-        (int)(free_memory / (1024 * 1024)));
-    serial_printf("[PMM] Kernel reserved: %p - %p\n",
-        (uint64_t)(uintptr_t)_kernel_start, (uint64_t)(uintptr_t)_kernel_end);
-    serial_printf("[PMM] Page bitmap covers %d pages\n", (int)bitmap_pages);
-}
-
-/*
- * Allocate a physical page
- */
-uint64_t pmm_alloc_page(void)
-{
-    /* The boot splash allocates its back buffer before pmm_init; with the
-     * zero-cleared bitmap every page would look free and the allocator
-     * would hand out page 256 (which the owned page tables map Device). */
-    if (!pmm_ready) return 0;
-
-    /* Simple linear search for a free page */
-    for (uint64_t i = 0; i < sizeof(page_bitmap); i++) {
-        if (page_bitmap[i] != 0xFF) {
-            /* Found a byte with at least one free page */
-            for (int bit = 0; bit < 8; bit++) {
-                if (!(page_bitmap[i] & (1 << bit))) {
-                    /* Found a free page */
-                    uint64_t page_index = i * 8 + bit;
-                    pmm_set_page_used(page_index);
-                    free_memory -= PAGE_SIZE;
-
-                    uint64_t addr = page_index * PAGE_SIZE;
-
-                    /* Zero the page */
-                    memset((void *)addr, 0, PAGE_SIZE);
-
-                    return addr;
-                }
-            }
-        }
-    }
-
-    /* Out of memory */
-    serial_printf("[PMM] ERROR: Out of physical memory!\n");
     return 0;
 }
-
-/*
- * Allocate `pages` physically contiguous, zeroed pages (first fit, below
- * 4 GiB, which both architectures identity-map). Used for large buffers
- * so they need not live in the kernel image's BSS. Returns 0 on failure.
- */
-uint64_t pmm_alloc_contiguous(uint64_t pages)
-{
-    if (!pages || !pmm_ready) return 0;
-    uint64_t run = 0;
-    for (uint64_t page = 256; page < MAX_PAGES; page++) {
-        if (pmm_is_page_used(page)) { run = 0; continue; }
-        if (++run == pages) {
-            uint64_t start = page + 1 - pages;
-            for (uint64_t p = start; p <= page; p++) pmm_set_page_used(p);
-            free_memory -= pages * PAGE_SIZE;
-            memset((void *)(uintptr_t)(start * PAGE_SIZE), 0, pages * PAGE_SIZE);
-            return start * PAGE_SIZE;
-        }
-    }
-    serial_printf("[PMM] ERROR: no %d contiguous pages\n", (int)pages);
-    return 0;
-}
-
+uint64_t pmm_alloc_page_zone(PmmZone zone) { return pmm_alloc_contiguous_zone(1,zone); }
+uint64_t pmm_alloc_page(void) { return pmm_alloc_page_zone(PMM_LOW); }
+uint64_t pmm_alloc_contiguous(uint64_t pages) { return pmm_alloc_contiguous_zone(pages,PMM_LOW); }
 void *pmm_alloc_bytes(size_t bytes)
 {
-    return (void *)(uintptr_t)pmm_alloc_contiguous((bytes + PAGE_SIZE - 1) / PAGE_SIZE);
+    if (!bytes || bytes>LIMIT64-PAGE_MASK) return NULL;
+    return (void *)(uintptr_t)pmm_alloc_contiguous((bytes+PAGE_MASK)/PAGE_SIZE);
 }
-
-/*
- * Free a physical page
- */
-void pmm_free_page(uint64_t addr)
+void pmm_free_page(uint64_t pa)
 {
-    uint64_t page_index = addr / PAGE_SIZE;
-
-    if (page_index >= sizeof(page_bitmap) * 8) {
-        serial_printf("[PMM] WARNING: Trying to free page outside bitmap range\n");
+    if (!pmm_ready || (pa&PAGE_MASK)) return;
+    for (uint64_t i=0; i<region_count; i++) {
+        PmmRegion *r=&regions[i];
+        if (pa<r->base || (pa-r->base)/PAGE_SIZE>=r->pages) continue;
+        uint64_t n=(pa-r->base)/PAGE_SIZE;
+        if (!bit(r->eligible,n) || !bit(r->allocated,n)) return;
+        set_bit(r->allocated,n,false);
+        if (pa<LOW_END) stats.low_free_bytes+=PAGE_SIZE;
+        else stats.high_free_bytes+=PAGE_SIZE;
         return;
     }
-
-    if (!pmm_is_page_used(page_index)) {
-        serial_printf("[PMM] WARNING: Double-free of page 0x%x\n", addr);
-        return;
+}
+PmmStats pmm_get_stats(void) { return stats; }
+uint64_t pmm_get_total_memory(void) { return stats.total_bytes; }
+/* Only immediately allocatable pages are exposed through the legacy getter. */
+uint64_t pmm_get_free_memory(void) { return stats.low_free_bytes; }
+void pmm_print_map(BootInfo *info)
+{
+    if (!info || info->mmap_desc_size<sizeof(EfiMemoryDescriptor)) return;
+    for (uint64_t i=0;i<info->mmap_size/info->mmap_desc_size;i++) {
+        EfiMemoryDescriptor d; descriptor(info,i,&d);
+        serial_printf("[PMM] base=%p pages=%llu type=%u\n",d.phys_addr,d.num_pages,d.type);
     }
-
-    pmm_set_page_free(page_index);
-    free_memory += PAGE_SIZE;
-}
-
-/*
- * Get total memory
- */
-uint64_t pmm_get_total_memory(void)
-{
-    return total_memory;
-}
-
-/*
- * Get free memory
- */
-uint64_t pmm_get_free_memory(void)
-{
-    return free_memory;
 }
 
 /* ============================================================================

@@ -1,5 +1,40 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-29): HW-13 part 2 complete, paused for hw13-3
+
+Part 1 pushed on explicit approval: remote hw-13 = 3d81716; main untouched.
+Board f5c05f resumed in the same worktree/branch. Baseline host suite passes
+with Homebrew PATH. memory.c/h now bootstrap runtime per-region eligibility
+and allocated bitmaps plus a LOW copy of descriptors, reserve live ranges,
+track high capacity and expose LOW/HIGH/ANY APIs. HIGH fails closed; all
+legacy callers stay LOW. PMM source has no fixed bitmap/span limit; boot
+metadata and descriptor copy are reserved conventional LOW pages. Packed
+descriptors use memcpy, validation rejects overlaps/overflow/bad stride;
+eligible + allocated bits prevent reserved/hole/double frees.
+New tests/test_pmm.c: fake 64 GiB, 260 shuffled regions/200000 operations,
+LOW boundary, metadata/map/framebuffer/kernel/runtime reservations, OOM,
+malformed maps and exact exhaustion/free accounting. Final expanded
+38-check suite and full normal hosts pass. Final log inspection found a
+recoverable UBSan error in the host-only low-endpoint helper's pointer
+arithmetic despite test exit 0; parenthesized both integer offsets and
+full normal/ASan/UBSan reruns pass (38 PMM checks, no reports), with
+UBSAN_OPTIONS=halt_on_error=1. Sanitized scripts/test.sh
+now adds -fno-sanitize-recover=all so future reports cannot pass silently.
+No production code change from this host-helper fix.
+Both dev builds zero warnings;
+TCG/HVF/Intel private full smokes pass. VZ8 reaches main loop/device/DHCP
+with `[PMM] 8191 MB RAM, 8171 MB usable`, LOW 585228 pages, HIGH 1506699
+tracked/disabled, metadata 528384 bytes at 0x70000000. Full vz_boot.py
+FAILS known BUG-1008 after +1118 ms NTP correction before timer health;
+its clock assertion was not changed or waived (repair stays part 4).
+Evidence build/hw-13-part2/ (matrix.json, native-memory-proof.json,
+host-complete.log, sanitized-complete.log, source-fingerprint.json).
+Both part-2 boxes verified/checked; future parts stay open, card stays doing.
+Next: take paused f5c05f for hw13-3 ARM mappings and translation helpers,
+then enable HIGH only after mapping readiness. No new readiness hook is
+present yet, no caller migration is done, and MEM-03/04 shared boxes stay
+open. No delivery/main move/installed changes. Part 2 not pushed yet.
+
 ## LATEST (2026-10-29): HW-13 part 1 measured/designed, paused for hw13-2
 
 Board `f5c05f`, separate worktree `ojjyOS-v3-hw-13` / branch `hw-13`,

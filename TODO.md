@@ -149,7 +149,7 @@ Every tour screenshot was read (ink-profile + spot ASCII rendering via
 
 Launch series (2026-10-27), independent of the old N1–N11 milestones:
 - [x] HW-12: native launch menu/settings file, live display/RAM proof and safe delivery (worktree `ojjyOS-v3-hw-12`) — done 2026-10-27 (test: 2137 Swift guards, native lifecycle/protected smoke, both zero-warning builds, preserved installed hashes, delivered private 3 GB boot).
-- [~] HW-13 / launch-2: part 1 measured/designed on hw-13 (2026-10-29; docs/hw-13-memory-design.md, raw maps build/hw-13-part1); next hw13-2 runtime PMM metadata, then ARM, Intel/stress, UI/delivery. Runtime still capped; main does not move until part 5.
+- [~] HW-13 / launch-2: parts 1–2 complete on hw-13 (2026-10-29; docs/hw-13-memory-design.md, build/hw-13-part{1,2}); runtime PMM tracks all RAM with LOW metadata/descriptor copy, HIGH remains disabled and legacy callers LOW. Next hw13-3 ARM mappings, then Intel/stress and UI/delivery; main stays unchanged until part 5. Host/sanitized, zero-warning builds and TCG/HVF/Intel smokes pass; VZ8 memory boot works but full clock assertion still fails known BUG-1008.
 - [ ] HW-14 / launch-3: QEMU and ojjy Control share `build/launch-settings.json`.
 
 Jonas: "qemu is laggy and i want it to feel smooth like a native virtualbox

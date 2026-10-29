@@ -248,6 +248,12 @@ with attribute sets: normal WB, device nGnRE, write-combine (framebuffer).
 1. Extract ARM table walking from `user_arch.c` into `mmu.c`.
 2. Implement the x86_64 4-level version.
 3. Port the EL0 runner to the new API (no behaviour change).
+**HW-13 shared preparation (not full MEM-03 completion).** These named
+boxes own the reusable subset needed by HW-13; the HW-13 part boxes refer
+here and must be ticked in both places with the same evidence. Full pt_*
+extraction, WC framebuffer and this card's dependencies remain unchanged.
+- [ ] HW13-A (HW-13 part 3): ARM RAM/Device descriptor construction, PA-width/ownership validation and privileged high-map groundwork in user_arch.c and mapping helpers; test host encodings plus VZ/HVF high-backed protected isolation. Trap: preserve break-before-make, attributes and checked user VAs.
+- [ ] HW13-X (HW-13 part 4): Intel supervisor descriptor/PA masks and failure-safe table construction in paging.c/h and mapping helpers; test every missing intermediate level, OOM, NXE and live high PA writes. Trap: current walker does not create a missing final PT; this is not proof of Intel ring 3.
 **Done when.** The protected-app suite (19 programs) passes unchanged; the
 framebuffer is mapped write-combining on both arches.
 **Tests.** Live protected smoke (ARM); host test of descriptor encoding.
@@ -263,6 +269,11 @@ framebuffer is mapped write-combining on both arches.
 **Context.** The kernel relies on identity/firmware mappings.
 **Goal.** A direct map of all RAM at a fixed kernel virtual offset and a
 `vmalloc()` area for large virtually-contiguous kernel buffers.
+**HW-13 shared preparation (not full MEM-04 completion).** Own the
+RAM-only direct-alias subset below; HW-13 refers to these same boxes.
+No vmalloc/all-caller conversion or waiver of the full MEM-03 dependency.
+- [ ] HW13-A (HW-13 part 3): ARM high RAM alias at 0xffff800000000000 + PA, shared privileged TTBR1 mappings and checked phys_to_virt/virt_to_phys helpers in kernel/mm/kvm.c/h; test Normal RAM only, Device exclusions and EL0 alias faults. Trap: metadata/tables stay LOW and no high RAM Device identity alias may conflict.
+- [ ] HW13-X (HW-13 part 4): same RAM-only supervisor alias and checked translation on Intel using upper PML4 entries, with all table levels LOW; test high allocation/write/read/free plus mapper rollback and stats. Trap: virtual alias is not a device DMA physical address.
 **Done when.** All kernel allocations go through the direct map or vmalloc;
 `phys_to_virt`/`virt_to_phys` used everywhere instead of casts.
 **Tests.** Live smoke; host test of the vmalloc range allocator.

@@ -226,6 +226,22 @@ making it a useful, Arch-like system with access to existing software.
 ### D-024 ojjyWin architecture — *reserved, recorded by WIN-00*
 ### D-025 x86-64 translation strategy — *reserved, recorded by WIN-80*
 
+### D-026 HW-13 staged high-RAM access (2026-10-29, design only)
+
+Refine D-003's migration without relinking the kernel: runtime, map-sized
+PMM region/bitmap metadata is boot-reserved below 4 GiB. Legacy/DMA APIs
+remain LOW; explicit HIGH/ANY physical APIs are enabled only after a
+privileged RAM-only alias at `0xffff800000000000 + PA` is installed
+(ARM TTBR1, Intel upper PML4). Checked translation helpers and opt-in
+mapped buffers let protected user frames and audited CPU-only browser/TLS
+arenas use high RAM; no high identity mapping at USER_BASE, no cacheable
+Device alias, no EL0 access to kernel aliases. Use LOW page tables and
+owned low copies of the firmware map. MEM-03/04 own the HW13-A/HW13-X
+preparation boxes; buddy allocation, page-frame DB, vmalloc, relinking and
+Intel ring 3 stay with their existing cards. Rationale, measured maps,
+caller inventory and alternatives: `docs/hw-13-memory-design.md`.
+Nothing in this decision claims runtime high-RAM support is implemented.
+
 ## 3. Migration path from today (the big moves, in order)
 
 1. **Split `compositor.c`** into modules without behaviour change (`QA-20`).

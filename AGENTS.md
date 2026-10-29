@@ -1,5 +1,41 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-29): HW-13 part 1 measured/designed, paused for hw13-2
+
+Board `f5c05f`, separate worktree `ojjyOS-v3-hw-13` / branch `hw-13`,
+base `043894c`; main checkout and existing worktree edits are untouched.
+Part 1 of five is complete: inspect, measure private memory maps, write
+Decision/plan/Handoff; no kernel code is changed in the final tree.
+HW-12 dependency verified in card and launch settings/`vz_boot.py --memory`.
+Baseline `scripts/mkfs.sh` then `scripts/test.sh` passes with
+`PATH=/opt/homebrew/bin:/usr/local/bin:$PATH`. The first attempt used
+system LibreSSL 3.3.6 and failed `test_tls_local.py` certificate generation;
+Homebrew OpenSSL 4.0.3 passes 14/14 cases without source edits. Evidence
+`build/hw-13-part1/`: memory-maps.txt (all 242 descriptors), summary.json,
+raw serial logs, retained probe.patch/scripts and preservation.json.
+VZ 2/4/8 GiB initial free pages: 519159/585325/585325. ARM HVF/Intel TCG
+4 GiB: 781935/780223. VZ 8 GiB leaves 5885.543 MiB reclaimable high RAM
+unused; BAR0s move to 0x2800x0000. All five reach main loop. Full VZ
+2 GiB test passes; VZ 4/8 fail an existing clock assertion after NTP
+correction, not a memory boot fault (filed BUG-1008, part 4 regression work).
+No gate weakened. Probe sources removed, source image hashes unchanged;
+both uninstrumented dev builds zero warnings, full normal/sanitized host
+suites pass. No installed disk/settings/app changed or ready-to-test note.
+
+Decision/complete caller audit: docs/hw-13-memory-design.md; D-026 records
+map-sized LOW boot metadata, explicit LOW/HIGH/ANY APIs and an opt-in
+privileged RAM-only high alias (ARM TTBR1 / Intel upper PML4). DMA and
+legacy allocators remain LOW; protected pages and audited CPU-only browser
+arenas/TLS pool may opt in after mapping readiness. MEM-03/04 own named
+HW13-A/HW13-X preparation boxes; their full cards remain todo. HW-13 card
+has all five tagged parts and exact Handoff; TODO marks it partial.
+Next **hw13-2 only**: take paused board f5c05f, rerun the baseline with
+Homebrew PATH, implement runtime PMM metadata/zone APIs plus fake-map tests;
+keep high allocation disabled until part 3. Original firmware map addresses
+are themselves high at 4/8 GiB: copy them LOW before switching mappings.
+Do not fast-forward main or deliver before hw13-5. Part 1 changes are docs
+only; raw ignored evidence is local, the tracked design preserves results.
+
 ## LATEST (2026-10-28): NET-02 review: a web page could add a certificate exception (DONE, delivered)
 
 Board f0ce7f, worktree `ojjyOS-v3-check-net02` / branch `check-net02` off

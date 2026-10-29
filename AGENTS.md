@@ -1,5 +1,45 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-29): HW-13 part 3 complete, paused for hw13-4
+
+Part 2 pushed with explicit approval: remote hw-13 verified at 9b2e93f;
+main remains 043894c. Board f5c05f, same worktree/branch. Part 3 implements
+ARM RAM-only TTBR1 aliases in kernel/mm/kvm.c/h: checked PA/span/leaf
+encodings, LOW table pages, 2 MiB blocks / 4 KiB boundaries and full build
+rollback. ARM removes overlapping high-RAM Device identity aliases while
+preserving VZ BARs, activates/readbacks TTBR1 before enabling HIGH/ANY.
+memory.c/h expose checked translation and mapped-byte APIs; legacy page/
+contiguous/byte APIs stay LOW. The active free getter includes HIGH only
+after readiness. Protected loader/load/copy/wipe/cache accesses use aliases;
+only selected browser arenas/decode scratch and HTTP TLS slots opt in.
+DMA/GPU/framebuffer/renderer/other legacy buffers stay LOW. Intel still
+uses LOW and explicitly does not support protected execution.
+
+Verified exact sources: full normal + fatal ASan/UBSan hosts (51 PMM,
+21 builder checks; 200000 LOW and 20000 mixed-zone random operations;
+synthetic physical user-frame load/copy/wipe), both zero-warning dev builds,
+native app build, full TCG/HVF/Intel and native protected/persistence smokes,
+HVF browser flow. Private high_ram.py VZ4/VZ8/HVF4 each passed actual HIGH
+zero/write/read/free at PA 0x100000000, 51 high-backed protected runs with
+cleanup equality, EL0 alias read/write/execute permission faults and local
+HTTP/HTTPS/PNG with HIGH 40/28/20/48-MiB buffers and 117496-byte TLS slot.
+Representative native/QEMU screenshots read. Evidence matrix.json,
+source-fingerprint.json and per-guest report.json in build/hw-13-part3/.
+Full vz_boot.py at 4/8 GiB still FAILS BUG-1008 after +1493/+1418 ms NTP
+correction; no clock gate changed or skipped. This is not a full VZ boot
+test pass. Both part-3 and MEM-03/04 HW13-A boxes checked with that caveat;
+full MEM cards (doing for this subset) and parts 4/5 remain open. No installed image/settings,
+main checkout or ready-to-test note changed. Part 3 not pushed.
+
+Handoff: take paused f5c05f for **hw13-4 only**: Intel upper-PML4 RAM-only
+aliases/failure-safe walker/NXE/PA guards; simultaneous >2.5 GiB (target
+3 GiB) distinct-page ownership with every-page patterns/free/recovery on
+VZ/ARM HVF/Intel; deterministic NTP-aware BUG-1008 test repair and full
+regressions. Read HW-13 card + docs/hw-13-memory-design.md. Keep main and
+installed images untouched until part 5. Use Homebrew PATH; live Python
+with Pillow is build/hw-13-part3/venv/bin/python. Part-3 commit needs a new
+push yes; do not infer it from the earlier part-2 push approval.
+
 ## LATEST (2026-10-29): HW-13 part 2 complete, paused for hw13-3
 
 Part 1 pushed on explicit approval: remote hw-13 = 3d81716; main untouched.

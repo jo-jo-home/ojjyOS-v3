@@ -20,15 +20,24 @@ typedef enum { PMM_LOW, PMM_HIGH, PMM_ANY } PmmZone;
 typedef struct {
     /* All units are bytes. total includes firmware RAM types 1..10;
      * usable is initial eligible capacity after permanent reservations.
-     * high_free is tracked but NOT allocatable in part 2. */
+     * high_free is inactive until the architecture publishes a resolver. */
     uint64_t total_bytes, usable_bytes, low_free_bytes, high_free_bytes;
     uint64_t metadata_base, metadata_bytes, regions;
 } PmmStats;
-/* HIGH is deliberately disabled in HW-13 part 2; ANY currently means LOW.
- * Free high bytes are tracked capacity, not currently accessible memory. */
+/* HIGH fails closed before mapping readiness; ANY prefers HIGH then LOW.
+ * All legacy allocation APIs below remain strictly LOW. */
 uint64_t pmm_alloc_page_zone(PmmZone zone);
 uint64_t pmm_alloc_contiguous_zone(uint64_t pages, PmmZone zone);
 PmmStats pmm_get_stats(void);
+typedef void *(*PmmResolver)(uint64_t physical, size_t bytes);
+bool pmm_enable_high(PmmResolver resolver);
+bool pmm_high_ready(void);
+bool pmm_region(uint64_t index, uint64_t *base, uint64_t *pages);
+bool pmm_range_eligible(uint64_t physical, size_t bytes);
+bool pmm_is_allocated(uint64_t physical);
+void *pmm_phys_to_virt(uint64_t physical, size_t bytes);
+uint64_t pmm_virt_to_phys(const void *pointer, size_t bytes);
+void *pmm_alloc_mapped_bytes(size_t bytes);
 
 /* Allocate a physical page (returns physical address, or 0 on failure) */
 uint64_t pmm_alloc_page(void);

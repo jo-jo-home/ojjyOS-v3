@@ -1,7 +1,7 @@
 # HW-13: measured memory limits and implementation decision
 
-Created by Jonas Lee. Parts 1–2, 2026-10-29. **Runtime PMM implemented;
-high mappings/callers remain a design for parts 3–4.**
+Created by Jonas Lee. Parts 1–3, 2026-10-29. **Runtime PMM implemented;
+ARM mappings/callers verified; Intel remains part 4.**
 Baseline: `043894c`; branch `hw-13`, worktree `ojjyOS-v3-hw-13`.
 The HW-13 card owns the five-part checklist and handoff. Main must not
 move until part 5. The existing launch memory warning remains until then.
@@ -246,6 +246,89 @@ fast-forwards main only after combined-source tests and safely delivers
 with stopped VMs and before/after saved-data/settings hashes.
 
 ## 6. Reproduction and handoff
+
+### Part 3 implementation and proof (2026-10-29)
+
+`kernel/mm/kvm.c` owns the staged ARM alias builder. It allocates LOW
+tables, uses 2 MiB leaves only for fully eligible spans, 4 KiB leaves for
+partial blocks, leaves reservations/holes/Device addresses unmapped and
+rolls every allocated table back on failure. The VA span is bounded so
+`KPHYS_BASE + PA` cannot wrap. Leaves are privileged RW, Normal WB,
+inner-shareable, PXN/UXN; no user AP bits. `user_arch_init` constructs
+TTBR1 before disabling firmware mappings, retains the Device BAR window
+but removes all overlapping high-RAM blocks, configures both TCR walks
+and reads the installed root back before publishing PMM readiness.
+This is the HW13-A subset, not the general MEM-03 API or vmalloc.
+
+`pmm_enable_high` installs the architecture's checked resolver once.
+Before that, HIGH fails and ANY chooses LOW. After activation, ANY
+prefers HIGH and the active free getter includes high capacity; legacy
+page/contiguous/byte allocators remain LOW. `pmm_phys_to_virt` checks
+eligible RAM and the backend's PA/mapping limits. The reverse helper
+accepts only a matching known identity/high alias. The new mapped-byte
+allocator returns a stable virtual pointer, never a DMA address.
+
+All `user_image.c` physical accesses (load, checked copy and wipe), plus
+ARM code-cache maintenance, now resolve aliases. User pages request ANY;
+PTE construction requires aligned, allocated, accessible RAM instead of
+the former 4-GiB cap. TTBR1 stays unchanged during TTBR0 app switches.
+Only browser 40/28/20-MiB arenas, 48-MiB decode scratch and HTTP TLS slots
+use mapped bytes. Renderer/framebuffer/GPU/DMA and other buffers stay LOW.
+
+Host receipts currently pass: 51 PMM checks including real translated
+HIGH storage and 20000 mixed-zone operations; 21 actual builder checks
+including each intermediate-allocation rollback; synthetic physical user
+frames exercise loader/copy/wipe without pointer-cast shortcuts. Both full
+normal/fatal-sanitizer suites and both dev builds pass with zero warnings.
+`tests/high_ram.py` is the private live proof: HIGH pattern write/read/free,
+the full protected flow plus three EL0 alias attacks, cleanup equality,
+local HTTP/HTTPS/image loads and HIGH arena/decode/TLS allocation receipts.
+All three live cases pass: private VZ4/VZ8/HVF4 each writes/reads/frees PA
+`0x100000000`, runs 51 high-backed protected tasks with exact cleanup
+equality, and gets permission faults (not mere missing mappings) for EL0
+read/write/execute at `0xffff800100000000`. Guard, code-write, stack-exec,
+MMIO and other existing hostile programs still fail safely and a following
+hello succeeds. All three render the local HTTP and TLS 1.3 PNG fixture
+through HIGH 40/28/20/48-MiB buffers and a HIGH 117496-byte TLS slot.
+Representative native and QEMU screenshots were visually reviewed.
+Full TCG/HVF/Intel three-boot smokes, native protected/persistence smoke
+and the existing HVF browser flow pass. Final normal and fatal ASan/UBSan
+host reruns are clean. Exact-source fingerprints and all receipts are in
+`build/hw-13-part3/matrix.json` and the per-case reports.
+
+The separate full VZ 4/8 boot tests **still fail** BUG-1008 after NTP
+corrections of +1493/+1418 ms. Both reach device/main-loop/DHCP and pass the
+new HIGH pattern check, but the clock assertion is not a pass. No gate was
+changed or skipped. Part 4 owns its deterministic repair. Native high
+proof is distinct from that failed full boot/clock verdict.
+
+Reproduce with Homebrew PATH and a Python environment containing Pillow:
+
+```sh
+OJJY_ACCEL=hvf build/hw-13-part3/venv/bin/python -B tests/high_ram.py \
+  --backend qemu --memory 4096 --image build/dev-aarch64/ojjyos3.img \
+  --output build/hw-13-part3/hvf4-new
+build/hw-13-part3/venv/bin/python -B tests/high_ram.py --backend vz \
+  --memory 8192 --image build/dev-aarch64/ojjyos3.img \
+  --app build/ojjyOS.app/Contents/MacOS/ojjyOS \
+  --output build/hw-13-part3/vz8-new
+```
+
+VZ's local fixture binds only its VM bridge gateway address (from DHCP),
+not every host interface; loopback alone is not VZ's host route. QEMU's
+fixture uses loopback and its 10.0.2.2 gateway. Both TLS keys and all test
+accounts/disks stay in the private evidence directory. The runner hashes
+the source disk even on failures, copies the native bundle beside absent
+test launch settings and only stops its own VM child.
+
+Next is **hw13-4 only**. Intel has no high resolver yet and mapped bytes
+there fall back LOW. Compile the future Intel backend deliberately (the
+new ARM mapper is currently ARM-only in kernel/Makefile). Keep all table
+levels LOW; protect VA/PA widths, NXE and full intermediate-allocation
+rollback. The planned >2.5-GiB peak-ownership test must own distinct pages
+simultaneously, verify a PA-derived pattern in every page, release them
+all and prove free-count/recovery; repeating one page is not proof. Keep
+parts 4/5 and full MEM-03/04 completion open until their own evidence.
 
 ### Part 2 implementation notes (2026-10-29)
 

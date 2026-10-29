@@ -35,6 +35,7 @@ bool tls_eof(TlsConn *c) { (void)c; return true; }
 void tls_close(TlsConn *c) { (void)c; }
 const char *tls_suite_name(uint16_t s) { (void)s; return ""; }
 void *pmm_alloc_bytes(size_t n) { (void)n; return 0; }
+void *pmm_alloc_mapped_bytes(size_t n) { (void)n; return 0; }
 
 static bool resolves(const char *base, const char *ref, const char *expect)
 {

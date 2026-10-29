@@ -35,14 +35,21 @@ uint64_t pmm_alloc_page(void)
     if (attempts++ == fail_at) return 0;
     for (unsigned i = 0; i < USER_MAX_PAGES; i++) if (!used[i]) {
         used[i] = true; live++; memset(pages[i], 0xAA, PAGE_SIZE);
-        return (uintptr_t)pages[i];
+        return 0x100000000ULL+i*PAGE_SIZE;
     }
     return 0;
 }
 uint64_t pmm_get_free_memory(void) { return (USER_MAX_PAGES - live) * PAGE_SIZE; }
+uint64_t pmm_alloc_page_zone(PmmZone zone) { (void)zone; return pmm_alloc_page(); }
+void *pmm_phys_to_virt(uint64_t pa, size_t bytes)
+{
+    uint64_t start=0x100000000ULL;
+    return pa>=start && pa-start<sizeof(pages) && bytes<=sizeof(pages)-(pa-start)
+        ? (uint8_t *)pages+(pa-start) : NULL;
+}
 void pmm_free_page(uint64_t addr)
 {
-    for (unsigned i = 0; i < USER_MAX_PAGES; i++) if ((uintptr_t)pages[i] == addr) {
+    for (unsigned i = 0; i < USER_MAX_PAGES; i++) if (0x100000000ULL+i*PAGE_SIZE == addr) {
         CHECK(used[i], "free only allocated user page");
         bool zero = true;
         for (unsigned j = 0; j < PAGE_SIZE; j++) if (pages[i][j]) zero = false;

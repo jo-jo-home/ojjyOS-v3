@@ -110,6 +110,7 @@ LINKER_SCRIPT = linker-aarch64.ld
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib -static -z max-page-size=0x1000
 
 ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
+                 mm/kvm.c \
                  src/arch/aarch64/user_arch.c \
                  src/arch/aarch64/gicv2.c \
                  src/arch/aarch64/timer_a64.c \
@@ -184,7 +185,7 @@ $(TARGET): $(OBJECTS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -o $@ $(OBJECTS)
 
 # Compile C files
-$(OBJ_DIR)/src/%.o: src/%.c
+$(OBJ_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 

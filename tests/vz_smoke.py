@@ -44,14 +44,17 @@ def pointer_hotspot(before, after, x, y, logical=(1440, 900)):
 
 
 class NativeVM:
-    def __init__(self, app, disk, output, number):
+    def __init__(self, app, disk, output, number, memory=None):
         self.log = output / f'serial-{number}.log'
         TEMP.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.socket_dir = Path(tempfile.mkdtemp(prefix='ovz-', dir=TEMP))
         self.path = self.socket_dir / 'c'
         self.stderr = (output / f'app-{number}.log').open('wb')
-        self.process = subprocess.Popen([str(app), '--image', str(disk), '--vars', str(output / 'vars.fd'),
-                                         '--serial', str(self.log), '--control', str(self.path)],
+        command=[str(app), '--image', str(disk), '--vars', str(output / 'vars.fd'),
+                 '--serial', str(self.log), '--control', str(self.path)]
+        if memory is not None: command += ['--memory',str(memory)]
+        (output / f'command-{number}.json').write_text(json.dumps(command,indent=2)+'\n')
+        self.process = subprocess.Popen(command,
                                         stdout=self.stderr, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 20
         while not self.path.exists():

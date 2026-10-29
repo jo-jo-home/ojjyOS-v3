@@ -1282,7 +1282,7 @@ void browser_open(void)
 {
     if (!BR) {
         Browser *b = (Browser *)pmm_alloc_bytes(sizeof(Browser));
-        void *dm = pmm_alloc_bytes(40u << 20), *cm = pmm_alloc_bytes(28u << 20), *lm = pmm_alloc_bytes(20u << 20);
+        void *dm = pmm_alloc_mapped_bytes(40u << 20), *cm = pmm_alloc_mapped_bytes(28u << 20), *lm = pmm_alloc_mapped_bytes(20u << 20);
         items = (WebItem *)pmm_alloc_bytes(sizeof(WebItem) * ITEM_CAP);
         WebDoc *doc = (WebDoc *)pmm_alloc_bytes(sizeof(WebDoc));
         res = (ResSlot *)pmm_alloc_bytes(sizeof(ResSlot) * RES_SLOTS);
@@ -1302,7 +1302,7 @@ void browser_open(void)
         b->hover_tab = -1;
         b->hover_close = -1;
         b->menu_link = -1;
-        void *scratch = pmm_alloc_bytes(48u << 20);
+        void *scratch = pmm_alloc_mapped_bytes(48u << 20);
         if (scratch) image_set_scratch(scratch, 48u << 20);
         /* gzip/deflate pages and stylesheets decode through this buffer */
         uint8_t *zbuf = (uint8_t *)pmm_alloc_bytes(PAGE_CAP);

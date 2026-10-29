@@ -30,7 +30,7 @@ USB = os.environ.get("OJJY_USB", "0") == "1"
 
 
 class VM:
-    def __init__(self, arch, disk, output, run):
+    def __init__(self, arch, disk, output, run, memory=2048):
         self.log = output / f"serial-{run}.log"
         # AF_UNIX paths on macOS are limited to 104 bytes. Use a private,
         # short temporary directory rather than a shared monitor pathname.
@@ -44,7 +44,7 @@ class VM:
         if firmware is None:
             raise RuntimeError("Cannot find QEMU edk2 firmware")
         hvf = arch == "aarch64" and ACCEL == "hvf"
-        command = [f"qemu-system-{arch}", "-m", "2048", "-smp", "1", "-accel", "hvf" if hvf else "tcg",
+        command = [f"qemu-system-{arch}", "-m", str(memory), "-smp", "1", "-accel", "hvf" if hvf else "tcg",
                    "-display", "none", "-no-reboot",
                    "-serial", f"file:{self.log}", "-qmp", f"unix:{self.socket_path},server=on,wait=off"]
         if arch == "x86_64" and (firmware.parent / "edk2-i386-vars.fd").exists():
@@ -82,6 +82,7 @@ class VM:
                             "-device", "virtconsole,bus=vs0.0,chardev=clog"]
         else:
             command += ["-M", "pc", "-vga", "std", "-drive", f"file={disk},format=raw,cache=writeback"]
+        (output / f"command-{run}.json").write_text(json.dumps(command, indent=2)+'\n')
         self.stderr = (output / f"qemu-{run}.log").open("wb")
         self.process = subprocess.Popen(command, stdout=self.stderr, stderr=subprocess.STDOUT)
         try:
@@ -193,7 +194,8 @@ def protected_checks(vm, arch, output):
              ("fp", "fault", -11), ("badsvc", "fault", -11),
              ("guard", "fault", -11), ("wfi", "fault", -11),
              ("mmio", "fault", -11), ("kernel_exec", "fault", -11), ("badsp", "fault", -11),
-             ("spin", "timeout", -110), ("syscall_limit", "limit", -125)]
+              ("alias_read", "fault", -11), ("alias_write", "fault", -11), ("alias_exec", "fault", -11),
+              ("spin", "timeout", -110), ("syscall_limit", "limit", -125)]
     # Repeat successes after each hostile task; stale TLBs and leaked pages
     # must not make the subsequent program fail.
     for name, status, code in cases + [("hello", "exited", 0)] * 12:
@@ -217,7 +219,8 @@ def protected_checks(vm, arch, output):
                            "code_write": 0x24, "stack_exec": 0x20,
                            "null": 0x24, "guard": 0x24, "fp": 7,
                            "badsvc": 0x15, "wfi": 1, "privileged": 0x18,
-                           "mmio": 0x24, "kernel_exec": 0x20, "badsp": 0x24}
+                            "mmio": 0x24, "kernel_exec": 0x20, "badsp": 0x24,
+                            "alias_read": 0x24, "alias_write": 0x24, "alias_exec": 0x20}
             if ec != expected_ec[name]:
                 raise RuntimeError(f"unexpected fault class {name}: {ec:#x}")
             start = len(vm.text()); vm.type("run hello\n", pace=0.025)

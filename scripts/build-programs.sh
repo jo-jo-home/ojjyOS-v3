@@ -11,7 +11,7 @@ if [ -z "$LD" ]; then
     done
 fi
 if [ -z "$LD" ]; then echo "ELF linker ld.lld required" >&2; exit 1; fi
-names=(hello kernel_read kernel_write code_write stack_exec null privileged fp spin badptr syscall_limit output_limit badsvc guard wfi mmio kernel_exec badsp)
+names=(hello kernel_read kernel_write code_write stack_exec null privileged fp spin badptr syscall_limit output_limit badsvc guard wfi mmio kernel_exec badsp alias_read alias_write alias_exec)
 for i in "${!names[@]}"; do
     name="${names[$i]}"
     clang --target=aarch64-unknown-none-elf -ffreestanding -fno-builtin \

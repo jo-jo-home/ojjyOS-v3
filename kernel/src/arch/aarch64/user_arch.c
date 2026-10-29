@@ -7,6 +7,7 @@
 #include "memory.h"
 #include "boot_info.h"
 #include "platform.h"
+#include "../../../mm/kvm.h"
 
 #define TABLE 3ULL
 #define AF (1ULL << 10)
@@ -61,6 +62,12 @@ static void switch_root(uint64_t root)
 
 void user_arch_init(void)
 {
+    uint64_t parange=0;
+    __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(parange));
+    uint64_t ips=platform_table_ips(parange);
+    unsigned pa_bits=ips==2 ? 40 : ips==1 ? 36 : 32;
+    uint64_t high_root=kvm_arm_build(pa_bits);
+    if (!high_root) panic("Cannot build RAM-only kernel aliases");
     kernel_l0[0] = descriptor(kernel_l1);
 
     /* Low 4 GiB: 2 MiB blocks from the UEFI map. Below RAM this maps the
@@ -75,14 +82,18 @@ void user_arch_init(void)
                 : base | 1 | AF | PXN | UXN;
         }
     }
-    /* 4-16 GiB: Device blocks for the 64-bit virtio BARs on Apple VZ.
-     * BARs move with configured RAM (8 GiB: 0x2_800x_0000), so the old
-     * 4-8 GiB window faulted before serial attach with larger presets.
-     * This does NOT make high RAM allocatable/cacheable (HW-13).
-     * User copies of this table never point here into
-     * RAM, and user_arch_prepare() overrides app_l1[4] with the user region. */
+    /* Keep the proven Device BAR window, but carve out every RAM block:
+     * high RAM has only the Normal TTBR1 alias, never a Device synonym.
+     * These LOW tables are constructed before either root becomes live. */
     for (unsigned l1 = 4; l1 < 16; l1++) {
-        kernel_l1[l1] = ((uint64_t)l1 << 30) | 1 | AF | PXN | UXN;
+        uint64_t pa=pmm_alloc_page();
+        if (!pa) panic("No low memory for Device window tables");
+        uint64_t *l2=(uint64_t *)(uintptr_t)pa;
+        kernel_l1[l1]=descriptor(l2);
+        for (unsigned b=0;b<512;b++) {
+            uint64_t base=((uint64_t)l1<<30)|((uint64_t)b<<21);
+            l2[b]=block_is_ram(base) ? 0 : base|1|AF|PXN|UXN;
+        }
     }
 
     uint64_t old, cpacr;
@@ -90,16 +101,14 @@ void user_arch_init(void)
     uint64_t off = old & ~1ULL;
     uint64_t mair = 0xFF00; /* index 0 Device-nGnRnE, index 1 normal WB/WA */
     /* T0SZ=16 (48-bit VA), 4 KiB granule, WB/WA walks, inner shareable,
-     * EPD1=1. IPS grows to 40 bits when the CPU supports it: Apple VZ
+     * TTBR1 enabled, same WB/WA/shareability. IPS grows to 40 bits: Apple VZ
      * places virtio BARs just above 4 GiB. */
-    uint64_t parange = 0;
-    __asm__ volatile("mrs %0, id_aa64mmfr0_el1" : "=r"(parange));
     /* PARange=1 is 36 bits, not 32. VZ on M2 reports this value and
      * places PCI BARs above 4 GiB, so silently falling back to IPS=0
      * makes every access to those BARs fault. */
-    uint64_t ips = platform_table_ips(parange);
     uint64_t tcr = 16 | (1ULL << 8) | (1ULL << 10) | (3ULL << 12) |
-                   (16ULL << 16) | (1ULL << 23) | (ips << 32);
+                   (16ULL << 16) | (1ULL << 24) | (1ULL << 26) |
+                   (3ULL << 28) | (2ULL << 30) | (ips << 32);
     /* Preserve architectural RES1 bits. Little-endian, no EL0 cache/DAIF
      * control or WFI/WFE escape, no strict unaligned-data trapping. */
     uint64_t on = old | 1 | (1ULL << 2) | (1ULL << 12) | (1ULL << 3) | (1ULL << 4);
@@ -107,10 +116,13 @@ void user_arch_init(void)
             (1ULL << 19) | (1ULL << 24) | (1ULL << 25) | (1ULL << 26));
     cpacr = (cpacr & ~(3ULL << 20)) | (1ULL << 20); /* FP/SIMD traps at EL0 */
     __asm__ volatile("dsb sy; msr sctlr_el1, %0; isb; msr mair_el1, %1; msr tcr_el1, %2; "
-                     "msr ttbr0_el1, %3; msr ttbr1_el1, xzr; dsb sy; tlbi vmalle1; dsb sy; isb; "
+                     "msr ttbr0_el1, %3; msr ttbr1_el1, %6; dsb sy; tlbi vmalle1; dsb sy; isb; "
                      "msr sctlr_el1, %4; isb; msr cpacr_el1, %5; msr cntkctl_el1, xzr; isb"
                      : : "r"(off), "r"(mair), "r"(tcr), "r"((uint64_t)(uintptr_t)kernel_l0),
-                         "r"(on), "r"(cpacr) : "memory");
+                          "r"(on), "r"(cpacr), "r"(high_root) : "memory");
+    uint64_t installed;
+    __asm__ volatile("mrs %0, ttbr1_el1" : "=r"(installed));
+    if (!kvm_arm_activate(installed) || !kvm_high_selftest()) panic("HIGH RAM alias verification failed");
     ready = true;
     serial_printf("[USER] Owned ARM64 tables ready (IPS=%d bits, RAM 2MiB-mapped)\n",
                   (int)(ips == 2 ? 40 : ips == 1 ? 36 : 32));
@@ -128,22 +140,28 @@ bool user_arch_prepare(const UserSpace *space)
     app_l1[4] = descriptor(app_l2); app_l2[0] = descriptor(app_l3);
     uint64_t ctr; __asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
     uint64_t line = 4ULL << ((ctr >> 16) & 15);
+    unsigned high_pages=0;
+    uint64_t first_high=0;
     for (unsigned i = 0; i < space->count; i++) {
         const UserPage *p = &space->pages[i];
         if (p->address < USER_BASE || p->address >= USER_BASE + 0x200000 ||
             (p->address & PAGE_MASK) || !p->physical || (p->physical & PAGE_MASK) ||
-            p->physical >= 0x100000000ULL || !(p->flags & USER_R) || (p->flags & ~7U) ||
+            !pmm_is_allocated(p->physical) || !pmm_phys_to_virt(p->physical,PAGE_SIZE) ||
+            !(p->flags & USER_R) || (p->flags & ~7U) ||
             ((p->flags & USER_X) && (p->flags & USER_W))) return false;
         unsigned slot = (unsigned)((p->address - USER_BASE) / PAGE_SIZE);
         if (app_l3[slot]) return false;
         uint64_t ap = (p->flags & USER_W) ? (1ULL << 6) : (3ULL << 6);
         app_l3[slot] = p->physical | TABLE | AF | SH_INNER | NORMAL | ap | PXN |
                        ((p->flags & USER_X) ? 0 : UXN);
-        for (uint64_t a = p->physical; a < p->physical + PAGE_SIZE; a += line) {
+        if (p->physical>=(1ULL<<32)) { high_pages++; if (!first_high) first_high=p->physical; }
+        uint64_t alias=(uint64_t)(uintptr_t)pmm_phys_to_virt(p->physical,PAGE_SIZE);
+        for (uint64_t a = alias; a < alias + PAGE_SIZE; a += line) {
             __asm__ volatile("dc cvau, %0" : : "r"(a) : "memory");
         }
     }
     __asm__ volatile("dsb ish; ic iallu; dsb ish; isb" ::: "memory");
+    serial_printf("[USER] Prepared high_pages=%d first_high=%p\n",(int)high_pages,first_high);
     return true;
 }
 

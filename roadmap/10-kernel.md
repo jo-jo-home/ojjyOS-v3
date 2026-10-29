@@ -235,10 +235,9 @@ list pages by use (free, kernel, user, cache, DMA).
 **Refs.** —
 
 ### MEM-03 — Arch-neutral page table API
-- Phase: P1 · Size: M · Status: todo
+- Phase: P1 · Size: M · Status: doing
 - Depends: MEM-01
 - Files: new kernel/mm/pt.h, kernel/src/arch/aarch64/mmu.c (from user_arch.c), kernel/src/arch/x86_64/mmu.c (from paging.c)
-
 **Context.** ARM page-table code is embedded in the EL0 runner
 (`user_arch.c`); x86 has `paging_map()` for the framebuffer only.
 **Goal.** `pt_map(space, va, pa, size, prot)`, `pt_unmap`, `pt_protect`,
@@ -252,7 +251,7 @@ with attribute sets: normal WB, device nGnRE, write-combine (framebuffer).
 boxes own the reusable subset needed by HW-13; the HW-13 part boxes refer
 here and must be ticked in both places with the same evidence. Full pt_*
 extraction, WC framebuffer and this card's dependencies remain unchanged.
-- [ ] HW13-A (HW-13 part 3): ARM RAM/Device descriptor construction, PA-width/ownership validation and privileged high-map groundwork in user_arch.c and mapping helpers; test host encodings plus VZ/HVF high-backed protected isolation. Trap: preserve break-before-make, attributes and checked user VAs.
+- [x] HW13-A (HW-13 part 3): ARM RAM/Device descriptor construction, PA-width/ownership validation and privileged high-map groundwork in user_arch.c and mapping helpers; test host encodings plus VZ/HVF high-backed protected isolation. Trap: preserve break-before-make, attributes and checked user VAs. — done 2026-10-29 (test: build/hw-13-part3/matrix.json, 21 builder + 51 PMM checks normal/fatal ASan/UBSan, both builds zero warnings; VZ4/VZ8/HVF4 each 51 high-backed protected runs with cleanup equality and present-alias permission faults. Full VZ clock test still fails known BUG-1008, explicitly not credited; full MEM-03 completion remains open).
 - [ ] HW13-X (HW-13 part 4): Intel supervisor descriptor/PA masks and failure-safe table construction in paging.c/h and mapping helpers; test every missing intermediate level, OOM, NXE and live high PA writes. Trap: current walker does not create a missing final PT; this is not proof of Intel ring 3.
 **Done when.** The protected-app suite (19 programs) passes unchanged; the
 framebuffer is mapped write-combining on both arches.
@@ -260,9 +259,12 @@ framebuffer is mapped write-combining on both arches.
 **Pitfalls.** ARM break-before-make rule when changing live mappings;
 `dsb ishst; tlbi; dsb ish; isb` sequences.
 **Refs.** Arm ARM D8 (VMSAv8-64); Intel SDM Vol 3 ch. 4.
+**Log.** 2026-10-29 HW13-A preparatory subset verified; HW13-X and full
+pt_* extraction/WC remain open. See HW-13 part 3 and its matrix; no full
+MEM-03 completion or dependency waiver is claimed.
 
 ### MEM-04 — Kernel direct map and vmalloc area
-- Phase: P1 · Size: M · Status: todo
+- Phase: P1 · Size: M · Status: doing
 - Depends: MEM-03
 - Files: kernel/mm/kvm.c
 
@@ -272,7 +274,7 @@ framebuffer is mapped write-combining on both arches.
 **HW-13 shared preparation (not full MEM-04 completion).** Own the
 RAM-only direct-alias subset below; HW-13 refers to these same boxes.
 No vmalloc/all-caller conversion or waiver of the full MEM-03 dependency.
-- [ ] HW13-A (HW-13 part 3): ARM high RAM alias at 0xffff800000000000 + PA, shared privileged TTBR1 mappings and checked phys_to_virt/virt_to_phys helpers in kernel/mm/kvm.c/h; test Normal RAM only, Device exclusions and EL0 alias faults. Trap: metadata/tables stay LOW and no high RAM Device identity alias may conflict.
+- [x] HW13-A (HW-13 part 3): ARM high RAM alias at 0xffff800000000000 + PA, shared privileged TTBR1 mappings and checked phys_to_virt/virt_to_phys helpers in kernel/mm/kvm.c/h; test Normal RAM only, Device exclusions and EL0 alias faults. Trap: metadata/tables stay LOW and no high RAM Device identity alias may conflict. — done 2026-10-29 (test: build/hw-13-part3/matrix.json, 21 builder + 51 PMM checks normal/fatal ASan/UBSan; VZ4/VZ8/HVF4 prove HIGH read/write/free, 153 high-backed protected runs total, EL0 alias permission faults and HIGH browser/TLS buffers. Full VZ clock test still fails known BUG-1008, explicitly not credited; full MEM-04 completion remains open).
 - [ ] HW13-X (HW-13 part 4): same RAM-only supervisor alias and checked translation on Intel using upper PML4 entries, with all table levels LOW; test high allocation/write/read/free plus mapper rollback and stats. Trap: virtual alias is not a device DMA physical address.
 **Done when.** All kernel allocations go through the direct map or vmalloc;
 `phys_to_virt`/`virt_to_phys` used everywhere instead of casts.
@@ -280,6 +282,9 @@ No vmalloc/all-caller conversion or waiver of the full MEM-03 dependency.
 **Pitfalls.** Device MMIO must never be accessed through the cacheable
 direct map; use `ioremap()`.
 **Refs.** D-003.
+**Log.** 2026-10-29 HW13-A RAM-only ARM alias/translation subset verified;
+HW13-X, vmalloc and all-caller migration remain open. Full MEM-04 stays
+incomplete; the full MEM-03 dependency is unchanged. Evidence HW-13 part 3.
 
 ### MEM-05 — Upper-half kernel (both arches)
 - Phase: P1 · Size: L · Status: todo

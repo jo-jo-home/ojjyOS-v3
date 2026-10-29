@@ -86,7 +86,9 @@ bool user_copy_from(const UserSpace *space, void *dest, uint64_t source, size_t 
     while (size) {
         const UserPage *page = find_page(space, source);
         size_t offset = source & PAGE_MASK, chunk = MIN(size, PAGE_SIZE - offset);
-        memcpy(to, (const void *)(uintptr_t)(page->physical + offset), chunk);
+        const void *alias=pmm_phys_to_virt(page->physical+offset,chunk);
+        if (!alias) return false;
+        memcpy(to, alias, chunk);
         to += chunk; source += chunk; size -= chunk;
     }
     return true;
@@ -96,7 +98,8 @@ void user_space_destroy(UserSpace *space)
 {
     if (!space) return;
     for (unsigned i = 0; i < space->count && i < USER_MAX_PAGES; i++) {
-        memset((void *)(uintptr_t)space->pages[i].physical, 0, PAGE_SIZE);
+        void *alias=pmm_phys_to_virt(space->pages[i].physical,PAGE_SIZE);
+        if (alias) memset(alias, 0, PAGE_SIZE);
         pmm_free_page(space->pages[i].physical);
     }
     memset(space, 0, sizeof(*space));
@@ -105,9 +108,11 @@ void user_space_destroy(UserSpace *space)
 static bool add_page(UserSpace *space, uint64_t address, uint32_t flags)
 {
     if (space->count == USER_MAX_PAGES) return false;
-    uint64_t physical = pmm_alloc_page();
+    uint64_t physical = pmm_alloc_page_zone(PMM_ANY);
     if (!physical) return false;
-    memset((void *)(uintptr_t)physical, 0, PAGE_SIZE);
+    void *alias=pmm_phys_to_virt(physical,PAGE_SIZE);
+    if (!alias) { pmm_free_page(physical); return false; }
+    memset(alias, 0, PAGE_SIZE);
     space->pages[space->count++] = (UserPage){address, physical, flags};
     return true;
 }
@@ -138,7 +143,9 @@ bool user_space_load(UserSpace *space, const void *file, size_t size, const User
             const UserPage *page = find_page(space, address);
             size_t offset = address & PAGE_MASK;
             size_t chunk = MIN(s->file_size - done, PAGE_SIZE - offset);
-            memcpy((void *)(uintptr_t)(page->physical + offset), (const uint8_t *)file + s->offset + done, chunk);
+            void *alias=pmm_phys_to_virt(page->physical+offset,chunk);
+            if (!alias) goto fail;
+            memcpy(alias, (const uint8_t *)file + s->offset + done, chunk);
             done += chunk;
         }
     }

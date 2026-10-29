@@ -83,7 +83,7 @@ static void copy_field(char *dst, size_t size, const char *src)
 static TlsSlot *tls_acquire(void)
 {
     for (int i = 0; i < TLS_POOL; i++) {
-        if (!tls_pool[i]) tls_pool[i] = (TlsSlot *)pmm_alloc_bytes(sizeof(TlsSlot));
+        if (!tls_pool[i]) tls_pool[i] = (TlsSlot *)pmm_alloc_mapped_bytes(sizeof(TlsSlot));
         if (tls_pool[i] && !tls_pool[i]->used) { tls_pool[i]->used = true; return tls_pool[i]; }
     }
     return NULL;

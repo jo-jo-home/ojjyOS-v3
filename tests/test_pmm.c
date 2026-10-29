@@ -10,9 +10,12 @@ char _kernel_start[1], _kernel_end[1];
 #define BACKING (32ULL<<20)
 static uint8_t *ram;
 static uint8_t low_top[8192];
+static uint8_t high_store[64*4096] __attribute__((aligned(4096)));
 uint64_t pmm_host_address(const void *p)
 {
     uint64_t a=(uint64_t)(uintptr_t)p, b=(uint64_t)(uintptr_t)ram;
+    uint64_t high=(uint64_t)(uintptr_t)high_store;
+    if (a>=high && a-high<sizeof(high_store)) return (1ULL<<32)+a-high;
     return a>=b && a-b<BACKING ? BASE+a-b : 0;
 }
 void *pmm_host_pointer(uint64_t pa, size_t size)
@@ -177,9 +180,60 @@ static void many_and_fuzz(void)
     }
     CHECK(ok,"100 shuffled 260-region maps, 200000 random alloc/free operations conserve ownership/counts");
 }
+static void *high_pointer(uint64_t pa,size_t bytes)
+{
+    return pa>=(1ULL<<32) && pa-(1ULL<<32)<sizeof(high_store) &&
+        bytes<=sizeof(high_store)-(pa-(1ULL<<32)) ? high_store+(pa-(1ULL<<32)) : NULL;
+}
+static void high_zones(void)
+{
+    setup(4); entry(0,BASE,128,7);entry(1,1ULL<<32,64,7);
+    entry(2,(1ULL<<32)+sizeof(high_store),1,11);
+    entry(3,(1ULL<<32)+sizeof(high_store)+4096,1,6);
+    CHECK(boot(),"high backing map bootstraps");
+    CHECK(!pmm_phys_to_virt(1ULL<<32,4096) && !pmm_high_ready(),"high translation fails before activation");
+    CHECK(!pmm_enable_high(NULL) && pmm_enable_high(high_pointer) && !pmm_enable_high(high_pointer),
+          "resolver readiness checked and one-way");
+    PmmStats before=pmm_get_stats();
+    memset(high_store,0xcc,sizeof(high_store));
+    uint64_t pa=pmm_alloc_contiguous_zone(4,PMM_ANY);
+    CHECK(pa==(1ULL<<32) && pmm_is_allocated(pa) && !pmm_is_allocated(pa+4*4096),"ANY chooses HIGH with ownership");
+    bool zero=true;for(unsigned i=0;i<4*4096;i++) if(high_store[i])zero=false;
+    CHECK(zero && high_store[4*4096]==0xcc,"HIGH zeroing stays in owned range");
+    CHECK(pmm_phys_to_virt(pa+17,123)==high_store+17 && pmm_virt_to_phys(high_store+17,123)==pa+17,
+          "checked translation roundtrip including offset");
+    CHECK(!pmm_phys_to_virt(pa+sizeof(high_store)-1,2) && !pmm_phys_to_virt(~0ULL,4096) &&
+          !pmm_phys_to_virt(pa,0) && !pmm_phys_to_virt((1ULL<<32)+sizeof(high_store),1),
+          "range end, overflow, zero and Device rejected");
+    uint64_t low=pmm_alloc_page(); CHECK(low && low<(1ULL<<32),"legacy remains LOW after readiness");
+    pmm_free_page(low); for(unsigned i=0;i<4;i++)pmm_free_page(pa+i*4096);
+    void *buf=pmm_alloc_mapped_bytes(8193); uint64_t addr=pmm_virt_to_phys(buf,8193);
+    CHECK(buf && addr>=(1ULL<<32) && pmm_get_stats().high_free_bytes==before.high_free_bytes-3*4096,
+          "mapped byte buffer selects HIGH and rounds pages");
+    for(unsigned i=0;i<3;i++)pmm_free_page(addr+i*4096);
+    uint64_t held[64];unsigned n=0;while(n<64 && (pa=pmm_alloc_page_zone(PMM_HIGH)))held[n++]=pa;
+    CHECK(n==64 && !pmm_alloc_page_zone(PMM_HIGH),"HIGH exhaustion never falls back");
+    low=pmm_alloc_page_zone(PMM_ANY); CHECK(low && low<(1ULL<<32),"ANY falls back LOW only after HIGH exhaustion");
+    pmm_free_page(low);for(unsigned i=0;i<n;i++)pmm_free_page(held[i]);
+    bool valid=true;uint64_t slots[32]={0};
+    for(unsigned op=0;op<20000;op++) {
+        unsigned j=random32()%32;
+        if(slots[j]) {pmm_free_page(slots[j]);slots[j]=0;}
+        else {
+            slots[j]=pmm_alloc_page_zone((PmmZone)(random32()%3));
+            if(!slots[j])valid=false;
+            for(unsigned k=0;k<32;k++)if(k!=j && slots[j] && slots[j]==slots[k])valid=false;
+        }
+    }
+    for(unsigned j=0;j<32;j++)if(slots[j])pmm_free_page(slots[j]);
+    PmmStats after=pmm_get_stats();
+    CHECK(valid && after.low_free_bytes==before.low_free_bytes && after.high_free_bytes==before.high_free_bytes,
+          "20000 mixed-zone operations conserve both free counts and unique ownership");
+    CHECK(pmm_get_free_memory()==before.low_free_bytes+before.high_free_bytes,"active free getter includes HIGH");
+}
 int main(void)
 {
     ram=malloc(BACKING); if (!ram) return 2;
-    basic(); exhaust(); malformed(); boundary_and_storage(); many_and_fuzz(); free(ram);
+    basic(); exhaust(); malformed(); boundary_and_storage(); many_and_fuzz(); high_zones(); free(ram);
     return finish();
 }

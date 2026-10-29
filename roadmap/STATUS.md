@@ -7,7 +7,7 @@ Do not edit by hand: change `Status:` inside the card and regenerate.
 | Phase | Cards | todo | doing | done | blocked |
 |---|---|---|---|---|---|
 | P0 | 18 | 9 | 0 | 9 | 0 |
-| P1 | 67 | 67 | 0 | 0 | 0 |
+| P1 | 67 | 65 | 2 | 0 | 0 |
 | P2 | 190 | 188 | 1 | 1 | 0 |
 | P3 | 89 | 89 | 0 | 0 | 0 |
 | P4 | 70 | 70 | 0 | 0 | 0 |
@@ -72,8 +72,8 @@ Do not edit by hand: change `Status:` inside the card and regenerate.
 | KDB-04 | Debug and release build configurations | S | todo | — | 10-kernel.md |
 | MEM-01 | Buddy page allocator with free | M | todo | — | 10-kernel.md |
 | MEM-02 | Page frame database | S | todo | MEM-01 | 10-kernel.md |
-| MEM-03 | Arch-neutral page table API | M | todo | MEM-01 | 10-kernel.md |
-| MEM-04 | Kernel direct map and vmalloc area | M | todo | MEM-03 | 10-kernel.md |
+| MEM-03 | Arch-neutral page table API | M | doing | MEM-01 | 10-kernel.md |
+| MEM-04 | Kernel direct map and vmalloc area | M | doing | MEM-03 | 10-kernel.md |
 | MEM-05 | Upper-half kernel (both arches) | L | todo | MEM-04, BOOT-01 | 10-kernel.md |
 | MEM-06 | Slab allocator and `kmalloc` size classes | M | todo | MEM-04 | 10-kernel.md |
 | MEM-07 | Kernel W^X and guard pages | S | todo | MEM-05 | 10-kernel.md |

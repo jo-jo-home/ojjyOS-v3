@@ -23,6 +23,7 @@ static PmmRegion *regions;
 static uint64_t region_count;
 static PmmStats stats;
 static bool pmm_ready;
+static PmmResolver high_resolver;
 
 #ifdef OJJY_PMM_HOST_TEST
 extern void *pmm_host_pointer(uint64_t physical, size_t bytes);
@@ -63,7 +64,7 @@ static bool excluded(uint64_t start, uint64_t end, const BootInfo *info,
  * pretending host linker symbols are guest physical addresses. */
 bool pmm_init_ranges(BootInfo *info, uint64_t ks, uint64_t ke)
 {
-    pmm_ready = false; regions = NULL; region_count = 0;
+    pmm_ready = false; high_resolver = NULL; regions = NULL; region_count = 0;
     memset(&stats,0,sizeof(stats));
     if (!info || !info->mmap_addr || info->mmap_desc_size < sizeof(EfiMemoryDescriptor) ||
         !info->mmap_size || info->mmap_size % info->mmap_desc_size ||
@@ -168,12 +169,14 @@ void pmm_init(BootInfo *info)
 
 uint64_t pmm_alloc_contiguous_zone(uint64_t pages, PmmZone zone)
 {
-    /* No architecture readiness hook exists yet: HIGH always fails closed. */
-    if (!pmm_ready || !pages || pages > LOW_END/PAGE_SIZE ||
-        (zone!=PMM_LOW && zone!=PMM_ANY)) return 0;
+    if (!pmm_ready || !pages || pages > LIMIT64/PAGE_SIZE ||
+        (zone!=PMM_LOW && zone!=PMM_HIGH && zone!=PMM_ANY)) return 0;
+    for (unsigned order=0; order<(zone==PMM_ANY ? 2u : 1u); order++) {
+    bool high=zone==PMM_HIGH || (zone==PMM_ANY && order==0);
+    if (high && !high_resolver) continue;
     for (uint64_t i=0; i<region_count; i++) {
         PmmRegion *r=&regions[i];
-        if (r->base>=LOW_END || pages>r->pages) continue;
+        if ((r->base>=LOW_END)!=high || pages>r->pages) continue;
         /* Next-fit, two non-wrapping ranges. No contiguous run crosses a hole. */
         for (unsigned pass=0; pass<2; pass++) {
             uint64_t first=pass ? 0 : r->cursor, end=r->pages;
@@ -182,15 +185,17 @@ uint64_t pmm_alloc_contiguous_zone(uint64_t pages, PmmZone zone)
                 if (!bit(r->eligible,p) || bit(r->allocated,p)) { run=0; continue; }
                 if (++run<pages) continue;
                 uint64_t start=p+1-pages, pa=r->base+start*PAGE_SIZE;
-                void *ptr=physical_pointer(pa,pages*PAGE_SIZE);
+                void *ptr=high ? high_resolver(pa,pages*PAGE_SIZE) : physical_pointer(pa,pages*PAGE_SIZE);
                 if (!ptr) return 0;
                 for (uint64_t n=start; n<=p; n++) set_bit(r->allocated,n,true);
                 r->cursor=(p+1)%r->pages;
-                stats.low_free_bytes-=pages*PAGE_SIZE;
+                if (high) stats.high_free_bytes-=pages*PAGE_SIZE;
+                else stats.low_free_bytes-=pages*PAGE_SIZE;
                 memset(ptr,0,pages*PAGE_SIZE);
                 return pa;
             }
         }
+    }
     }
     return 0;
 }
@@ -218,8 +223,76 @@ void pmm_free_page(uint64_t pa)
 }
 PmmStats pmm_get_stats(void) { return stats; }
 uint64_t pmm_get_total_memory(void) { return stats.total_bytes; }
-/* Only immediately allocatable pages are exposed through the legacy getter. */
-uint64_t pmm_get_free_memory(void) { return stats.low_free_bytes; }
+uint64_t pmm_get_free_memory(void)
+{ return stats.low_free_bytes+(high_resolver ? stats.high_free_bytes : 0); }
+bool pmm_region(uint64_t i, uint64_t *base, uint64_t *pages)
+{
+    if (!pmm_ready || i>=region_count || !base || !pages) return false;
+    *base=regions[i].base; *pages=regions[i].pages; return true;
+}
+bool pmm_range_eligible(uint64_t pa, size_t bytes)
+{
+    if (!pmm_ready || !bytes || pa>LIMIT64-bytes) return false;
+    for (uint64_t i=0;i<region_count;i++) {
+        PmmRegion *r=&regions[i];
+        if (pa<r->base || pa-r->base>=r->pages*PAGE_SIZE ||
+            bytes>r->pages*PAGE_SIZE-(pa-r->base)) continue;
+        uint64_t first=(pa-r->base)/PAGE_SIZE, last=(pa-r->base+bytes-1)/PAGE_SIZE;
+        for (uint64_t p=first;p<=last;p++) if (!bit(r->eligible,p)) return false;
+        return true;
+    }
+    return false;
+}
+bool pmm_is_allocated(uint64_t pa)
+{
+    if (pa&PAGE_MASK) return false;
+    for (uint64_t i=0;pmm_ready && i<region_count;i++) {
+        PmmRegion *r=&regions[i];
+        if (pa>=r->base && (pa-r->base)/PAGE_SIZE<r->pages) {
+            uint64_t p=(pa-r->base)/PAGE_SIZE;
+            return bit(r->eligible,p) && bit(r->allocated,p);
+        }
+    }
+    return false;
+}
+bool pmm_enable_high(PmmResolver resolver)
+{
+    if (!pmm_ready || !resolver || high_resolver) return false;
+    high_resolver=resolver;
+    serial_printf("[PMM] High RAM enabled: %llu free pages\n",stats.high_free_bytes/PAGE_SIZE);
+    return true;
+}
+bool pmm_high_ready(void) { return high_resolver!=NULL; }
+void *pmm_phys_to_virt(uint64_t pa, size_t bytes)
+{
+    if (!pmm_range_eligible(pa,bytes)) return NULL;
+    if (pa<LOW_END && bytes<=LOW_END-pa) return physical_pointer(pa,bytes);
+    return high_resolver ? high_resolver(pa,bytes) : NULL;
+}
+uint64_t pmm_virt_to_phys(const void *pointer, size_t bytes)
+{
+    uint64_t va=(uint64_t)(uintptr_t)pointer;
+#ifdef OJJY_PMM_HOST_TEST
+    uint64_t translated=boot_address(pointer);
+    if (translated && pmm_phys_to_virt(translated,bytes)==pointer) return translated;
+#endif
+    const uint64_t base=0xffff800000000000ULL;
+    uint64_t pa=va>=base ? va-base : va;
+    return pmm_phys_to_virt(pa,bytes)==pointer ? pa : 0;
+}
+void *pmm_alloc_mapped_bytes(size_t bytes)
+{
+    if (!bytes || bytes>LIMIT64-PAGE_MASK) return NULL;
+    uint64_t pa=pmm_alloc_contiguous_zone((bytes+PAGE_MASK)/PAGE_SIZE,PMM_ANY);
+    if (!pa) return NULL;
+    void *pointer=pmm_phys_to_virt(pa,bytes);
+    if (!pointer) {
+        for (uint64_t offset=0;offset<bytes;offset+=PAGE_SIZE) pmm_free_page(pa+offset);
+        return NULL;
+    }
+    serial_printf("[PMM] Mapped buffer pa=%p bytes=%llu high=%d\n",pa,(uint64_t)bytes,(int)(pa>=LOW_END));
+    return pointer;
+}
 void pmm_print_map(BootInfo *info)
 {
     if (!info || info->mmap_desc_size<sizeof(EfiMemoryDescriptor)) return;

@@ -73,6 +73,12 @@ void _start(void)
     __asm__ volatile("br %0" : : "r"(0x41000000UL) : "memory");
 #elif CASE == 17
     __asm__ volatile("mov sp, %0; str xzr, [sp]" : : "r"(0x41000000UL) : "memory");
+#elif CASE == 18
+    __asm__ volatile("ldr x0, [%0]" : : "r"(0xffff800100000000UL) : "x0", "memory");
+#elif CASE == 19
+    __asm__ volatile("str xzr, [%0]" : : "r"(0xffff800100000000UL) : "memory");
+#elif CASE == 20
+    __asm__ volatile("br %0" : : "r"(0xffff800100000000UL) : "memory");
 #endif
     finish(99);
 }

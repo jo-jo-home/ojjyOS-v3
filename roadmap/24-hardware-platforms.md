@@ -221,7 +221,10 @@ preserved ARM/Intel saved-data, legacy disk, launch settings and EFI store
 hashes exactly (preservation.json). Private delivered-image VZ8 UI passes,
 About screenshot reviewed, ready_to_test written. Limits: legacy/DMA LOW,
 Intel EL0/network unsupported, launch menu up to 8 GB within half host RAM;
-full MEM cards are not claimed complete. Nothing pushed in part 5.
+full MEM cards are not claimed complete. Jonas approved publication on
+2026-10-30: origin/main and origin/hw-13 verified at 8c156a0 after a
+normal fast-forward push; all 10 pending main commits passed gitleaks
+and added-line privacy scans. Publication receipt changes context only.
 **Handoff.** HW-13 is done and installed. Next session is **launch-3 /
 HW-14**, not more HW-13. Read HW-14, HW-12's version-1 launch-settings
 contract and ojjy Control AGENTS before touching the shared settings path.
@@ -229,8 +232,8 @@ Do not reset installed disks/settings. Keep private-copy tests and
 NTP-aware clock checks. Current delivery evidence is build/hw-13-part5/;
 Python+Pillow is build/hw-13-part3/venv/bin/python. Final completion
 records change context only; installed kernels match tested source.
-Ask for new approval before a public push; earlier part-4 approval does
-not authorize these commits. Stop here, do not start launch-3 today.
+Part 5 is published with explicit approval; ask for new approval for
+future work. Stop here, do not start launch-3 today.
 
 ### HW-14 — QEMU script and ojjy Control use the launch settings
 - Phase: P2 · Size: S · Status: todo

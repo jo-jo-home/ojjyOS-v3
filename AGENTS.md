@@ -34,8 +34,11 @@ are byte-identical to the tested dev kernels. Private delivered-image VZ8
 light/dark About/Monitor passes; About capture reviewed; ready note written.
 All HW-13 boxes and matching MEM HW13-A/HW13-X substeps have evidence;
 MEM-03/04 themselves remain doing (full pt_*/WC/vmalloc still future).
-No push authorization yet; implementation 921c482, delivery 47060cc,
-UI acceptance b5c2958 and final context-only completion records follow.
+Jonas approved publication on 2026-10-30. Public origin/main and
+origin/hw-13 verified at 8c156a0 after a normal fast-forward push;
+all 10 pending main commits passed gitleaks and added-line privacy scans.
+Implementation 921c482, delivery 47060cc, UI acceptance b5c2958 and
+completion 8c156a0 are published; this receipt changes context only.
 Part-5 UI/delivery Done-when acceptance is checked with the same complete
 receipts; no placeholder RAM value or skipped native gate is credited.
 Execution/evidence: docs/hw-13-part5-plan.md, build/hw-13-part5/.

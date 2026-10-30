@@ -1,10 +1,13 @@
 # Native VM Plan — ojjyOS.app on Apple's Virtualization framework (2026-10-18)
 
-HW-13 part 5 checkpoint (2026-10-30): runtime PMM and ARM/Intel high-RAM
+HW-13 part 5 delivered (2026-10-30, implementation 921c482): runtime PMM and ARM/Intel high-RAM
 aliases are implemented; About/Monitor now show measured RAM and separate
 managed/used/free/reserved counters. Temporary launch warning removed.
 Private VZ2/4/8 light/dark OCR and visual review agree with PMM at
-2047/4095/8191 MB RAM (build/hw-13-part5/); final safe delivery is pending.
+2047/4095/8191 MB RAM (build/hw-13-part5/matrix.json). Main/checkout
+fast-forwarded after full gates; installed ARM/Intel/app builds zero
+warnings, saved data/legacy disk/launch settings/EFI hashes unchanged.
+Private delivered-image VZ8 UI passes, screenshot reviewed, ready note written.
 Historical N3/HW-12 limits below describe their original checkpoints.
 
 Jonas: "sure implement the rest qemu is laggy and i want it to feel smooth

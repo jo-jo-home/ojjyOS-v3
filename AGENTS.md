@@ -1,6 +1,6 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-30): HW-13 part 5 UI verified; final delivery next
+## LATEST (2026-10-30): HW-13 part 5 safely delivered; final card records next
 
 Board f5c05f, branch hw-13. Parts 1–4 remain intact. About now formats
 actual PMM bytes as rounded GB plus exact MB; Monitor uses a shared tested
@@ -21,12 +21,18 @@ Intel4 stress own/verify 3 GiB and restore counts; high VZ8 isolation/TLS
 passes. Final native USB/persistence/protected smoke, all 20 app-polish
 flows, VZ2/4/8 full clock gates and fresh HVF4 3-GiB stress also pass.
 40 app-polish host checks (11 new), 2138 Swift and 7 pixel guards pass.
-Only safe installed delivery and final context/check-offs remain.
+Main and Jonas's checkout fast-forwarded to implementation 921c482 only
+after all gates passed. With no running VM, ARM/Intel/app installed builds
+pass with zero warnings. Saved-data SHA-256 unchanged: ARM a1bcea66...,
+Intel a8bb9f64...; full legacy disk, launch settings and EFI store also
+unchanged (build/hw-13-part5/preservation.json). Both installed kernels
+are byte-identical to the tested dev kernels. Private delivered-image VZ8
+light/dark About/Monitor passes; About capture reviewed; ready note written.
+Only final card/context check-offs remain. No push authorization yet.
 Execution/evidence: docs/hw-13-part5-plan.md, build/hw-13-part5/.
-Handoff: finish final gates, strict checks, commit, fast-forward main;
-then only with no VM running rebuild installed ARM/Intel/app, preserving
-saved-data/settings/EFI hashes. Verify private delivered-image VZ8 UI and
-write ready_to_test. Tick remaining part-5 boxes only after delivery.
+Handoff: finish remaining Done-when check-offs using matrix.json, update
+final context/STATUS, strict checklist, commit/fast-forward final records,
+refresh ready note for the final context-only tip; board done, ask to push.
 
 ## LATEST (2026-10-30): part-4 pre-push double-check passed; part 4 pushed
 

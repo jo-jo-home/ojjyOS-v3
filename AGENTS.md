@@ -1,8 +1,12 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-30): HW-13 part 5 safely delivered; final card records next
+## LATEST (2026-10-30): HW-13 complete and safely delivered (launch-2 DONE)
 
-Board f5c05f, branch hw-13. Parts 1–4 remain intact. About now formats
+Board f5c05f done, branch hw-13; the whole HW-13 card is complete.
+Parts 1–4 remain intact: runtime map-sized PMM/LOW bootstrap metadata,
+explicit zones, ARM TTBR1 and Intel supervisor high aliases, audited
+high CPU-only callers and verified 3-GiB simultaneous ownership.
+About now formats
 actual PMM bytes as rounded GB plus exact MB; Monitor uses a shared tested
 AppMemoryUsage projection: reserved=total-managed, used=managed-active free,
 including enabled high free pages. Its bar is used/managed, not total-free
@@ -28,13 +32,20 @@ Intel a8bb9f64...; full legacy disk, launch settings and EFI store also
 unchanged (build/hw-13-part5/preservation.json). Both installed kernels
 are byte-identical to the tested dev kernels. Private delivered-image VZ8
 light/dark About/Monitor passes; About capture reviewed; ready note written.
-Only final card/context check-offs remain. No push authorization yet.
+All HW-13 boxes and matching MEM HW13-A/HW13-X substeps have evidence;
+MEM-03/04 themselves remain doing (full pt_*/WC/vmalloc still future).
+No push authorization yet; implementation 921c482, delivery 47060cc,
+UI acceptance b5c2958 and final context-only completion records follow.
 Part-5 UI/delivery Done-when acceptance is checked with the same complete
 receipts; no placeholder RAM value or skipped native gate is credited.
 Execution/evidence: docs/hw-13-part5-plan.md, build/hw-13-part5/.
-Handoff: finish remaining Done-when check-offs using matrix.json, update
-final context/STATUS, strict checklist, commit/fast-forward final records,
-refresh ready note for the final context-only tip; board done, ask to push.
+Next session: **launch-3 / HW-14**, shared QEMU/Control launch settings.
+Do not repeat HW-13 or reset disks/settings. Read HW-14 plus HW-12's
+version-1 settings contract and ojjy Control's own AGENTS first. Final
+records are context-only; installed binaries still match tested kernels.
+Keep private-copy tests, NTP-aware clock gates, legacy/DMA LOW policy,
+and the explicit unsupported Intel EL0/network limits. Use Homebrew
+OpenSSL on PATH for TLS fixtures; ask before any public push.
 
 ## LATEST (2026-10-30): part-4 pre-push double-check passed; part 4 pushed
 

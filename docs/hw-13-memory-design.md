@@ -1,10 +1,30 @@
 # HW-13: measured memory limits and implementation decision
 
-Created by Jonas Lee. Parts 1–4, 2026-10-29/30. **Runtime PMM and ARM
-verified; Intel/stress/clock repair and full regression verified.**
+Created by Jonas Lee. Parts 1–5, 2026-10-29/30. **HW-13 complete:
+runtime PMM, ARM/Intel high RAM, stress/clock regression and measured UI
+verified; safely delivered on 2026-10-30.**
 Baseline: `043894c`; branch `hw-13`, worktree `ojjyOS-v3-hw-13`.
-The HW-13 card owns the five-part checklist and handoff. Main must not
-move until part 5. The existing launch memory warning remains until then.
+The HW-13 card owns the five-part checklist and handoff. Main moved only
+in part 5 after all gates; the temporary launch memory warning is removed.
+
+### Part 5 delivered result
+
+About formats actual PMM bytes as binary GB rounded to the nearest tenth,
+with the exact whole-MiB counter alongside it. Monitor reports total RAM,
+initial managed capacity, reserved=total-managed and used=managed-active
+free; enabled HIGH free counts alongside LOW. Its bar uses used/managed.
+Each MiB counter is floored individually, so sums can differ by one MiB.
+Private VZ2/4/8 light/dark screenshots and OCR agree with PMM:
+2047/4095/8191 MB RAM and 2027/4075/8171 MB managed; all 12 captures
+visually reviewed. Fresh VZ8/HVF4/Intel4 stress owns/verifies 3 GiB at
+once and restores all free counts; VZ8 high-backed isolation/TLS passes.
+Full combined-source gates and zero-warning dev/installed builds pass;
+installed kernels are byte-identical to tested dev kernels. Saved-data,
+legacy disk, settings and EFI-store hashes are unchanged; private
+delivered-image VZ8 UI passes and ready_to_test is written. Evidence:
+build/hw-13-part5/matrix.json and preservation.json. Legacy/DMA LOW,
+Intel EL0/network unsupported and full MEM-card limits still apply.
+The measurements below are historical part-1 baseline evidence.
 
 ## 1. Measurement, not an allocation claim
 

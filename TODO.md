@@ -149,7 +149,7 @@ Every tour screenshot was read (ink-profile + spot ASCII rendering via
 
 Launch series (2026-10-27), independent of the old N1–N11 milestones:
 - [x] HW-12: native launch menu/settings file, live display/RAM proof and safe delivery (worktree `ojjyOS-v3-hw-12`) — done 2026-10-27 (test: 2137 Swift guards, native lifecycle/protected smoke, both zero-warning builds, preserved installed hashes, delivered private 3 GB boot).
-- [~] HW-13 / launch-2: parts 1–4 verified; part 5 measured About/Monitor, launch-warning removal and VZ2/4/8 light/dark UI proof pass (2026-10-30; docs/hw-13-part5-plan.md, build/hw-13-part5/). ARM/Intel high aliases and fresh VZ8/Intel4 3-GiB stress work; legacy/DMA stay LOW. Remaining: final combined-source gates, main fast-forward, hash-preserving installed builds and private delivered-image proof/ready note.
+- [x] HW-13 / launch-2: map-sized PMM, ARM/Intel high RAM, measured About/Monitor and launch-warning removal delivered. — done 2026-10-30 (test: build/hw-13-part5/matrix.json, VZ2/4/8 light/dark PMM/UI agreement, normal/fatal ASan/UBSan, zero-warning dev/installed builds, Swift/QEMU/native/app/clock/high-TLS regressions, VZ8/HVF4/Intel4 3-GiB stress; main fast-forwarded, saved-data/settings/EFI/legacy hashes unchanged, private delivered VZ8 proof and ready note; 921c482/47060cc/b5c2958). Legacy/DMA stay LOW; Intel EL0 unsupported. Next launch-3/HW-14.
 - [ ] HW-14 / launch-3: QEMU and ojjy Control share `build/launch-settings.json`.
 
 Jonas: "qemu is laggy and i want it to feel smooth like a native virtualbox

@@ -262,6 +262,11 @@ framebuffer is mapped write-combining on both arches.
 **Log.** 2026-10-29 HW13-A and 2026-10-30 HW13-X preparatory subsets
 verified (HW-13 part3/part4 matrices); full pt_* extraction/WC and the
 dependency remain open. No full MEM-03 completion is claimed.
+**Log.** 2026-10-30 HW-13 delivered: both shared HW13-A/HW13-X boxes
+rechecked against parts 3/4 and fresh combined-source part-5 matrix,
+including 51 high-backed ARM protected runs and VZ8/HVF4/Intel4 3-GiB
+stress with exact cleanup (build/hw-13-part5/matrix.json). Full MEM-03
+remains doing; this is not pt_* extraction or WC framebuffer completion.
 
 ### MEM-04 — Kernel direct map and vmalloc area
 - Phase: P1 · Size: M · Status: doing
@@ -289,6 +294,11 @@ direct map; use `ioremap()`.
 alias/translation subsets verified (HW-13 part3/part4 matrices); vmalloc
 and all-caller migration remain open. Full MEM-04 stays incomplete and
 the full MEM-03 dependency is unchanged.
+**Log.** 2026-10-30 HW-13 delivered: shared ARM/Intel RAM-only aliases
+and translations rechecked with the fresh part-5 host/sanitized, high
+isolation/TLS and VZ8/HVF4/Intel4 stress matrix. Installed kernels match
+tested dev kernels (build/hw-13-part5/matrix.json); legacy/DMA remain LOW.
+Full MEM-04 stays doing; no vmalloc/all-caller migration completion claim.
 
 ### MEM-05 — Upper-half kernel (both arches)
 - Phase: P1 · Size: L · Status: todo

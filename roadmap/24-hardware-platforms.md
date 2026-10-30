@@ -92,7 +92,7 @@ Limit: actual allocatable RAM still ~2.2 GB until HW-13; QEMU/Control sharing
 is HW-14. No SMP, high-RAM allocator, live guest display resize or remote push.
 
 ### HW-13 — ojjyOS uses all the memory it gets
-- Phase: P2 · Size: L · Status: doing
+- Phase: P2 · Size: L · Status: done
 - Depends: HW-12
 - Files: docs/hw-13-memory-design.md, kernel/src/memory.c/h, kernel/src/user_image.c, kernel/src/arch/aarch64/user_arch.c, kernel/src/paging.c/h, kernel/mm/kvm.c/h (new), kernel/src/ui/browser.c, kernel/src/web/http.c, kernel/src/ui/compositor.c, vmapp/LaunchWindow.swift, tests/
 
@@ -121,8 +121,8 @@ MEM-04 own the named HW13-A/HW13-X preparation boxes below; cross-check
 them when implemented, never claim those full cards done. No buddy,
 page-frame DB, vmalloc or kernel relink is needed here. Exact interfaces,
 reservation rules, caller inventory, proof requirements and measurements:
-`docs/hw-13-memory-design.md` (decision D-026). Runtime PMM and ARM subset
-are verified in parts 2/3; Intel/stress and UI/delivery remain parts 4/5.
+`docs/hw-13-memory-design.md` (decision D-026). All five parts are now
+implemented, verified and delivered; see the dated Logs and part-5 matrix.
 
 **Steps.**
 - [x] (part 1) Memory maps measured and Decision written — done 2026-10-29 (verified: `build/hw-13-part1/memory-maps.txt`, all 242 descriptors from five private boots; complete maps/counts/BARs, `summary.json` and `preservation.json`; host + ASan/UBSan and both uninstrumented dev builds pass with zero warnings). Files: this card, docs/hw-13-memory-design.md, D-026, MEM-03/04 preparation boxes and context. Trap: removed temporary memory.c logging; VZ 4/8 full test clock failures remain explicitly reported as BUG-1008, not hidden.
@@ -135,7 +135,7 @@ are verified in parts 2/3; Intel/stress and UI/delivery remain parts 4/5.
 - [x] (part 3) Actual high frames and chosen high-backed CPU buffers work under VZ 4/8 GiB and ARM HVF 4 GiB with unchanged protected isolation and cleanup equality. Files/tests/trap: ARM/user_image/browser/http/kvm tests; a successful boot or printed total alone is insufficient. — done 2026-10-29 (test: build/hw-13-part3/{vz4-v1,vz8-v1,hvf4-v1}/report.json, PA 0x100000000 zero/write/read/free, 153 high-backed protected runs total, all cleanup counts equal, EL0 alias permission faults, HIGH 40/28/20/48-MiB buffers and 117496-byte TLS slot; HTTP/HTTPS/PNG screenshots read; full VZ clock gate remains known BUG-1008 failure, not a pass).
 - [x] (part 4) Intel uses high RAM through valid mappings and the live peak-owned >2.5 GiB write/read/free test and complete regression matrix pass. Files/tests/trap: paging/kvm/live memory tests; every held page is distinct, firmware/Device addresses are never RAM. — done 2026-10-30 (test: build/hw-13-part4/stress-intel4-final/report.json and stress-{hvf4,vz8}-v1/report.json, each actual 3-GiB simultaneous peak/every-page PA-derived patterns/free counts equal/recovery; matrix.json records normal/sanitized/build/live regressions plus corrected full VZ clocks; Intel unsupported EL0 is not credited as a protected-app pass).
 - [x] (part 5) Multiple VZ RAM settings produce matching real PMM/About/Monitor figures; temporary memory warning removed, reviewed screenshots and data-preserving installed delivery verified. Files/tests/trap: compositor/LaunchWindow/delivery; no UI-only placeholder claim. — done 2026-10-30 (test: build/hw-13-part5/{vz2,vz4-v2,vz8,delivered-vz8}/report.json, OCR/exact PMM/Monitor receipts, all 12 development captures reviewed plus installed About; 8191 MB RAM/8171 MB managed at 8 GB, real high pattern at PA 0x100000000, 51 high-backed protected runs with exact cleanup, 3-GiB stress on VZ8/HVF4/Intel4; preservation.json and ready note verified, implementation 921c482/delivery records 47060cc).
-- [ ] (part 5) All series boxes and matching MEM substeps have evidence; context current, strict checklist/roadmap clean, combined source tested and only then main fast-forwarded. Files/tests/trap: roadmap/context/regression logs; full MEM-01..05 completion is not implied.
+- [x] (part 5) All series boxes and matching MEM substeps have evidence; context current, strict checklist/roadmap clean, combined source tested and only then main fast-forwarded. Files/tests/trap: roadmap/context/regression logs; full MEM-01..05 completion is not implied. — done 2026-10-30 (test: build/hw-13-part5/matrix.json, preservation.json, checklist-final.log, roadmap check/status; four shared MEM-03/04 boxes retain parts 3/4 proof, fresh combined-source PMM/mapper/stress host and live tests pass, final context has no production-source changes; 921c482/47060cc/b5c2958 and final completion records).
 **Tests.** PMM/mapping host tests and fuzz boundaries, ASan/UBSan, both dev
 builds, private-disk VZ 2/3/4/6/8 GB as host permits, QEMU TCG/HVF/Intel smokes.
 **Pitfalls.** Physical address != RAM size; sparse maps/overflow/holes/reserved
@@ -210,16 +210,27 @@ TCG/HVF/Intel protected/persistence, native full smoke, 20 app-polish flows,
 full VZ2/4/8 clocks, VZ8 high isolation/TLS and VZ8/HVF4/Intel4 3-GiB
 stress pass. Evidence build/hw-13-part5/. Installed delivery/check-offs
 are still pending; no main or installed data changed at this checkpoint.
-**Handoff.** Implementation and installed delivery are verified; only the
-final context/series acceptance check-off remains. Use matrix.json and
-preservation.json in build/hw-13-part5/, cross-check MEM-03/04 shared
-HW13-A/HW13-X boxes without marking those full cards done, update STATUS
-and final Log, commit, fast-forward final context to main/checkout and
-refresh ready_to_test for that context-only tip. No code retest is needed
-for context-only records; any code change requires full gates again.
-Legacy/DMA remain LOW; Intel EL0/network and full pt_*/WC/vmalloc stay
-future. All VMs used private copies; installed source/settings preserved.
-Do not start launch-3 here. Ask before any public push.
+**Log.** 2026-10-30 HW-13 COMPLETE: implementation 921c482, delivery
+47060cc, UI acceptance b5c2958, followed by context-only completion.
+All five parts and four shared MEM substeps verified. Full combined-source
+matrix passes (build/hw-13-part5/matrix.json); reviewed VZ2/4/8 light/dark
+About/Monitor show actual 2/4/8 GB with exact PMM figures. Both installed
+builds/app zero warnings, kernels byte-identical to tested dev kernels.
+With no VM running, main and Jonas's checkout fast-forwarded and builders
+preserved ARM/Intel saved-data, legacy disk, launch settings and EFI store
+hashes exactly (preservation.json). Private delivered-image VZ8 UI passes,
+About screenshot reviewed, ready_to_test written. Limits: legacy/DMA LOW,
+Intel EL0/network unsupported, launch menu up to 8 GB within half host RAM;
+full MEM cards are not claimed complete. Nothing pushed in part 5.
+**Handoff.** HW-13 is done and installed. Next session is **launch-3 /
+HW-14**, not more HW-13. Read HW-14, HW-12's version-1 launch-settings
+contract and ojjy Control AGENTS before touching the shared settings path.
+Do not reset installed disks/settings. Keep private-copy tests and
+NTP-aware clock checks. Current delivery evidence is build/hw-13-part5/;
+Python+Pillow is build/hw-13-part3/venv/bin/python. Final completion
+records change context only; installed kernels match tested source.
+Ask for new approval before a public push; earlier part-4 approval does
+not authorize these commits. Stop here, do not start launch-3 today.
 
 ### HW-14 — QEMU script and ojjy Control use the launch settings
 - Phase: P2 · Size: S · Status: todo

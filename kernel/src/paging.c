@@ -1,207 +1,169 @@
-/*
- * ojjyOS v3 Kernel - Paging Implementation
- *
- * Sets up 4-level paging for x86_64.
- * Identity-maps the first 4GB using 2MB huge pages, and provides an
- * on-demand 4KB page mapper (paging_map) for anything outside that range
- * (e.g. framebuffers placed above 4GB by the firmware).
- */
-
+/* Checked x86-64 table walking; all dynamic tables remain LOW.
+ * Created by Jonas Lee. HW-13/MEM-03 preparation, not an Intel EL0 runner. */
 #include "paging.h"
 #include "memory.h"
 #include "serial.h"
 #include "string.h"
 #include "boot_info.h"
+#include "panic.h"
+#include "../mm/kvm.h"
 
-/* Page table structure (512 entries * 8 bytes = 4KB) */
-typedef uint64_t PageTable[512] __attribute__((aligned(4096)));
-
-/* Static page tables for initial setup */
-/* We need: 1 PML4, 1 PDPT, 4 PDs (for 4GB with 2MB pages) */
+typedef uint64_t PageTable[512];
 static PageTable pml4 __attribute__((aligned(4096)));
 static PageTable pdpt __attribute__((aligned(4096)));
-static PageTable pd[4] __attribute__((aligned(4096)));  /* 4 page directories for 4GB */
-
-/*
- * Extract page table indices from virtual address
- */
-#define PML4_INDEX(addr)    (((addr) >> 39) & 0x1FF)
-#define PDPT_INDEX(addr)    (((addr) >> 30) & 0x1FF)
-#define PD_INDEX(addr)      (((addr) >> 21) & 0x1FF)
-#define PT_INDEX(addr)      (((addr) >> 12) & 0x1FF)
-
-/* Global boot info (set in main.c) */
-extern BootInfo *g_boot_info;
-
-/*
- * Map the framebuffer if it lives outside the identity-mapped 4GB.
- * Called after write_cr3 so the mapping survives the switch.
- */
-static void map_framebuffer_if_needed(void)
+static PageTable pd[4] __attribute__((aligned(4096)));
+static unsigned pa_bits;
+static bool nx_ready;
+static uint64_t pa_mask(unsigned bits) { return ((1ULL<<bits)-1)&~PAGE_MASK; }
+static bool canonical(uint64_t va) { return va<0x800000000000ULL || va>=0xffff800000000000ULL; }
+static uint64_t *table_pointer(uint64_t pa)
 {
-    if (!g_boot_info) return;
-
-    uint64_t fb_addr = g_boot_info->fb_addr;
-    uint64_t fb_size = (uint64_t)g_boot_info->fb_pitch * g_boot_info->fb_height;
-    uint64_t fb_end = fb_addr + fb_size;
-
-    /* Fully inside the identity-mapped first 4GB? */
-    if (fb_end <= 4ULL * 1024ULL * 1024ULL * 1024ULL) {
-        return;
-    }
-
-    serial_printf("[PAGING] Framebuffer above 4GB (0x%p), mapping %d KB...\n",
-        fb_addr, (int)((fb_size + 1023) / 1024));
-
-    /* Map every page the framebuffer occupies (identity) */
-    uint64_t page = fb_addr & ~0xFFFULL;
-    while (page < ((fb_end + 0xFFFULL) & ~0xFFFULL)) {
-        paging_map(page, page, PAGE_PRESENT | PAGE_WRITABLE);
-        page += PAGE_SIZE;
-    }
-
-    serial_printf("[PAGING] Framebuffer mapped\n");
+#ifdef OJJY_PAGING_HOST_TEST
+    extern void *paging_host_table(uint64_t physical);
+    return paging_host_table(pa);
+#else
+    return (uint64_t *)(uintptr_t)pa;
+#endif
 }
 
-/*
- * Initialize paging with identity mapping
- */
-void paging_init(void)
+/* NX/PA bits are capability checks, never guessed from requested RAM. */
+static bool cpu_capabilities(void)
 {
-    serial_printf("[PAGING] Setting up page tables...\n");
+#ifdef OJJY_PAGING_HOST_TEST
+    extern unsigned paging_host_bits;
+    extern bool paging_host_nx;
+    pa_bits=paging_host_bits; nx_ready=paging_host_nx;
+#else
+    uint32_t a,b,c,d;
+    __asm__ volatile("cpuid" : "=a"(a),"=b"(b),"=c"(c),"=d"(d) : "a"(0x80000000u),"c"(0));
+    if (a<0x80000008u) return false;
+    __asm__ volatile("cpuid" : "=a"(a),"=b"(b),"=c"(c),"=d"(d) : "a"(0x80000008u),"c"(0));
+    pa_bits=a&255;
+    __asm__ volatile("cpuid" : "=a"(a),"=b"(b),"=c"(c),"=d"(d) : "a"(0x80000001u),"c"(0));
+    if (!(d&(1u<<20))) return false;
+    __asm__ volatile("rdmsr" : "=a"(a),"=d"(d) : "c"(0xc0000080u));
+    a|=1u<<11;
+    __asm__ volatile("wrmsr" : : "a"(a),"d"(d),"c"(0xc0000080u) : "memory");
+    __asm__ volatile("rdmsr" : "=a"(a),"=d"(d) : "c"(0xc0000080u));
+    nx_ready=(a&(1u<<11))!=0;
+#endif
+    return pa_bits>=32 && pa_bits<=52 && nx_ready;
+}
 
-    /* Clear all page tables */
-    memset(pml4, 0, sizeof(pml4));
-    memset(pdpt, 0, sizeof(pdpt));
-    memset(pd, 0, sizeof(pd));
-
-    /* Set up PML4 -> PDPT */
-    pml4[0] = ((uint64_t)pdpt) | PAGE_PRESENT | PAGE_WRITABLE;
-
-    /* Set up PDPT -> PDs (each PD covers 1GB) */
-    for (int i = 0; i < 4; i++) {
-        pdpt[i] = ((uint64_t)&pd[i]) | PAGE_PRESENT | PAGE_WRITABLE;
-    }
-
-    /* Set up PDs with 2MB huge pages (identity mapping) */
-    for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < 512; j++) {
-            uint64_t phys_addr = ((uint64_t)i * 512 + j) * (2 * 1024 * 1024);
-            pd[i][j] = phys_addr | PAGE_PRESENT | PAGE_WRITABLE | PAGE_HUGE;
+bool paging_tree_map(uint64_t *root,uint64_t va,uint64_t pa,unsigned level,
+                     uint64_t flags,unsigned bits,bool nx)
+{
+    if (!root || !canonical(va) || bits<32 || bits>52 || (level!=2 && level!=3)) return false;
+    uint64_t size=level==2 ? 0x200000 : PAGE_SIZE;
+    const uint64_t allowed=PAGE_PRESENT|PAGE_WRITABLE|PAGE_WRITE_THROUGH|PAGE_CACHE_DISABLE|PAGE_NO_EXECUTE;
+    if ((va&(size-1)) || (pa&(size-1)) || pa>=(1ULL<<bits) || size>(1ULL<<bits)-pa ||
+        (flags&~allowed) || ((flags&PAGE_NO_EXECUTE) && !nx)) return false;
+    uint64_t *t=root,*links[3];uint64_t allocated[3];unsigned count=0;
+    for (unsigned l=0;l<level;l++) {
+        uint64_t *e=&t[(va>>(39-l*9))&511];
+        if (!(*e&PAGE_PRESENT)) {
+            if (*e) goto fail;
+            uint64_t child=pmm_alloc_page();
+            if (!child) goto fail;
+            if ((child&PAGE_MASK) || child>=(1ULL<<32)) {pmm_free_page(child);goto fail;}
+            uint64_t *p=table_pointer(child);
+            if (!p) {pmm_free_page(child);goto fail;}
+            memset(p,0,PAGE_SIZE);
+            allocated[count]=child;links[count++]=e;
+            *e=child|PAGE_PRESENT|PAGE_WRITABLE;
         }
+        if ((*e&(PAGE_HUGE|PAGE_USER)) || (*e&~(pa_mask(bits)|0xfffULL|PAGE_NO_EXECUTE))) goto fail;
+        t=table_pointer(*e&pa_mask(bits));
+        if (!t) goto fail;
     }
-
-    /* Load new page tables */
-    uint64_t pml4_addr = (uint64_t)pml4;
-    write_cr3(pml4_addr);
-
-    /* Make sure a >4GB framebuffer is still reachable */
-    map_framebuffer_if_needed();
-
-    serial_printf("[PAGING] Page tables loaded (CR3 = 0x%p)\n", pml4_addr);
-    serial_printf("[PAGING] Identity mapped first 4GB with 2MB pages\n");
+    uint64_t *entry=&t[(va>>(39-level*9))&511];
+    uint64_t desired=pa|flags|PAGE_PRESENT|(level==2 ? PAGE_HUGE : 0);
+    if (*entry && *entry!=desired) goto fail;
+    *entry=desired;return true;
+fail:
+    while (count) {--count;*links[count]=0;pmm_free_page(allocated[count]);}
+    return false;
 }
-
-/*
- * Walk the page table hierarchy for a virtual address, allocating
- * intermediate tables on demand. Returns a pointer to the final
- * page-table entry (NULL on allocation failure).
- */
-static uint64_t *walk_to_pte(uint64_t virt, bool create)
+bool paging_tree_query(uint64_t *root,uint64_t va,unsigned bits,uint64_t *pa,uint64_t *flags)
 {
-    uint64_t pml4_idx = PML4_INDEX(virt);
-    uint64_t pdpt_idx = PDPT_INDEX(virt);
-    uint64_t pd_idx = PD_INDEX(virt);
-    uint64_t pt_idx = PT_INDEX(virt);
-
-    /* PML4 entry */
-    uint64_t *entry = &pml4[pml4_idx];
-    if (!(*entry & PAGE_PRESENT)) {
-        if (!create) return NULL;
-        uint64_t table = pmm_alloc_page();
-        if (!table) return NULL;
-        /* Zero the new table BEFORE linking it in */
-        memset((void *)table, 0, PAGE_SIZE);
-        *entry = table | PAGE_PRESENT | PAGE_WRITABLE;
-        paging_invalidate(virt);
+    if (!root || !canonical(va) || bits<32 || bits>52 || !pa || !flags) return false;
+    uint64_t *t=root;
+    for (unsigned l=0;l<4;l++) {
+        uint64_t e=t[(va>>(39-l*9))&511];
+        if (!(e&PAGE_PRESENT)) return false;
+        if (l==3 || (l==2 && (e&PAGE_HUGE))) {
+            uint64_t mask=l==2 ? 0x1fffff : PAGE_MASK;
+            *pa=(e&pa_mask(bits)&~mask)|(va&mask);*flags=e;return true;
+        }
+        if (e&PAGE_HUGE) return false;
+        t=table_pointer(e&pa_mask(bits));if (!t)return false;
     }
-
-    /* PDPT entry */
-    uint64_t *table = (uint64_t *)(*entry & ~0xFFFULL);
-    entry = &table[pdpt_idx];
-    if (*entry & PAGE_HUGE) {
-        serial_printf("[PAGING] ERROR: cannot 4K-map inside 1GB huge page at 0x%p\n", virt);
-        return NULL;
-    }
-    if (!(*entry & PAGE_PRESENT)) {
-        if (!create) return NULL;
-        uint64_t newt = pmm_alloc_page();
-        if (!newt) return NULL;
-        memset((void *)newt, 0, PAGE_SIZE);
-        *entry = newt | PAGE_PRESENT | PAGE_WRITABLE;
-        paging_invalidate(virt);
-    }
-
-    /* PD entry */
-    table = (uint64_t *)(*entry & ~0xFFFULL);
-    entry = &table[pd_idx];
-    if (*entry & PAGE_HUGE) {
-        serial_printf("[PAGING] ERROR: cannot 4K-map inside 2MB huge page at 0x%p\n", virt);
-        return NULL;
-    }
-
-    /* PT entry */
-    table = (uint64_t *)(*entry & ~0xFFFULL);
-    return &table[pt_idx];
+    return false;
 }
-
-/*
- * Map a single 4KB page.
- * Creates intermediate page tables on demand using the physical
- * memory manager.
- */
-void paging_map(uint64_t virt, uint64_t phys, uint64_t flags)
+void paging_tree_destroy(uint64_t pa,unsigned level,unsigned bits)
 {
-    virt &= ~0xFFFULL;
-    phys &= ~0xFFFULL;
-
-    uint64_t *pte = walk_to_pte(virt, true);
-    if (!pte) {
-        serial_printf("[PAGING] ERROR: out of memory mapping 0x%p\n", virt);
-        return;
+    uint64_t *t=table_pointer(pa);
+    if (t && level<3)for(unsigned i=0;i<512;i++)
+        if ((t[i]&PAGE_PRESENT) && !(t[i]&PAGE_HUGE))paging_tree_destroy(t[i]&pa_mask(bits),level+1,bits);
+    pmm_free_page(pa);
+}
+bool paging_install_high(const uint64_t *staged)
+{
+    if (!nx_ready || !staged) return false;
+    for(unsigned i=0;i<256;i++)if(staged[i])return false;
+    for(unsigned i=256;i<512;i++)if(staged[i] && pml4[i])return false;
+    for(unsigned i=256;i<512;i++)if(staged[i])pml4[i]=staged[i];
+    paging_flush_tlb();return true;
+}
+bool paging_map(uint64_t va,uint64_t pa,uint64_t flags)
+{
+    if (!paging_tree_map(pml4,va,pa,3,flags,pa_bits,nx_ready))return false;
+    paging_invalidate(va);return true;
+}
+void paging_unmap(uint64_t va)
+{
+    if ((va&PAGE_MASK) || !canonical(va))return;
+    uint64_t *t=pml4;
+    for(unsigned l=0;l<3;l++) {
+        uint64_t e=t[(va>>(39-l*9))&511];
+        if (!(e&PAGE_PRESENT) || (e&PAGE_HUGE))return;
+        t=table_pointer(e&pa_mask(pa_bits));if(!t)return;
     }
-
-    *pte = phys | (flags & (PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER)) | PAGE_PRESENT;
-    paging_invalidate(virt);
+    t[(va>>12)&511]=0;paging_invalidate(va);
 }
-
-/*
- * Unmap a virtual address (removes the 4KB page mapping)
- */
-void paging_unmap(uint64_t virt)
+void paging_invalidate(uint64_t va)
 {
-    virt &= ~0xFFFULL;
-
-    uint64_t *pte = walk_to_pte(virt, false);
-    if (!pte) return;
-
-    *pte = 0;
-    paging_invalidate(virt);
+#ifndef OJJY_PAGING_HOST_TEST
+    __asm__ volatile("invlpg (%0)" : : "r"(va) : "memory");
+#else
+    (void)va;
+#endif
 }
-
-/*
- * Invalidate TLB entry for a specific virtual address
- */
-void paging_invalidate(uint64_t virt)
-{
-    __asm__ volatile("invlpg (%0)" : : "r"(virt) : "memory");
-}
-
-/*
- * Flush entire TLB by reloading CR3
- */
 void paging_flush_tlb(void)
 {
-    uint64_t cr3 = read_cr3();
-    write_cr3(cr3);
+#ifndef OJJY_PAGING_HOST_TEST
+    write_cr3(read_cr3());
+#endif
+}
+void paging_init(void)
+{
+    if (!cpu_capabilities())panic("Intel requires checked PA width and NXE");
+    memset(pml4,0,sizeof(pml4));memset(pdpt,0,sizeof(pdpt));memset(pd,0,sizeof(pd));
+    pml4[0]=(uint64_t)(uintptr_t)pdpt|PAGE_PRESENT|PAGE_WRITABLE;
+    for(unsigned i=0;i<4;i++) {
+        pdpt[i]=(uint64_t)(uintptr_t)pd[i]|PAGE_PRESENT|PAGE_WRITABLE;
+        for(unsigned j=0;j<512;j++)pd[i][j]=((uint64_t)i<<30)|((uint64_t)j<<21)|PAGE_PRESENT|PAGE_WRITABLE|PAGE_HUGE;
+    }
+#ifndef OJJY_PAGING_HOST_TEST
+    write_cr3((uint64_t)(uintptr_t)pml4);
+#endif
+    if (g_boot_info) {
+        uint64_t fb=g_boot_info->fb_addr,size=(uint64_t)g_boot_info->fb_pitch*g_boot_info->fb_height;
+        if (size && (fb>~0ULL-size || fb+size>~0ULL-PAGE_MASK))panic("Intel framebuffer range overflow");
+        uint64_t end=ALIGN_UP(fb+size,PAGE_SIZE);
+        for(uint64_t p=MAX(ALIGN_DOWN(fb,PAGE_SIZE),1ULL<<32);p<end;p+=PAGE_SIZE)
+            if(!paging_map(p,p,PAGE_WRITABLE|PAGE_NO_EXECUTE|PAGE_CACHE_DISABLE))panic("Cannot map Intel framebuffer");
+    }
+    serial_printf("[PAGING] Page tables loaded, identity low 4GiB; PA_bits=%d NXE=%d\n",(int)pa_bits,(int)nx_ready);
+    if(!kvm_x86_init(pa_bits,nx_ready) || !kvm_high_selftest())panic("Intel high RAM mapping failed");
 }

@@ -11,6 +11,7 @@
 #include "console.h"
 #include "string.h"
 #include "memory.h"
+#include "memory_stress.h"
 #include "timer.h"
 #include "panic.h"
 #include "font.h"
@@ -776,6 +777,14 @@ static void process_command(void)
             console_printf("%s", result.output);
             console_printf("[app %u] %s code=%d ms=%llu\n", result.pid,
                            user_status_name(result.status), result.exit_code, result.elapsed_ms);
+        }
+    } else if (strcmp(cmd, "memtest") == 0) {
+        if(!users_is_authenticated() || !users_current_is_admin()) {
+            console_printf("memtest requires an authenticated administrator.\n");
+        } else {
+            MemoryStressResult result;
+            bool ok=memory_stress(3ULL<<30,&result);
+            console_printf("3 GiB simultaneous memory test: %s (%llu pages verified)\n",ok?"PASS":"FAIL",result.verified_pages);
         }
     } else if (strcmp(cmd, "heap") == 0 || strcmp(cmd, "mem") == 0) {
         console_printf("PMM Physical: %d MB free / %d MB total\n",

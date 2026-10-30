@@ -1,4 +1,5 @@
 /* Actual ARM builder on translated host tables. Created by Jonas Lee. */
+#define OJJY_KVM_ARM_TEST
 #include "../kernel/mm/kvm.c"
 #include "test_support.h"
 static uint8_t backing[32][PAGE_SIZE] __attribute__((aligned(4096)));

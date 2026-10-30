@@ -30,6 +30,8 @@ COMMON_CFLAGS = -ffreestanding \
                 -Isrc
 
 COMMON_C_SOURCES = src/main.c \
+                   mm/kvm.c \
+                   src/memory_stress.c \
                    src/system.c \
                    src/users.c \
                    src/proc.c \
@@ -110,7 +112,6 @@ LINKER_SCRIPT = linker-aarch64.ld
 LDFLAGS = -T $(LINKER_SCRIPT) -nostdlib -static -z max-page-size=0x1000
 
 ARCH_C_SOURCES = src/arch/aarch64/arch64.c \
-                 mm/kvm.c \
                  src/arch/aarch64/user_arch.c \
                  src/arch/aarch64/gicv2.c \
                  src/arch/aarch64/timer_a64.c \

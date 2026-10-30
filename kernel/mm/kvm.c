@@ -5,6 +5,7 @@
 #include "string.h"
 #include "serial.h"
 
+#if defined(OJJY_KVM_ARM_TEST) || (defined(__aarch64__) && !defined(OJJY_PAGING_HOST_TEST))
 #define TABLE 3ULL
 #define AF (1ULL<<10)
 #define NORMAL (1ULL<<2)
@@ -110,6 +111,49 @@ bool kvm_arm_activate(uint64_t active_root)
                   KPHYS_BASE,(int)address_bits,root);
     return true;
 }
+#else
+#include "paging.h"
+static uint64_t root;
+static unsigned address_bits;
+static bool active;
+static void *resolve_high(uint64_t pa,size_t bytes)
+{
+    if(!active || pa<(1ULL<<32) || !bytes || pa>=(1ULL<<47) || bytes>(1ULL<<47)-pa ||
+       pa>=(1ULL<<address_bits) || bytes>(1ULL<<address_bits)-pa ||
+       !pmm_range_eligible(pa,bytes))return NULL;
+    uint64_t found,flags;uint64_t *r=pmm_phys_to_virt(root,PAGE_SIZE);
+    if(!paging_tree_query(r,KPHYS_BASE+pa,address_bits,&found,&flags) || found!=pa ||
+       !paging_tree_query(r,KPHYS_BASE+pa+bytes-1,address_bits,&found,&flags) || found!=pa+bytes-1)return NULL;
+    return (void *)(uintptr_t)(KPHYS_BASE+pa);
+}
+bool kvm_x86_init(unsigned bits,bool nx)
+{
+    if(root || active || !nx || bits<32 || bits>52 || pmm_high_ready())return false;
+    address_bits=bits;
+    root=pmm_alloc_page();if(!root)return false;
+    uint64_t *r=pmm_phys_to_virt(root,PAGE_SIZE);
+    if(!r)goto fail;
+    uint64_t base,pages;
+    for(uint64_t i=0;pmm_region(i,&base,&pages);i++) {
+        if(base<(1ULL<<32))continue;
+        uint64_t end=base+pages*PAGE_SIZE;
+        if(end>(1ULL<<bits) || end>(1ULL<<47))goto fail;
+        for(uint64_t pa=base;pa<end;) {
+            if(!pmm_range_eligible(pa,PAGE_SIZE)){pa+=PAGE_SIZE;continue;}
+            unsigned level=(!(pa&0x1fffff) && end-pa>=0x200000 && pmm_range_eligible(pa,0x200000))?2:3;
+            if(!paging_tree_map(r,KPHYS_BASE+pa,pa,level,PAGE_WRITABLE|PAGE_NO_EXECUTE,bits,nx))goto fail;
+            pa+=level==2?0x200000:PAGE_SIZE;
+        }
+    }
+    if(!paging_install_high(r))goto fail;
+    active=true;
+    if(!pmm_enable_high(resolve_high))return false; /* boot invariant: PMM initialized, not previously enabled */
+    serial_printf("[KVM] Intel RAM-only alias ready base=%p PA_bits=%d root=%p NXE=1\n",KPHYS_BASE,(int)bits,root);
+    return true;
+fail:
+    paging_tree_destroy(root,0,bits);root=0;return false;
+}
+#endif
 bool kvm_high_selftest(void)
 {
     PmmStats before=pmm_get_stats();

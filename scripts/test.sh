@@ -20,6 +20,8 @@ fi
 "$HOST_CC" "${FLAGS[@]}" tests/test_ramfs.c kernel/src/fs/{ramfs,vfs}.c kernel/src/{users,memory,proc,string}.c -o "$OUT/test_ramfs"
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_PMM_HOST_TEST -Itests tests/test_pmm.c kernel/src/{memory,string}.c -o "$OUT/test_pmm"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_kvm.c kernel/src/string.c -o "$OUT/test_kvm"
+"$HOST_CC" "${FLAGS[@]}" -Itests tests/test_paging.c kernel/src/string.c -o "$OUT/test_paging"
+"$HOST_CC" "${FLAGS[@]}" -DOJJY_STRESS_HOST_TEST -Itests tests/test_memory_stress.c kernel/src/{memory_stress,string}.c -o "$OUT/test_memory_stress"
 "$HOST_CC" "${FLAGS[@]}" -DOJJY_HOST_TEST tests/test_input.c kernel/src/drivers/{input,ps2_keyboard}.c \
     kernel/src/arch/aarch64/{virtio_input,usb_hid}.c kernel/src/string.c -o "$OUT/test_input"
 "$HOST_CC" "${FLAGS[@]}" tests/test_persist.c kernel/src/fs/{persist,ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_persist"
@@ -53,13 +55,14 @@ open(sys.argv[2], "wb").write(w.build_pack(items))' tools/import_wallpapers.py "
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_app_polish.c kernel/src/ui/{calculator,calcmath,app_metrics}.c kernel/src/string.c -o "$OUT/test_app_polish"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_notes.c kernel/src/ui/notes.c kernel/src/fs/{ramfs,vfs}.c kernel/src/string.c -o "$OUT/test_notes"
 "$HOST_CC" "${FLAGS[@]}" -Itests tests/test_textedit.c kernel/src/ui/textedit.c kernel/src/string.c -o "$OUT/test_textedit"
-for test in test_pmm test_kvm test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_x509 test_tls_verify test_calc test_app_polish test_notes test_textedit test_clock test_gfx test_jpeg; do
+for test in test_pmm test_kvm test_paging test_memory_stress test_fs test_ramfs test_input test_persist test_virtqueue test_virtio_pci test_xhci test_acpi_aml test_user test_framebuffer test_net test_web test_crypto test_pubkey test_x509 test_tls_verify test_calc test_app_polish test_notes test_textedit test_clock test_gfx test_jpeg; do
     echo "Running $test"
     "$OUT/$test"
 done
 echo "Running test_wallpack"
 "$OUT/test_wallpack" "$OUT/sample.pack"
 python3 -B tests/test_image.py
+python3 -B tests/test_vz_clock.py
 echo "Running test_tls_local (kernel TLS client vs local TLS 1.3 server)"
 python3 -B tests/test_tls_local.py --out "$OUT/tls-local" -- "$HOST_CC" "${FLAGS[@]}"
 echo "Running roadmap check"

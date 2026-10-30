@@ -24,6 +24,19 @@ def digest(path):
     return result.hexdigest()
 
 
+def check_clock(epoch, ms, sample_end_ms, irqs, calendar_epoch, offset_ms, seconds):
+    """Clock contract isolated for deterministic correction/regression tests."""
+    if not (5000 <= ms <= seconds * 1000 + 1000) or irqs == 0:
+        raise RuntimeError(f"Virtual timer failed: uptime={ms}ms, delivered IRQs={irqs}")
+    if not ms <= sample_end_ms <= ms + 100:
+        raise RuntimeError("RTC sample interval invalid or unexpectedly slow")
+    # clock_adjust_rtc adds whole offset seconds, truncating toward zero
+    # (C integer division, including negative sub-second corrections).
+    correction=(abs(offset_ms)//1000)*(1 if offset_ms>=0 else -1)
+    if not epoch + ms // 1000 + correction <= calendar_epoch <= epoch + sample_end_ms // 1000 + correction:
+        raise RuntimeError("RTC calendar did not advance by guest uptime")
+
+
 def run(args):
     root = Path(__file__).resolve().parents[1]
     source = Path(args.image).resolve()
@@ -59,22 +72,21 @@ def run(args):
     epoch = int(re.search(r"clock starts from the firmware time (\d+)", text)[1])
     if abs(epoch - started) > 120:
         raise RuntimeError(f"Firmware clock differs from host by {epoch - started:.0f} seconds")
-    health = re.search(r"\[TIMER\] Health ms=(\d+) irqs=(\d+) clock=([\d:T-]+)", text)
+    health = re.search(r"\[TIMER\] Health ms=(\d+) irqs=(\d+) clock=([\d:T-]+) end_ms=(\d+) ntp_ms=(-?\d+)", text)
     if not health:
         raise RuntimeError("No virtual-timer/clock health sample; see serial.log")
     ms, irqs = int(health[1]), int(health[2])
     clock_epoch = int(datetime(*map(int, re.split(r"\D+", health[3])), tzinfo=timezone.utc).timestamp())
-    if not (5000 <= ms <= args.seconds * 1000 + 1000) or irqs == 0:
-        raise RuntimeError(f"Virtual timer failed: uptime={ms}ms, delivered IRQs={irqs}")
-    if clock_epoch != epoch + ms // 1000:
-        raise RuntimeError("RTC calendar did not advance by guest uptime")
+    end_ms,ntp_ms=int(health[4]),int(health[5])
+    check_clock(epoch,ms,end_ms,irqs,clock_epoch,ntp_ms,args.seconds)
     if digest(source) != before:
         raise RuntimeError("Source image changed while running the private-disk test")
     report = {"boot": "passed", "virtio_devices": 5, "usb_hid_enumerated": 2, "dhcp": "passed",
               "memory_mb_requested": args.memory, "screen": args.screen,
               "pmm_usable_mb": int(re.search(r"\[PMM\] Total usable memory: (\d+) MB", text)[1]),
               "clock_offset_seconds": round(epoch - started, 3),
-              "timer_sample_ms": ms, "timer_irqs": irqs, "clock_progression": "passed",
+               "timer_sample_ms": ms, "timer_irqs": irqs, "clock_progression": "passed",
+              "timer_sample_end_ms": end_ms, "ntp_offset_ms_at_sample": ntp_ms,
               "source_sha256": before, "source_unchanged": True,
               "limitations": "No USB input or saved-login assertions in this boot check"}
     (output / "report.json").write_text(json.dumps(report, indent=2) + "\n")

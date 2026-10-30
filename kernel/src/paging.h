@@ -25,7 +25,13 @@
 void paging_init(void);
 
 /* Map a virtual address to a physical address */
-void paging_map(uint64_t virt, uint64_t phys, uint64_t flags);
+bool paging_map(uint64_t virt, uint64_t phys, uint64_t flags);
+/* Staged tree helpers: no USER mappings; failure reclaims new intermediates.
+ * level=2 for a 2MiB leaf, 3 for 4KiB. Caller owns unpublished tree lifetime. */
+bool paging_tree_map(uint64_t *root,uint64_t va,uint64_t pa,unsigned level,uint64_t flags,unsigned bits,bool nx);
+bool paging_tree_query(uint64_t *root,uint64_t va,unsigned bits,uint64_t *pa,uint64_t *flags);
+void paging_tree_destroy(uint64_t root,unsigned level,unsigned bits);
+bool paging_install_high(const uint64_t *staged);
 
 /* Unmap a virtual address */
 void paging_unmap(uint64_t virt);

@@ -1,5 +1,54 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-30): HW-13 part 4 verified, records closing for hw13-5
+
+Part 3 explicitly pushed; origin/hw-13 verified at 76aa1a0. Board f5c05f,
+same worktree/branch; main stays 043894c. Intel paging.c/h now has checked
+PA/canonical/alignment/flag handling, NX capability + EFER.NXE readback,
+explicit PA masks, all missing LOW table levels (including final PT),
+OOM rollback and bool map errors. kvm.c stages supervisor NX RAM-only
+upper-PML4 aliases, publishes only complete subtrees and then enables HIGH.
+52-bit-capable CPUs are accepted when actual RAM fits the 47-bit alias
+span; unrepresentable RAM fails closed. Intel EL0/network remain unsupported.
+memory_stress.c/h plus authenticated-admin console memtest hold 3 GiB
+simultaneously using bounded LOW bookkeeping, reject duplicate extents,
+pattern/check eight PA-derived words on every held page, cross-check PMM
+peak accounting, free all extents/bookkeeping and require exact cleanup.
+Private VZ8/HVF4/Intel4 each own 3221225472 bytes, write/verify 786432 pages,
+restore LOW/HIGH counts and recover (ARM hello; Intel whoami/desktop).
+
+BUG-1008 repaired in timer health receipt/vz_boot.py: sampled actual NTP
+offset plus RTC-read uptime bracket, exact calendar expectation using C
+truncation, unchanged epoch/IRQ/uptime gates. Deterministic 29-subcase
+fixtures reproduce 10 old wrong verdicts then pass; wrong-calendar
+mutations rejected 13/15 before, 15/15 after. Final full VZ2/4/8 tests pass
+with +1230/+1376/+1533 ms NTP offsets at sample; tracker line removed.
+Full normal/fatal ASan/UBSan suites pass (51 PMM, 21 ARM, 28 Intel mapper,
+9 stress checks), both final dev builds zero warnings; full TCG/HVF/Intel/
+native protected+persistence, ARM HVF/TCG browser+HTTPS, strict network
+with real SNTP, high VZ4/VZ8/HVF4 browser/TLS/isolation and 2137 Swift +
+7 pixel guards pass. Representative screenshots read. Evidence matrix.json,
+source-fingerprint.json, arm-final-identical.json in build/hw-13-part4/.
+ARM rebuild is kernel-byte-identical; entire disk differs only in two COFF
+timestamp bytes. Matrix explicitly reuses those unchanged-code receipts;
+fresh final-image VZ2/4/8 and HVF4 high checks pass. Final Intel image's
+stress/smoke rerun separately after the CPU-width refinement.
+Four part-4/shared MEM HW13-X boxes are now verified; full MEM cards stay
+doing (general pt_*/WC/vmalloc remain open). Main/installed images/settings,
+launch warning and ready note untouched. Reusable clock-contract findings
+saved in apple-vz-custom-os-bringup v1.9.0. No part-4 push authorization yet.
+
+Handoff: **hw13-5 only** after the local records close; take paused f5c05f.
+Read card/design/part4 plan. About/Monitor currently use raw total/free;
+show RAM vs managed capacity vs active free accurately (PmmStats byte units,
+reserved=total-usable, managed used=usable-low_free-high_free). Compare
+serial/UI at VZ2/4/8, remove temporaryMemoryNote only with current high
+proof, light/dark screenshots and combined-source regression. Then safely
+fast-forward main and deliver ONLY with no user VM running, saved-data/
+settings/legacy hashes and private delivered-image checks. Keep custom
+kernel/blue glass/Jonas credit. No full MEM-01..05 completion claim. Use
+Homebrew PATH and build/hw-13-part3/venv/bin/python for Pillow live tests.
+
 ## LATEST (2026-10-29): HW-13 part 3 complete, paused for hw13-4
 
 Part 2 pushed with explicit approval: remote hw-13 verified at 9b2e93f;

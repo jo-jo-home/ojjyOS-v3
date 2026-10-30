@@ -10,4 +10,5 @@ bool kvm_arm_activate(uint64_t active_root);
 bool kvm_arm_query(uint64_t virtual_address, uint64_t *physical, uint64_t *flags);
 bool kvm_arm_leaf(uint64_t physical, unsigned level, unsigned pa_bits, uint64_t *entry);
 bool kvm_high_selftest(void);
+bool kvm_x86_init(unsigned pa_bits,bool nx_enabled);
 #endif

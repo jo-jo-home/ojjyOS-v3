@@ -14,6 +14,7 @@
 #include "gicv2.h"
 #include "platform.h"
 #include "drivers/rtc.h"
+#include "clock.h"
 
 /* The EL1 *virtual* timer (PPI from the platform, 27 on both machines):
  * Apple's hypervisor exposes it natively; the physical timer may trap. */
@@ -112,8 +113,10 @@ void a64_timer_report_health(void)
     reported = true;
     RtcTime clock;
     rtc_read_time(&clock);
-    serial_printf("[TIMER] Health ms=%llu irqs=%llu clock=%d-%d-%dT%d:%d:%d\n",
+    uint64_t end_ms=timer_get_ticks();
+    serial_printf("[TIMER] Health ms=%llu irqs=%llu clock=%d-%d-%dT%d:%d:%d end_ms=%llu ntp_ms=%lld\n",
         (unsigned long long)ms, (unsigned long long)timer_ms_ticks,
         (int)clock.year, (int)clock.month, (int)clock.day,
-        (int)clock.hour, (int)clock.minute, (int)clock.second);
+        (int)clock.hour, (int)clock.minute, (int)clock.second,
+        end_ms,clock_ntp_offset_ms());
 }

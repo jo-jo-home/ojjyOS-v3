@@ -1,7 +1,7 @@
 # HW-13: measured memory limits and implementation decision
 
-Created by Jonas Lee. Parts 1–3, 2026-10-29. **Runtime PMM implemented;
-ARM mappings/callers verified; Intel remains part 4.**
+Created by Jonas Lee. Parts 1–4, 2026-10-29/30. **Runtime PMM and ARM
+verified; Intel/stress/clock repair and full regression verified.**
 Baseline: `043894c`; branch `hw-13`, worktree `ojjyOS-v3-hw-13`.
 The HW-13 card owns the five-part checklist and handoff. Main must not
 move until part 5. The existing launch memory warning remains until then.
@@ -246,6 +246,105 @@ fast-forwards main only after combined-source tests and safely delivers
 with stopped VMs and before/after saved-data/settings hashes.
 
 ## 6. Reproduction and handoff
+
+### Part 4 implementation and proof (2026-10-30)
+
+The Intel walker in `paging.c/h` now creates all missing levels, including
+the formerly absent PT below a new/existing PD. Mapping returns bool;
+OOM rolls back only newly owned tables/links without changing preexisting
+leaves. It refuses noncanonical or misaligned VAs/PAs, impossible CPU PAs,
+USER/unknown flags, NX without NXE, partial replacement of huge mappings
+and conflicting leaves. Explicit PA masks exclude the NX flag from table
+addresses. LOW identity mapping is retained, including its existing
+kernel-code permissions; this is not the future kernel W^X/ring-3 work.
+Above-4-GiB GOP mapping checks errors and uses a separate NX/uncached path.
+
+CPUID supplies the physical width and NX capability; EFER.NXE is enabled
+and read back before NX descriptors are used. A CPU supporting 48/52-bit
+physical addresses is valid if the actual RAM fits the selected alias:
+CPU PA width and the alias's 47-bit positive-offset span are separate
+limits. Out-of-span RAM is rejected without publishing the staged tree.
+The Intel `kvm.c` branch stages an independent LOW-owned tree containing
+only eligible HIGH RAM, using 2-MiB leaves only when fully covered and
+4-KiB leaves at reservations/edges. Only after every mapping succeeds and
+the target upper PML4 slots are free are the supervisor NX subtrees
+installed and the TLB flushed. PMM HIGH readiness follows publication.
+Whole unpublished trees are reclaimed on failure. Intel EL0 stays
+unsupported; no hardware NIC driver was added for Intel browser/TLS.
+
+`memory_stress.c/h` and console `memtest` (authenticated admin only) hold
+3 GiB as distinct 2-MiB contiguous extents simultaneously. The descriptor
+array uses bounded runtime LOW storage (3 pages at this target). The test
+checks for overlapping extents, cross-checks actual PMM free-count changes
+against the recorded LOW/HIGH peak, writes eight distributed PA-derived
+64-bit values per page (including both endpoints), then reads them in a
+separate complete pass while **all extents remain owned**. PMM allocation
+also zeroes every allocated page through its alias. Only then does it free
+all data pages and bookkeeping and require exact LOW/HIGH restoration.
+This verifies every page, not every byte against a random pattern, and
+the peak is real concurrent ownership, not a sum of reused allocations.
+
+Private `tests/memory_stress.py` results, each 3221225472 owned bytes and
+786432 written/verified pages with exact cleanup and post-test recovery:
+
+| Guest | LOW data peak bytes | HIGH data peak bytes | Recovery |
+|---|---:|---:|---|
+| VZ 8 GiB | 0 | 3221225472 | protected hello + desktop |
+| ARM HVF 4 GiB | 2157969408 | 1063256064 | protected hello + desktop |
+| Intel TCG 4 GiB | 2149580800 | 1071644672 | honest unsupported EL0, whoami + desktop |
+
+Source disks are hashed before/after even on failed runs, and all three
+use fresh private disk copies. Host stress fixtures deliberately corrupt
+data, exhaust each allocation point and return a duplicate PA; none may
+fake a pass or leak ownership. Final host mapper coverage additionally
+includes OOM under an existing PD, upper-PML4 collisions and 52-bit CPUs.
+
+BUG-1008 was the **test contract**, not a failed virtual timer: corrected
+RTC is firmware epoch + whole uptime seconds + NTP offset seconds
+truncated toward zero in C. The prior test ignored the last term. The
+health receipt now records the actual offset and the measured before/after
+uptime bracket around `rtc_read_time`; the test accepts only calendar
+seconds in that measured interval after the exact correction. It does
+not introduce an arbitrary calendar-drift tolerance, disable NTP, skip
+the clock gate or remove the existing epoch/uptime/IRQ checks. A slow or
+backwards sample bracket fails separately. Negative subsecond fixtures
+explicitly use C truncation rather than Python's floor division.
+
+Deterministic `test_vz_clock.py` covers 29 subcases: the old helper
+produces 6 errors on valid corrected/boundary samples and 4 false accepts
+on broken-calendar/timer-bracket samples (`clock-before.log`). The repair
+passes all. Forced wrong-calendar mutations fail 13/15 before and 15/15
+after; invalid-timer fixtures fail 3/5 before and 5/5 after. Thus this is
+not a weakened regression detector. Full live VZ4/8 boot/device/DHCP/IRQ/
+calendar tests now pass with real NTP corrections (for example VZ8
+`ntp_offset_ms_at_sample=1277`); the tracker line was removed only after
+this proof. Earlier parts' failed receipts remain historical failures.
+
+The final combined-source host/live matrix passes, recorded in
+`build/hw-13-part4/matrix.json` and `source-fingerprint.json`: full normal/
+fatal-sanitized hosts (51 PMM, 21 ARM builder, 28 Intel mapper/backend,
+9 stress checks plus all existing suites), both zero-warning final dev
+builds, TCG/HVF/Intel/native protected/persistence, ARM TCG/HVF browser+
+HTTPS, strict network/SNTP, VZ4/VZ8/HVF4 high isolation/browser/TLS and
+2137 Swift + 7 pixel guards. Final VZ2/4/8 clock tests all pass, with
+sampled real NTP corrections +1230/+1376/+1533 ms. Representative VZ,
+Intel and browser captures were visually read.
+
+Evidence reuse is explicit: rebuilding final ARM source produced an
+identical kernel and a disk differing at only two bytes, the EFI COFF
+TimeDateStamp. `arm-final-identical.json` records exact hashes/offsets.
+Those unchanged-code ARM stress/broad-regression receipts are reused;
+fresh final-image VZ2/4/8 boot tests and HVF4 high/isolation/browser/TLS
+also pass. Final Intel stress and full smoke were rerun after separating
+CPU PA width from alias span. Nothing is credited as Intel EL0/network.
+
+Part-4 and MEM-03/04 HW13-X preparation boxes can now be checked, not
+their full cards. Part 5 alone owns About/Monitor, warning removal, main
+fast-forward and installed data-preserving delivery. Main remains
+043894c; installed images/settings/ready note are untouched. The detailed
+execution checklist is docs/hw-13-part4-plan.md. Before delivery, compare
+UI against serial's actual byte-unit statistics at VZ2/4/8; never equate
+launch-requested RAM or highest PA with usable/free RAM.
 
 ### Part 3 implementation and proof (2026-10-29)
 

@@ -230,13 +230,13 @@ This document defines core app layouts, data models, and implementation details 
 
 - **Processes / Memory / Frames:** Working segmented tabs, refreshed once per second while open and not minimized; no background refresh while locked.
 - **Processes:** Zebra rows for PID, name, owner, state, task ticks and recorded memory. Ticks are bookkeeping, **not CPU utilization**; rows that fit are shown without scrolling.
-- **Memory:** Physical-memory and kernel-heap bars with bounded ratios, plus virtual-NIC state/address and traffic totals. Reported RAM does not mean HW-13's high-RAM allocator is implemented.
+- **Memory:** Measured RAM, managed capacity, used/free managed RAM and firmware/kernel reservations, plus bounded used/managed and kernel-heap bars and virtual-NIC traffic. Enabled high-RAM free pages count alongside LOW pages; reservations are not shown as allocations. GB labels round measured binary capacity to the nearest tenth; exact MB counters (binary MiB, rounded down) match the PMM serial receipt.
 - **Frames:** Last 48 actual draw-and-present durations in milliseconds, sampled only while open and not minimized. Includes its own rendering cost; **not FPS or CPU percent**. The 16 ms guide is not a performance guarantee.
 - **Footer:** Total tasks, open windows and uptime.
 
 ## About (`About.app`)
 
-- Hero icon, glass Version 3.1.0 / Tahoe card, readable **Created by Jonas Lee** credit, original-kernel description and reported memory.
+- Hero icon, glass Version 3.1.0 / Tahoe card, readable **Created by Jonas Lee** credit, original-kernel description and measured memory (for example `8 GB memory (8191 MB RAM)`, from PMM rather than the requested launch setting).
 - Calendar, Calculator, Monitor and About enforce content-aware minimum window sizes so resizing cannot hide their controls.
 
 ---

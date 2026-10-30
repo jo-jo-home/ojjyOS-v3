@@ -2,7 +2,6 @@
 import AppKit
 
 // launch-2 removes this constant once HW-13 makes high RAM usable.
-let temporaryMemoryNote = "ojjyOS uses about 2.2 GB until its memory update"
 
 final class LaunchWindow: NSObject, NSWindowDelegate {
     let window: NSWindow
@@ -58,7 +57,6 @@ final class LaunchWindow: NSObject, NSWindowDelegate {
         for mb in limits.memoryChoices { memory.addItem(withTitle:"\(mb / 1024) GB"); memory.lastItem?.tag = mb }
         for mode in LaunchScreen.supported { screen.addItem(withTitle:mode.label) }
         row("Memory",memory,stack:stack)
-        note(temporaryMemoryNote,stack:stack)
         let cpu = NSPopUpButton(); cpu.addItem(withTitle:"1 core"); cpu.isEnabled = false
         row("CPU cores",cpu,stack:stack)
         note("More cores come with SMP-01",stack:stack)

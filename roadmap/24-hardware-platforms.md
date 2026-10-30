@@ -201,7 +201,21 @@ privacy/checklist/roadmap verified. Evidence build/hw-13-part4-review/ and
 docs/hw-13-part4-review.md (explicit reuse/tooling limits). With Jonas's
 approval ac7acb5/bc39972 pushed to hw-13, GitHub verified at bc39972 before
 these context-only records. Main/installed/settings untouched; hw13-5 next.
-**Handoff.** Next session is **hw13-5 only**, on `hw-13` in
+**Log.** 2026-10-30 part 5 implementation checkpoint: About/Monitor measured
+RAM and managed/used/free/reserved projection verified; native temporary
+warning removed. VZ2/4/8 light/dark PMM/OCR and reviewed screenshots agree
+(2047/4095/8191 MB RAM; 2027/4075/8171 MB managed). Full normal/fatal ASan/
+UBSan hosts, both zero-warning builds, 2138 Swift + 7 pixel guards,
+TCG/HVF/Intel protected/persistence, native full smoke, 20 app-polish flows,
+full VZ2/4/8 clocks, VZ8 high isolation/TLS and VZ8/HVF4/Intel4 3-GiB
+stress pass. Evidence build/hw-13-part5/. Installed delivery/check-offs
+are still pending; no main or installed data changed at this checkpoint.
+**Handoff.** Part-5 UI is implemented and verified at VZ2/4/8 in both
+themes (build/hw-13-part5/, docs/hw-13-part5-plan.md); remaining work is
+final combined-source gates, strict checks, local commit, main fast-forward,
+hash-preserving installed delivery and a private delivered-image VZ8 test.
+Parts 1–4 stay green; do not change allocator policy or touch other trees.
+The following part-4 safety commands/constraints still apply on `hw-13` in
 `~/Developer/ojjyOS-kernel/ojjyOS-v3-hw-13`; take paused board `f5c05f`.
 Read Decision plus docs/hw-13-memory-design.md and MEM-03/04 shared boxes.
 Re-run `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"` then

@@ -1,5 +1,36 @@
 /* Bounded frame history and date/display helpers. Created by Jonas Lee. */
 #include "ui/app_metrics.h"
+#include "string.h"
+AppMemoryUsage app_memory_usage(PmmStats stats, bool high_ready)
+{
+    AppMemoryUsage usage = {0};
+    usage.total = stats.total_bytes;
+    usage.managed = MIN(stats.usable_bytes, usage.total);
+    usage.reserved = usage.total - usage.managed;
+    usage.free = MIN(stats.low_free_bytes, usage.managed);
+    if (high_ready) usage.free += MIN(stats.high_free_bytes, usage.managed - usage.free);
+    usage.used = usage.managed - usage.free;
+    return usage;
+}
+void app_memory_label(uint64_t bytes, char label[32])
+{
+    uint64_t whole = bytes >> 30;
+    uint64_t tenth = (((bytes & ((1ULL << 30) - 1)) * 10) + (1ULL << 29)) >> 30;
+    if (tenth == 10) { whole++; tenth = 0; }
+    if (bytes < (1ULL << 30)) {
+        utoa(bytes >> 20, label, 10);
+        strcpy(label + strlen(label), " MB");
+        return;
+    }
+    utoa(whole, label, 10);
+    if (tenth) {
+        size_t length = strlen(label);
+        label[length] = '.';
+        label[length + 1] = (char)('0' + tenth);
+        label[length + 2] = 0;
+    }
+    strcpy(label + strlen(label), " GB");
+}
 void app_frame_record(AppFrameHistory *h, uint64_t ms)
 {
     if (!h) return;

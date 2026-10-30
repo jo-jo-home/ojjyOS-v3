@@ -338,6 +338,10 @@ suggestions, bookmarks bar, history, downloads, find in page, zoom and view sour
 </ul>
 <h3>Also new</h3>
 <ul>
+<li><b>More memory, for real</b> &mdash; ARM64 and Intel now manage RAM above 4 GiB.
+About shows measured RAM; Activity Monitor separates managed, used, free and reserved memory.
+Protected ARM64 programs and selected browser/TLS buffers can use high RAM; device/DMA buffers
+remain below 4 GiB. The launch menu's temporary 2.2 GB warning is gone.</li>
 <li><b>HTTPS you can trust</b> &mdash; every https:// site must now prove who it is: ojjyOS checks
 its certificate chain against 51 built-in root authorities, the name and the dates, and the
 server's signature. A lock means the check passed; a bad certificate shows

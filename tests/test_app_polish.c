@@ -64,6 +64,33 @@ int main(void)
     CHECK(app_bar_width(0, 100, 200) == 0 && app_bar_width(50, 100, 200) == 100, "memory bars show exact zero and half");
     CHECK(app_bar_width(101, 100, 200) == 200 && app_bar_width(1, 0, 200) == 0, "memory counters clamp safely");
     CHECK(app_bar_width(0xfffffffeU, 0xffffffffU, 2000000000) == 1999999999, "large memory ratio does not overflow");
+    PmmStats stats = {.total_bytes=8191ULL << 20, .usable_bytes=8171ULL << 20,
+                      .low_free_bytes=2000ULL << 20, .high_free_bytes=5800ULL << 20};
+    AppMemoryUsage memory = app_memory_usage(stats, true);
+    CHECK(memory.total == stats.total_bytes && memory.managed == stats.usable_bytes &&
+          memory.reserved == 20ULL << 20 && memory.free == 7800ULL << 20 &&
+          memory.used == 371ULL << 20, "high and low free count toward managed RAM, not reservations");
+    CHECK(app_memory_usage(stats, false).free == stats.low_free_bytes, "disabled high RAM is never shown as allocatable");
+    CHECK(app_memory_usage((PmmStats){0}, true).used == 0, "empty memory statistics do not underflow");
+    memory = app_memory_usage((PmmStats){.total_bytes=4096,.usable_bytes=8192,
+                            .low_free_bytes=(uint64_t)-1,.high_free_bytes=(uint64_t)-1}, true);
+    CHECK(memory.managed == 4096 && memory.free == 4096 && memory.used == 0 && memory.reserved == 0,
+          "inconsistent and overflowing free counters saturate safely");
+    char label[32];
+    app_memory_label(8191ULL << 20, label);
+    CHECK(strcmp(label, "8 GB") == 0, "firmware-rounded 8 GB capacity comes from actual PMM bytes");
+    app_memory_label(4095ULL << 20, label);
+    CHECK(strcmp(label, "4 GB") == 0, "firmware-rounded 4 GB capacity");
+    app_memory_label(2047ULL << 20, label);
+    CHECK(strcmp(label, "2 GB") == 0, "firmware-rounded 2 GB capacity");
+    app_memory_label(1536ULL << 20, label);
+    CHECK(strcmp(label, "1.5 GB") == 0, "fractional RAM is not replaced by a requested launch value");
+    app_memory_label(512ULL << 20, label);
+    CHECK(strcmp(label, "512 MB") == 0, "small RAM uses MB");
+    app_memory_label(64ULL << 30, label);
+    CHECK(strcmp(label, "64 GB") == 0, "capacity label supports future 64 GB maps");
+    app_memory_label((uint64_t)-1, label);
+    CHECK(strcmp(label, "17179869184 GB") == 0, "capacity rounding cannot overflow extreme input");
     RtcTime now = { .year=2026, .month=10, .day=27 };
     CHECK(app_date_is_today(2026,10,27,&now), "today matches the full date");
     CHECK(!app_date_is_today(2026,9,27,&now) && !app_date_is_today(2025,10,27,&now), "same day in another month/year is not today");

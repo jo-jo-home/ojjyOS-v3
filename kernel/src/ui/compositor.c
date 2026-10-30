@@ -2350,10 +2350,11 @@ static void draw_about_window(int content_x, int content_y, int content_w, int c
     str_append(buf, sizeof(buf), " display");
     text_draw_fit(surface(), cx, content_y + 238, buf, TEXT_BODY, theme->text_muted, content_w - 48);
 
-    buf[0] = '\0';
-    utoa(pmm_get_total_memory() / (1024 * 1024), num, 10);
+    app_memory_label(pmm_get_total_memory(), buf);
+    str_append(buf, sizeof(buf), " memory (");
+    utoa(pmm_get_total_memory() >> 20, num, 10);
     str_append(buf, sizeof(buf), num);
-    str_append(buf, sizeof(buf), " MB memory");
+    str_append(buf, sizeof(buf), " MB RAM)");
     text_draw_fit(surface(), cx, content_y + 258, buf, TEXT_BODY, theme->text_muted, content_w - 48);
 }
 
@@ -2484,16 +2485,23 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
             utoa(pe->memory_bytes / 1024, num, 10); text_draw_fit(surface(), cx + 484, y, num, TEXT_BODY, theme->text_muted, width - 488);
         }
     } else if (monitor_tab == 1) {
-        uint32_t total = (uint32_t)(pmm_get_total_memory() / (1024 * 1024));
-        uint32_t free = (uint32_t)(pmm_get_free_memory() / (1024 * 1024));
-        uint32_t used = total >= free ? total - free : 0;
-        ui_text(cx, top, "Physical memory", TEXT_HEADLINE, theme->text);
+        AppMemoryUsage memory = app_memory_usage(pmm_get_stats(), pmm_high_ready());
+        char capacity[32];
+        app_memory_label(memory.total, capacity);
+        strcpy(line, "Physical memory - "); str_append(line, sizeof(line), capacity);
+        ui_text(cx, top, line, TEXT_HEADLINE, theme->text);
         line[0] = 0;
-        monitor_number(line, sizeof(line), used, " / "); monitor_number(line, sizeof(line), total, " MB reported");
-        ui_text(cx, top + 32, line, TEXT_BODY, theme->text);
-        draw_rounded_rect_blend(cx, top + 58, width, 16, 8, theme->text_muted, 30);
-        int fill = app_bar_width(used, total, width);
-        if (fill) draw_rounded_rect_blend(cx, top + 58, fill, 16, MIN(8, fill / 2), theme->accent, 255);
+        monitor_number(line, sizeof(line), memory.total >> 20, " MB RAM    ");
+        monitor_number(line, sizeof(line), memory.managed >> 20, " MB managed");
+        ui_text(cx, top + 26, line, TEXT_BODY, theme->text);
+        line[0] = 0;
+        monitor_number(line, sizeof(line), memory.used >> 20, " MB used    ");
+        monitor_number(line, sizeof(line), memory.free >> 20, " MB free    ");
+        monitor_number(line, sizeof(line), memory.reserved >> 20, " MB reserved");
+        ui_text(cx, top + 48, line, TEXT_BODY, theme->text);
+        draw_rounded_rect_blend(cx, top + 72, width, 12, 6, theme->text_muted, 30);
+        int fill = app_bar_width((uint32_t)(memory.used >> 20), (uint32_t)(memory.managed >> 20), width);
+        if (fill) draw_rounded_rect_blend(cx, top + 72, fill, 12, MIN(6, fill / 2), theme->accent, 255);
         ui_text(cx, top + 88, "Kernel heap", TEXT_TITLE, theme->text);
         line[0] = 0;
         monitor_number(line, sizeof(line), kheap_get_used() / 1024, " / ");
@@ -2512,7 +2520,7 @@ static void draw_monitor_window(int content_x, int content_y, int content_w, int
         str_append(line, sizeof(line), "    In "); monitor_number(line, sizeof(line), ni->rx_bytes / 1024, " KB    Out ");
         monitor_number(line, sizeof(line), ni->tx_bytes / 1024, " KB");
         text_draw_fit(surface(), cx, top + 194, line, TEXT_BODY, theme->text, width);
-        text_draw_fit(surface(), cx, top + 230, "High-RAM allocation is still limited until HW-13.", TEXT_SMALL, theme->text_muted, width);
+        text_draw_fit(surface(), cx, top + 230, "Used / managed RAM. Reserved memory is not counted as used.", TEXT_SMALL, theme->text_muted, width);
     } else {
         ui_text(cx, top, "Renderer frame time", TEXT_HEADLINE, theme->text);
         ui_text(cx, top + 28, "Milliseconds to draw and present each desktop frame.", TEXT_SMALL, theme->text_muted);
@@ -8038,6 +8046,12 @@ void compositor_handle_mouse(int x, int y, bool down, bool up)
                     if (tx >= 0 && tx < 336 && ty >= 0 && ty < 28) {
                         monitor_tab = tx / 112;
                         serial_printf("[MONITOR] tab=%d samples=%u\n", monitor_tab, monitor_frames.count);
+                        if (monitor_tab == 1) {
+                            AppMemoryUsage memory = app_memory_usage(pmm_get_stats(), pmm_high_ready());
+                            serial_printf("[MONITOR] RAM=%llu managed=%llu used=%llu free=%llu reserved=%llu MB\n",
+                                          memory.total >> 20, memory.managed >> 20, memory.used >> 20,
+                                          memory.free >> 20, memory.reserved >> 20);
+                        }
                     }
                 } else if (state->type == APP_CALCULATOR) {
                     int content_x = win->x + 12;

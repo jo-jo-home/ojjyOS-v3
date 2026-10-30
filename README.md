@@ -92,7 +92,7 @@ The screenshots use the built-in **ojjyOS Waves** wallpaper.
 - **Own UEFI bootloader** (`boot/ojjy-boot.c`), `BOOTAA64.EFI` and `BOOTX64.EFI`: parses the ELF64 kernel, loads its segments, passes the memory map and framebuffer, then jumps in.
 - **ARM64:** EL2 → EL1 entry, kernel-owned page tables, GICv2/GICv3, architectural timer, PSCI power control and exception diagnostics.
 - **x86_64:** long mode, GDT/TSS, IDT with a visual panic screen, 4-level paging, 8259 PIC + 1 kHz PIT, ACPI S5 power-off.
-- **Memory:** bitmap physical page allocator built from the UEFI memory map, plus a coalescing kernel heap with corruption and double-free detection.
+- **Memory:** map-sized physical page allocator with LOW/HIGH zones and privileged RAM-only mappings on ARM64 and x86_64, plus a coalescing kernel heap with corruption and double-free detection. Protected ARM64 programs and selected browser/TLS buffers can use RAM above 4 GiB; About and Activity Monitor show measured RAM.
 - **Protected programs (ARM64):** separate static ELF programs run at EL0 with private memory, checked system calls, crash recovery and a 100 ms watchdog. Try `run hello` in Terminal. See [PROTECTED_APPS.md](PROTECTED_APPS.md).
 - **Randomness:** ChaCha20 DRBG seeded from virtio-rng and timers.
 
@@ -152,7 +152,7 @@ ojjyOS is a long-term project, and these are the honest gaps today:
 - **No real on-disk filesystem yet.** Files live in RAM and are saved to disk as checkpoints.
 - **HTTPS is checked, but not completely:** revoked certificates are not detected yet, so don't use the browser for anything sensitive. TLS 1.2-only sites and JavaScript are not supported either.
 - **Virtual machines only:** it runs under Apple's Virtualization.framework, QEMU or VirtualBox, not directly on Mac or PC hardware.
-- **Memory:** about 2.2 GB is usable until the memory update, whatever you assign.
+- **Memory:** legacy and device/DMA allocations still require RAM below 4 GiB; high RAM is opt-in for protected ARM64 programs and audited CPU-only browser/TLS buffers. Firmware and kernel reservations reduce managed capacity. The native launch menu currently offers up to 8 GB (within half of host RAM).
 - No sound, and no Wi-Fi or Bluetooth hardware (virtual machines don't provide it).
 
 Known bugs are tracked in [bugs/OPEN.md](bugs/OPEN.md).

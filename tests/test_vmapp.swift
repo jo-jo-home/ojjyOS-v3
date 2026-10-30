@@ -14,6 +14,7 @@ func runVMHostTests() throws {
     }
     try check(textKey("é") == nil,"unsupported Unicode must not inject partial text")
     try check(textKey("A")!.1 && !textKey("a")!.1,"shifted ASCII distinguished")
+    try check(LaunchLimits(minimum:512 << 20,maximum:64 << 30,hostMemory:16 << 30).memoryChoices == [2048,3072,4096,6144,8192],"all launch RAM choices remain available after high-RAM update")
     let root = URL(fileURLWithPath:CommandLine.arguments[1]).appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
     defer { try? FileManager.default.removeItem(at:root) }

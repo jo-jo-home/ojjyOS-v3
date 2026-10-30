@@ -1,5 +1,33 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-30): HW-13 part 5 UI verified; final delivery next
+
+Board f5c05f, branch hw-13. Parts 1–4 remain intact. About now formats
+actual PMM bytes as rounded GB plus exact MB; Monitor uses a shared tested
+AppMemoryUsage projection: reserved=total-managed, used=managed-active free,
+including enabled high free pages. Its bar is used/managed, not total-free
+counting reservations as allocations. Removed the temporary launch warning
+and stale Monitor limitation. Blue glass and Jonas credit preserved.
+README/APPS and generated What's New describe real scope (legacy/DMA LOW,
+protected ARM64 and audited browser/TLS high; Intel EL0 still unsupported).
+New tests/vz_memory_ui.py uses private disks/bundles, screenshot OCR and
+PMM/Monitor receipts: VZ2/4/8 light/dark About and Memory agree at
+2047/4095/8191 MB RAM, 2027/4075/8171 MB managed. All 12 captures reviewed
+in build/hw-13-part5/review-sheet.png. Initial test capture raced repaint;
+fixed the test's presentation wait, no kernel workaround or skipped gate.
+Normal/fatal-sanitized hosts and both zero-warning dev builds pass; Swift
+guards and TCG/HVF/Intel protected/persistence smokes pass. Fresh VZ8 and
+Intel4 stress own/verify 3 GiB and restore counts; high VZ8 isolation/TLS
+passes. Final native USB/persistence/protected smoke, all 20 app-polish
+flows, VZ2/4/8 full clock gates and fresh HVF4 3-GiB stress also pass.
+40 app-polish host checks (11 new), 2138 Swift and 7 pixel guards pass.
+Only safe installed delivery and final context/check-offs remain.
+Execution/evidence: docs/hw-13-part5-plan.md, build/hw-13-part5/.
+Handoff: finish final gates, strict checks, commit, fast-forward main;
+then only with no VM running rebuild installed ARM/Intel/app, preserving
+saved-data/settings/EFI hashes. Verify private delivered-image VZ8 UI and
+write ready_to_test. Tick remaining part-5 boxes only after delivery.
+
 ## LATEST (2026-10-30): part-4 pre-push double-check passed; part 4 pushed
 
 Jonas explicitly approved pushing after a double-check. Reviewed only

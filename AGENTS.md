@@ -1,5 +1,22 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-30): part-4 pre-push double-check passed; part 4 pushed
+
+Jonas explicitly approved pushing after a double-check. Reviewed only
+76aa1a0..bc39972 against docs/hw-13-part4-plan.md. Six independent static
+passes plus parent source/caller/gate audit found no actionable defect;
+no production code changed. Fresh full normal/fatal ASan/UBSan hosts pass,
+10 extra public paging map/unmap/neighbor/huge-leaf probes pass normally
+and sanitized, repeated Intel4/HVF4/VZ8 3-GiB stress and full VZ4/8 clocks
+pass. Exact source/dev-image hashes still match the part-4 receipts.
+Privacy/checklist/roadmap clean. Evidence build/hw-13-part4-review/;
+review scope, reuse and tooling limits: docs/hw-13-part4-review.md.
+Pushed ac7acb5 and bc39972 to hw-13 with approval; verified GitHub
+contained bc39972e94ea8ccd780d37eba767b544da475b22 before these review-only
+records. This follow-up changes context only. Main remains 043894c,
+installed images/settings/ready note untouched. Board f5c05f pauses for
+**hw13-5**, not started; the previous part-4 Handoff below still applies.
+
 ## LATEST (2026-10-30): HW-13 part 4 complete, paused for hw13-5
 
 Part 3 explicitly pushed; origin/hw-13 verified at 76aa1a0. Board f5c05f,

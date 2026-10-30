@@ -193,6 +193,14 @@ image. Screenshots read. No main/installed/settings/UI-warning/ready note
 change; full MEM cards remain doing, not complete. Implementation ac7acb5
 committed locally, strict checklist/roadmap/privacy checks clean; board
 f5c05f paused for hw13-5. New commits not pushed.
+**Log.** 2026-10-30 pre-push double-check: parent + six fresh-context
+static passes found no actionable issue; production source unchanged.
+Full normal/fatal-sanitized hosts, 10 extra mapper probes, repeated
+Intel4/HVF4/VZ8 3-GiB stress and VZ4/8 full clock tests pass; exact hashes,
+privacy/checklist/roadmap verified. Evidence build/hw-13-part4-review/ and
+docs/hw-13-part4-review.md (explicit reuse/tooling limits). With Jonas's
+approval ac7acb5/bc39972 pushed to hw-13, GitHub verified at bc39972 before
+these context-only records. Main/installed/settings untouched; hw13-5 next.
 **Handoff.** Next session is **hw13-5 only**, on `hw-13` in
 `~/Developer/ojjyOS-kernel/ojjyOS-v3-hw-13`; take paused board `f5c05f`.
 Read Decision plus docs/hw-13-memory-design.md and MEM-03/04 shared boxes.

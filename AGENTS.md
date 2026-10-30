@@ -4,10 +4,13 @@
 
 HW-13 is published. Board 046904 owns ojjyOS-v3-hw-14 / hw-14;
 Control board 939692 owns sibling ojjy-control-hw-14 / hw-14.
-Contract/precedence/concurrency design: docs/hw-14-launch-settings.md.
+Contract/precedence/concurrency design: docs/hw-14-launch-settings.md;
+baseline host suite and Swift/Python parity pass (build/hw-14/).
 Native version-1 file stays the sole store; preserve unknown keys and
 reject stale editor saves. Next: runner + native writer, Control editor,
-cross-tool fixtures/private boots and full regression. User VM was running
+cross-tool fixtures/private boots and full regression. Actual Intel screen
+tests exposed boot's hard-coded 1920x1080 choice; bounded fw_cfg preference
+now selects all three saved logical modes, with host-parser tests. User VM was running
 at start; never touch installed disk/settings/app or stop that VM.
 
 ## LATEST (2026-10-30): HW-13 complete and safely delivered (launch-2 DONE)

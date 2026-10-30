@@ -244,7 +244,7 @@ future work. Stop here, do not start launch-3 today.
 `build/launch-settings.json`; QEMU and ojjy Control still have separate defaults.
 **Goal.** All three read/write the same file without losing user settings.
 **Steps.**
-- [ ] Read HW-12 schema/validation and ojjy Control AGENTS.md; document override
+- [x] Read HW-12 schema/validation and ojjy Control AGENTS.md; document override — done 2026-10-30 (test: baseline.log, contract-v2.log, runner-intel-{1440,1600}/report.json in build/hw-14/)
   precedence and QEMU scanout vs logical size for HVF/TCG/Intel.
 - [ ] Wire QEMU RAM/screen/network/fullscreen and Control editor to the same
   file with safe defaults, host clamps and atomic writes; preserve unknown keys.
@@ -263,9 +263,13 @@ concurrent-writer loss; CPU stays 1 until SMP-01. Never reset user disks.
 **Decision.** Keep HW-12 version 1 and a single build/launch-settings.json;
 see docs/hw-14-launch-settings.md for override/scanout and cooperative
 revision/lock rules. Never modify installed images while a VM is running.
-**Handoff.** 2026-10-30 started in ojjyOS-v3-hw-14 / hw-14; separate
-Control worktree ojjy-control-hw-14 / hw-14 owns the editor. Next: baseline
-then runner/native concurrency implementation and private cross-tool tests.
+**Handoff.** 2026-10-30 in ojjyOS-v3-hw-14 / hw-14; separate Control
+worktree ojjy-control-hw-14 / hw-14 owns the editor. Baseline passed;
+contract documents explicit overrides, scanout and lock/revision protocol.
+Runner/native guards, real ARM TCG/HVF and all three Intel screens pass;
+Intel required a bounded fw_cfg boot preference (old GOP code forced
+1920x1080). Next: final combined-source gates and Control/native round trip.
+Installed VM is running; do not modify installed settings/disks/app.
 
 ### HW-11 — Research: Rosetta for Linux inside ojjyOS
 - Phase: P7 · Size: S · Status: todo

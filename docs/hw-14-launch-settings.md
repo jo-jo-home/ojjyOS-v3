@@ -31,6 +31,11 @@ Native VZ and ARM HVF use 2x scanout; ARM TCG uses 1x for performance.
 Legacy `OJJY_DISPLAY=ramfb` keeps its fixed 1024x768 fallback, explicitly
 reported rather than pretending to apply a saved screen. Intel uses std
 VGA at the logical size, one TCG CPU, and explicitly disables networking.
+The runner passes a bounded `opt/ojjyOS/display` fw_cfg item to the Intel
+bootloader; it selects the matching BGRx GOP mode before its legacy
+1920x1080 fallback. A host-tested parser checks the QEMU signature,
+bounded big-endian file directory, exact key and size grammar. The Intel
+bootloader touches fw_cfg ports only when CPUID reports a hypervisor.
 `fullScreen` controls the host display, not guest pixels. Linux uses GTK;
 macOS uses Cocoa, with zoom-to-fit and a single guest pointer.
 

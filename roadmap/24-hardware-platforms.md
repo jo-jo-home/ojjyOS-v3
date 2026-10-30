@@ -236,7 +236,7 @@ Part 5 is published with explicit approval; ask for new approval for
 future work. Stop here, do not start launch-3 today.
 
 ### HW-14 — QEMU script and ojjy Control use the launch settings
-- Phase: P2 · Size: S · Status: todo
+- Phase: P2 · Size: S · Status: doing
 - Depends: HW-12
 - Files: scripts/run-qemu.sh, ../ojjy-control/, tests/
 
@@ -260,6 +260,12 @@ round trips and private-disk QEMU/VZ smoke; strict checklists for both repos.
 there too. Avoid absolute personal paths, shell injection, JSON truncation and
 concurrent-writer loss; CPU stays 1 until SMP-01. Never reset user disks.
 **Refs.** HW-12, HW-13, NATIVE_VM_PLAN.md; ojjy Control project context.
+**Decision.** Keep HW-12 version 1 and a single build/launch-settings.json;
+see docs/hw-14-launch-settings.md for override/scanout and cooperative
+revision/lock rules. Never modify installed images while a VM is running.
+**Handoff.** 2026-10-30 started in ojjyOS-v3-hw-14 / hw-14; separate
+Control worktree ojjy-control-hw-14 / hw-14 owns the editor. Next: baseline
+then runner/native concurrency implementation and private cross-tool tests.
 
 ### HW-11 — Research: Rosetta for Linux inside ojjyOS
 - Phase: P7 · Size: S · Status: todo

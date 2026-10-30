@@ -190,7 +190,9 @@ byte-identical across final rebuild; only two EFI timestamp bytes differ,
 explicitly recorded for unchanged-code receipt reuse; fresh final-image
 VZ2/4/8 and HVF4 high tests also pass. Intel stress/smoke rerun on final
 image. Screenshots read. No main/installed/settings/UI-warning/ready note
-change; full MEM cards remain doing, not complete. New commits not pushed.
+change; full MEM cards remain doing, not complete. Implementation ac7acb5
+committed locally, strict checklist/roadmap/privacy checks clean; board
+f5c05f paused for hw13-5. New commits not pushed.
 **Handoff.** Next session is **hw13-5 only**, on `hw-13` in
 `~/Developer/ojjyOS-kernel/ojjyOS-v3-hw-13`; take paused board `f5c05f`.
 Read Decision plus docs/hw-13-memory-design.md and MEM-03/04 shared boxes.

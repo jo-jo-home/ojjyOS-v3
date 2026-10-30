@@ -1,6 +1,6 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-30): HW-13 part 4 verified, records closing for hw13-5
+## LATEST (2026-10-30): HW-13 part 4 complete, paused for hw13-5
 
 Part 3 explicitly pushed; origin/hw-13 verified at 76aa1a0. Board f5c05f,
 same worktree/branch; main stays 043894c. Intel paging.c/h now has checked
@@ -36,9 +36,11 @@ stress/smoke rerun separately after the CPU-width refinement.
 Four part-4/shared MEM HW13-X boxes are now verified; full MEM cards stay
 doing (general pt_*/WC/vmalloc remain open). Main/installed images/settings,
 launch warning and ready note untouched. Reusable clock-contract findings
-saved in apple-vz-custom-os-bringup v1.9.0. No part-4 push authorization yet.
+saved in apple-vz-custom-os-bringup v1.9.0. Implementation ac7acb5 committed
+locally; strict checklist/roadmap and unpushed privacy scans clean. Board
+f5c05f paused for part 5. No part-4 push authorization yet.
 
-Handoff: **hw13-5 only** after the local records close; take paused f5c05f.
+Handoff: **hw13-5 only**; take paused f5c05f.
 Read card/design/part4 plan. About/Monitor currently use raw total/free;
 show RAM vs managed capacity vs active free accurately (PmmStats byte units,
 reserved=total-usable, managed used=usable-low_free-high_free). Compare

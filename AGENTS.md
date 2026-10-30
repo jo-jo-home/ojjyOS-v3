@@ -29,6 +29,8 @@ unchanged (build/hw-13-part5/preservation.json). Both installed kernels
 are byte-identical to the tested dev kernels. Private delivered-image VZ8
 light/dark About/Monitor passes; About capture reviewed; ready note written.
 Only final card/context check-offs remain. No push authorization yet.
+Part-5 UI/delivery Done-when acceptance is checked with the same complete
+receipts; no placeholder RAM value or skipped native gate is credited.
 Execution/evidence: docs/hw-13-part5-plan.md, build/hw-13-part5/.
 Handoff: finish remaining Done-when check-offs using matrix.json, update
 final context/STATUS, strict checklist, commit/fast-forward final records,

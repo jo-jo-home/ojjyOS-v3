@@ -134,7 +134,7 @@ are verified in parts 2/3; Intel/stress and UI/delivery remain parts 4/5.
 - [x] (part 2) Host fake-map and sanitizer tests prove dynamic metadata/reservations/zones/statistics without static growth or high-pointer dereferences; legacy callers still receive LOW pages. Files/tests/trap: memory.c/h + test_pmm.c, both builds; do not equate tracking high pages with using them. — done 2026-10-29 (test: 38 PMM assertions normal/sanitized, including exact 4-GiB LOW endpoint and disabled HIGH; build/hw-13-part2/native-memory-proof.json records VZ8 8191 MB RAM / 8171 MB usable with 1506699 HIGH pages tracked but disabled; all existing callers unchanged).
 - [x] (part 3) Actual high frames and chosen high-backed CPU buffers work under VZ 4/8 GiB and ARM HVF 4 GiB with unchanged protected isolation and cleanup equality. Files/tests/trap: ARM/user_image/browser/http/kvm tests; a successful boot or printed total alone is insufficient. — done 2026-10-29 (test: build/hw-13-part3/{vz4-v1,vz8-v1,hvf4-v1}/report.json, PA 0x100000000 zero/write/read/free, 153 high-backed protected runs total, all cleanup counts equal, EL0 alias permission faults, HIGH 40/28/20/48-MiB buffers and 117496-byte TLS slot; HTTP/HTTPS/PNG screenshots read; full VZ clock gate remains known BUG-1008 failure, not a pass).
 - [x] (part 4) Intel uses high RAM through valid mappings and the live peak-owned >2.5 GiB write/read/free test and complete regression matrix pass. Files/tests/trap: paging/kvm/live memory tests; every held page is distinct, firmware/Device addresses are never RAM. — done 2026-10-30 (test: build/hw-13-part4/stress-intel4-final/report.json and stress-{hvf4,vz8}-v1/report.json, each actual 3-GiB simultaneous peak/every-page PA-derived patterns/free counts equal/recovery; matrix.json records normal/sanitized/build/live regressions plus corrected full VZ clocks; Intel unsupported EL0 is not credited as a protected-app pass).
-- [ ] (part 5) Multiple VZ RAM settings produce matching real PMM/About/Monitor figures; temporary memory warning removed, reviewed screenshots and data-preserving installed delivery verified. Files/tests/trap: compositor/LaunchWindow/delivery; no UI-only placeholder claim.
+- [x] (part 5) Multiple VZ RAM settings produce matching real PMM/About/Monitor figures; temporary memory warning removed, reviewed screenshots and data-preserving installed delivery verified. Files/tests/trap: compositor/LaunchWindow/delivery; no UI-only placeholder claim. — done 2026-10-30 (test: build/hw-13-part5/{vz2,vz4-v2,vz8,delivered-vz8}/report.json, OCR/exact PMM/Monitor receipts, all 12 development captures reviewed plus installed About; 8191 MB RAM/8171 MB managed at 8 GB, real high pattern at PA 0x100000000, 51 high-backed protected runs with exact cleanup, 3-GiB stress on VZ8/HVF4/Intel4; preservation.json and ready note verified, implementation 921c482/delivery records 47060cc).
 - [ ] (part 5) All series boxes and matching MEM substeps have evidence; context current, strict checklist/roadmap clean, combined source tested and only then main fast-forwarded. Files/tests/trap: roadmap/context/regression logs; full MEM-01..05 completion is not implied.
 **Tests.** PMM/mapping host tests and fuzz boundaries, ASan/UBSan, both dev
 builds, private-disk VZ 2/3/4/6/8 GB as host permits, QEMU TCG/HVF/Intel smokes.
@@ -210,41 +210,16 @@ TCG/HVF/Intel protected/persistence, native full smoke, 20 app-polish flows,
 full VZ2/4/8 clocks, VZ8 high isolation/TLS and VZ8/HVF4/Intel4 3-GiB
 stress pass. Evidence build/hw-13-part5/. Installed delivery/check-offs
 are still pending; no main or installed data changed at this checkpoint.
-**Handoff.** Part-5 UI is implemented and verified at VZ2/4/8 in both
-themes (build/hw-13-part5/, docs/hw-13-part5-plan.md); remaining work is
-final combined-source gates, strict checks, local commit, main fast-forward,
-hash-preserving installed delivery and a private delivered-image VZ8 test.
-Parts 1–4 stay green; do not change allocator policy or touch other trees.
-The following part-4 safety commands/constraints still apply on `hw-13` in
-`~/Developer/ojjyOS-kernel/ojjyOS-v3-hw-13`; take paused board `f5c05f`.
-Read Decision plus docs/hw-13-memory-design.md and MEM-03/04 shared boxes.
-Re-run `export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"` then
-`bash scripts/test.sh` before coding; the default LibreSSL failed TLS
-fixture date flags, Homebrew OpenSSL passes. Parts 1–4 are verified.
-HIGH/ANY are active only after ARM/Intel mapping readiness; legacy/DMA
-allocators remain LOW. Stats use bytes: total=described RAM, usable=initial
-managed capacity after exclusions, active free=low_free+enabled high_free.
-For UI distinguish reserved=total-usable and managed used=usable-free,
-not highest PA or requested launch RAM. Review compositor.c About/Monitor
-and temporaryMemoryNote in LaunchWindow.swift; preserve blue glass/Jonas
-credit. Compare actual serial/UI figures at VZ2/4/8 with light/dark captures,
-remove the warning only with current real high-memory/stress proof.
-Do not call full MEM cards done: general pt_*/WC/vmalloc and buddy/refcounts
-remain future, Intel EL0/network unsupported. Keep NTP-aware strict clock
-gate and all protected/cleanup/isolation tests. Python+Pillow is at
-build/hw-13-part3/venv/bin/python. Part4 exact-source/final-image evidence
-is build/hw-13-part4/matrix.json, source-fingerprint.json and
-arm-final-identical.json; build scripts add EFI timestamps, so compare
-actual bytes/artifacts before reusing evidence. Host tests translate fake
-physical backing and fatal sanitizer reports must fail the suite.
-After combined-source tests, only part 5 may fast-forward main and Jonas's
-checkout; if main moved, rebase/retest, never force. Check no user VM is
-running before any installed-image/app rebuild. Preserve installed saved
-data, launch settings and legacy image with before/after hashes, use
-data-preserving builders, private delivered-image live tests and then the
-ready_to_test note. No shortcuts around data or a failing gate. Update
-all context/STATUS/checklist, local commits and ask before a public push.
-Part-3 76aa1a0 was pushed explicitly; new part-4 commits need a NEW yes.
+**Handoff.** Implementation and installed delivery are verified; only the
+final context/series acceptance check-off remains. Use matrix.json and
+preservation.json in build/hw-13-part5/, cross-check MEM-03/04 shared
+HW13-A/HW13-X boxes without marking those full cards done, update STATUS
+and final Log, commit, fast-forward final context to main/checkout and
+refresh ready_to_test for that context-only tip. No code retest is needed
+for context-only records; any code change requires full gates again.
+Legacy/DMA remain LOW; Intel EL0/network and full pt_*/WC/vmalloc stay
+future. All VMs used private copies; installed source/settings preserved.
+Do not start launch-3 here. Ask before any public push.
 
 ### HW-14 — QEMU script and ojjy Control use the launch settings
 - Phase: P2 · Size: S · Status: todo

@@ -37,7 +37,7 @@ def run(args):
     disk = build / args.arch / "disk.img"
     shutil.copyfile(source, disk)
     config = build / "launch-settings.json"
-    config.write_text(json.dumps(dict(launch.DEFAULTS, memoryMB=3072, screen=args.screen,
+    config.write_text(json.dumps(dict(launch.DEFAULTS, memoryMB=args.memory_mb, screen=args.screen,
                                       network=args.network, fullScreen=True, future={"retained":True})))
     config_before = config.read_bytes()
     warnings = []
@@ -100,8 +100,10 @@ def run(args):
                 if dimensions != result["scanout"]:
                     raise RuntimeError(f"Requested scanout {result['scanout']}, captured {dimensions}")
                 total = int(re.search(r"\[PMM\] Total usable memory: (\d+) MB", text)[1])
-                if not 3000 <= total <= 3072:
-                    raise RuntimeError(f"PMM disagrees with 3072 MiB request: {total}")
+                if not args.memory_mb - 72 <= total <= args.memory_mb:
+                    raise RuntimeError(f"PMM disagrees with {args.memory_mb} MiB request: {total}")
+                if result["settings"]["memoryMB"] != args.memory_mb:
+                    raise RuntimeError("Host limits clamped the requested test memory")
                 if not args.network and "[NET] DHCP lease" in text:
                     raise RuntimeError("Network attached despite saved network=false")
                 qmp("quit")
@@ -132,5 +134,6 @@ if __name__ == "__main__":
     parser.add_argument("--arch", choices=("aarch64", "x86_64"), default="aarch64")
     parser.add_argument("--accel", choices=("tcg", "hvf"), default="tcg")
     parser.add_argument("--network", action="store_true")
+    parser.add_argument("--memory-mb", type=int, choices=launch.MEMORY, default=3072)
     parser.add_argument("--screen", choices=launch.SCREENS, default="1280x800")
     run(parser.parse_args())

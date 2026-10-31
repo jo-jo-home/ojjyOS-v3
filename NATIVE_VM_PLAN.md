@@ -78,6 +78,15 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 
 ## Log
 
+- HW-13/HW-14 independent regression verification (2026-10-30): fresh
+  warning-free builds, host/sanitizer/Swift/Control suites, private QEMU
+  TCG/HVF/Intel persistence, native launch lifecycle, VZ6 boot, VZ8 About/
+  Monitor and VZ8/Intel4 3-GiB ownership/free/recovery all pass. Captures
+  reviewed; installed full images/settings/EFI/legacy hashes unchanged.
+  Old dashboard process restarted with preserved configuration; live guarded
+  API now returns 200. Details: docs/hw-14-verification.md and
+  build/hw-14-verify/. Only live-test RAM parametrization changed.
+
 - HW-14 / launch-3 (2026-10-30, board 046904 + Control 939692, branches `hw-14`
   → `main` at `89bf21c` / Control `ba37569`): completed the 3-part launch
   series. `scripts/run-qemu.sh` delegates to `scripts/qemu_launch.py` reading

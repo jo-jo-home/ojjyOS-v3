@@ -276,6 +276,16 @@ backing-scale screenshot guards. Evidence: `build/hw-14/` (`final2-host.log`,
 `preservation.json`, `installed-vz-boot.log`). Limits: CPU stays 1 until
 SMP-01; Intel networking unsupported; restart `:4321` once to activate Control
 writes on the live dashboard.
+**Verification follow-up.** 2026-10-30: fresh builds and full host/sanitizer/
+Swift/Control suites, both private Home editors, cross-tool native menu,
+TCG/HVF/Intel persistence, ARM4/8 + Intel4 launch RAM/display, four native
+lifecycle cases, installed-image VZ6 boot, VZ8 About/Monitor and VZ8/Intel4
+3-GiB peak ownership/recovery pass. Evidence: `build/hw-14-verify/` and
+`docs/hw-14-verification.md`. Full installed image/settings/EFI/legacy
+hashes unchanged. Restarted the old dashboard with preserved configuration;
+live authenticated settings GET 200 and writable, so the restart above is
+no longer pending. Production sources unchanged; live test now accepts
+`--memory-mb` instead of hard-coding 3072 MiB.
 
 ### HW-11 — Research: Rosetta for Linux inside ojjyOS
 - Phase: P7 · Size: S · Status: todo

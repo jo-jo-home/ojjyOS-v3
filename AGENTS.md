@@ -1,5 +1,27 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
+## LATEST (2026-10-30): independent HW-13/HW-14 regression verification passed
+
+Fresh zero-warning ARM/Intel/app builds, normal/fatal ASan+UBSan hosts,
+2149 Swift guards, Python guards, 43 Deno/16 Vitest tests, checks/build/CSP,
+9 cross-tool fixtures and both private Playwright Home editors pass.
+Private TCG/HVF protected persistence and Intel persistence/corrupt-checkpoint
+smokes pass. Expanded tests/qemu_launch_smoke.py with --memory-mb: actual
+ARM HVF4 (4072 MB usable, 2880x1800), ARM TCG8 (8168 MB, 1600x900) and
+Intel4 (4071 MB, 1280x800) agree with requests. Four native lifecycle cases
+pass 16 checks each; installed-image private VZ6 boot/clock/DHCP passes.
+Installed-image VZ8 About/Monitor light/dark agree with PMM at 8191 MB RAM,
+8171 MB managed; captures reviewed. VZ8 and Intel4 each own/write/verify/free
+3 GiB simultaneously, restore free counts and recover to programs/desktop.
+Evidence/commands/limits: docs/hw-14-verification.md, build/hw-14-verify/.
+Both installed kernels match fresh builds; UEFI loaders differ only in PE
+timestamps. Full installed images/settings/EFI/legacy hashes remain unchanged.
+The old dashboard process returned 404 for the new API: restarted only that
+server with its existing configuration. Installed Home/classic and guarded
+settings GET now work; no installed settings Save was used. No restart is
+pending. No production source changed in this verification, only the live
+test's RAM parameter. Launch series remains complete; ask before pushing.
+
 ## LATEST (2026-10-30): HW-14 complete and safely delivered (launch-3 DONE)
 
 Boards `046904` (OS) and `939692` (Control) done; the 3-part launch series

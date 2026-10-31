@@ -1,24 +1,30 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-30): HW-14 shared launch settings verified (steps 2–3 done)
+## LATEST (2026-10-30): HW-14 complete and safely delivered (launch-3 DONE)
 
-Board 046904 owns ojjyOS-v3-hw-14 / hw-14; Control board 939692 owns
-ojjy-control-hw-14 / hw-14. Native `vmapp/LaunchSettings.swift` + `main.swift`
-now compute raw-byte SHA-256 revisions, enforce cooperative
-`build/.launch-settings.lock` fail-fast directory locks, reject stale saves
-and future/oversized files, preserve unknown JSON keys, reload on settings
-reopen, and verify `window.backingScaleFactor` before publishing window
-screenshots. `scripts/run-qemu.sh` delegates to `scripts/qemu_launch.py`
-(reading `build/launch-settings.json` with validated `OJJY_*` overrides,
-`--dry-run`, 2x HVF vs 1x TCG/Intel scanout, and bounded `opt/ojjyOS/display`
-fw_cfg parsed in `boot/display_mode.h` + `boot/ojjy-boot.c`). Control adds
-guarded `GET|PUT /api/ojjyos/launch-settings` and React/classic Home editors
-(`8b1fac7`..`084f22b`). Verified: zero-warning ARM/Intel/vmapp dev builds,
-host + ASan/UBSan suites, 2149 Swift guards, 43/43 Deno + 16/16 Vitest,
+Boards `046904` (OS) and `939692` (Control) done; the 3-part launch series
+(`HW-12`, `HW-13`, `HW-14`) is complete. `ojjyOS.app`, `scripts/run-qemu.sh`
+(`scripts/qemu_launch.py`), and ojjy Control (`GET|PUT /api/ojjyos/launch-settings`
++ React/classic Home editors) share the single version-1
+`build/launch-settings.json` with SHA-256 revisions, fail-fast
+`build/.launch-settings.lock`, unknown-key preservation, nonpersistent `OJJY_*`
+overrides, `--dry-run`, 2x HVF vs 1x TCG/Intel scanout, bounded
+`opt/ojjyOS/display` fw_cfg mode selection in `boot/display_mode.h` +
+`boot/ojjy-boot.c`, and `window.backingScaleFactor` screenshot guards in
+`vmapp/`. Verified: zero-warning ARM/Intel/vmapp dev + installed builds,
+normal + ASan/UBSan host suites, 2149 Swift guards, 43/43 Deno + 16/16 Vitest,
 9/9 cross-tool parity cases, Control↔native menu light/dark round-trip
 (`build/hw-14/final3-control-native/report.json`), QEMU TCG/HVF/Intel smokes,
 and 4-case native VZ launch matrix (`build/hw-14/final3-vz-launch/report.json`).
-Next: data-preserving installed delivery and fast-forwarding both repos.
+With no running VM, `main` and Jonas's `ojjyOS-v3` checkout fast-forwarded to
+implementation `89bf21c` (and `ojjy-control` `main` to `ba37569`); installed
+ARM/Intel/app builds preserved saved-data, `launch-settings.json`, EFI store,
+and legacy disk SHA-256 byte-for-byte (`build/hw-14/preservation.json`),
+`installed-vz-boot` passed, and `READY_TO_TEST.json` is written. Restart the
+running ojjy Control server on `:4321` once (`./start.sh` after closing the
+old process) to activate live dashboard writes to `ojjyOS-v3/build`.
+Next ready P0 cards: `APP-FINDER-01`, `APP-SET-01`, `APP-TERM-01`, `NET-03`,
+`SHL-02`, `SHL-03`, `SHL-04`, `QA-20`.
 
 ## LATEST (2026-10-30): HW-13 complete and safely delivered (launch-2 DONE)
 

@@ -236,7 +236,7 @@ Part 5 is published with explicit approval; ask for new approval for
 future work. Stop here, do not start launch-3 today.
 
 ### HW-14 — QEMU script and ojjy Control use the launch settings
-- Phase: P2 · Size: S · Status: doing
+- Phase: P2 · Size: S · Status: done
 - Depends: HW-12
 - Files: scripts/run-qemu.sh, ../ojjy-control/, tests/
 
@@ -251,9 +251,9 @@ future work. Stop here, do not start launch-3 today.
 - [x] Test missing/corrupt/partial files, overrides and cross-tool round trips; — done 2026-10-30 (test: 9/9 Swift/Python/Control cross-tool cases, final3-control-native/report.json light/dark captures, final2-runner-{tcg,hvf,intel}/report.json, final3-vz-launch/report.json 4-case matrix)
   live boot QEMU and verify Control changes appear in the native launch menu.
 **Done when.**
-- [ ] No competing settings store; native app, QEMU and Control agree after
+- [x] No competing settings store; native app, QEMU and Control agree after — done 2026-10-30 (test: 9/9 cross-tool cases, final3-control-native/report.json, preservation.json saved-data/settings/EFI/legacy hashes unchanged, installed-vz-boot.log)
   restart; automated tests bypass menus and never modify installed user data.
-- [ ] Cross-project tests/context/checklists pass and evidence is recorded.
+- [x] Cross-project tests/context/checklists pass and evidence is recorded. — done 2026-10-30 (test: checklist.py --strict clean on both repos, roadmap check 698 cards 0 errors, OS 89bf21c + Control ba37569 fast-forwarded to main)
 **Tests.** QEMU runner argument tests, Control unit/UI tests, native guard
 round trips and private-disk QEMU/VZ smoke; strict checklists for both repos.
 **Pitfalls.** Control is a separate private repo: claim/commit/update context
@@ -263,12 +263,19 @@ concurrent-writer loss; CPU stays 1 until SMP-01. Never reset user disks.
 **Decision.** Keep HW-12 version 1 and a single build/launch-settings.json;
 see docs/hw-14-launch-settings.md for override/scanout and cooperative
 revision/lock rules. Never modify installed images while a VM is running.
-**Handoff.** 2026-10-30 in ojjyOS-v3-hw-14 / hw-14 and ojjy-control-hw-14 /
-hw-14. Shared QEMU runner, native cooperative lock/revision guards, bounded
-Intel fw_cfg display preference, backing-scale capture guard, and Control
-React/classic editors all pass full unit, sanitizer, 9/9 cross-tool, live
-Control↔native menu light/dark, QEMU TCG/HVF/Intel, and 4-case VZ launch
-gates. Next: preserved-data installed delivery and fast-forwarding both repos.
+**Log.** 2026-10-30 (board 046904 + Control 939692; OS commits `448b5c7`,
+`29e076b`, `27d6f02`, `89bf21c`; Control commits `8b1fac7`, `d0c3f80`,
+`084f22b`, `ba37569`): shared version-1 `build/launch-settings.json` across
+native `ojjyOS.app`, `scripts/run-qemu.sh` (`scripts/qemu_launch.py`), and
+ojjy Control (`GET|PUT /api/ojjyos/launch-settings` + React/classic Home
+editors) with SHA-256 revisions, fail-fast `.launch-settings.lock`, unknown-key
+preservation, bounded Intel `opt/ojjyOS/display` fw_cfg mode selection, and
+backing-scale screenshot guards. Evidence: `build/hw-14/` (`final2-host.log`,
+`final2-sanitize.log`, `final3-vmapp.log`, `final3-control-native/report.json`,
+`final2-runner-{tcg,hvf,intel}/report.json`, `final3-vz-launch/report.json`,
+`preservation.json`, `installed-vz-boot.log`). Limits: CPU stays 1 until
+SMP-01; Intel networking unsupported; restart `:4321` once to activate Control
+writes on the live dashboard.
 
 ### HW-11 — Research: Rosetta for Linux inside ojjyOS
 - Phase: P7 · Size: S · Status: todo

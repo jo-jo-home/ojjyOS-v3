@@ -1,5 +1,13 @@
 # Native VM Plan — ojjyOS.app on Apple's Virtualization framework (2026-10-18)
 
+HW-14 / launch-3 delivered (2026-10-30, implementation `89bf21c` + Control
+`ba37569`): `ojjyOS.app`, `scripts/run-qemu.sh` (`scripts/qemu_launch.py`), and
+ojjy Control share `build/launch-settings.json` with SHA-256 revisions,
+fail-fast `.launch-settings.lock`, unknown-key preservation, bounded Intel
+`opt/ojjyOS/display` fw_cfg mode selection, and `window.backingScaleFactor`
+screenshot guards. Installed ARM/Intel/app builds passed with zero warnings and
+byte-identical saved-data/settings/EFI/legacy hashes (`build/hw-14/preservation.json`).
+
 HW-13 part 5 delivered (2026-10-30, implementation 921c482): runtime PMM and ARM/Intel high-RAM
 aliases are implemented; About/Monitor now show measured RAM and separate
 managed/used/free/reserved counters. Temporary launch warning removed.
@@ -69,6 +77,19 @@ VZ PCI bus 0: 1 virtio-net (bar0 0x1_0003_0000), 5 virtio-console
 - N11 Docs + handoff; QEMU suites must keep passing at every step.
 
 ## Log
+
+- HW-14 / launch-3 (2026-10-30, board 046904 + Control 939692, branches `hw-14`
+  → `main` at `89bf21c` / Control `ba37569`): completed the 3-part launch
+  series. `scripts/run-qemu.sh` delegates to `scripts/qemu_launch.py` reading
+  `build/launch-settings.json` with nonpersistent `OJJY_*` overrides and
+  `--dry-run`; Intel UEFI `boot/ojjy-boot.c` + `boot/display_mode.h` honour
+  bounded `opt/ojjyOS/display` fw_cfg modes; `vmapp/` and ojjy Control share
+  SHA-256 revisions, fail-fast `.launch-settings.lock`, and unknown-key
+  preservation; `VMHost.screenshot` / `LaunchWindow.capture` reject scaled
+  mid-animation WindowServer surfaces (`abs(sx - backingScaleFactor) < 0.05`).
+  Evidence: `build/hw-14/` (`final3-control-native/report.json` light/dark menu
+  OCR, `final2-runner-{tcg,hvf,intel}/report.json`, 4-case
+  `final3-vz-launch/report.json`, `preservation.json`, `installed-vz-boot.log`).
 
 - HW-12 launch series (2026-10-27, board 76a30d, branch hw-12): split HW-10
   into HW-12/13/14; native launch/settings window, version-1 atomic JSON,

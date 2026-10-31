@@ -25,6 +25,8 @@ legacy `OJJY_RES` is a physical scanout override and wins over the logical
 screen. Overrides are validated, never written back. `OJJY_ACCEL` selects
 auto/HVF/TCG independently of the file. Invalid explicit overrides fail
 instead of silently launching a different configuration.
+Intel physical overrides are limited to the three supported logical
+modes or its legacy 1920x1080 mode; arbitrary firmware modes are refused.
 
 `screen` is a logical size: 1440x900, 1280x800 or 1600x900.
 Native VZ and ARM HVF use 2x scanout; ARM TCG uses 1x for performance.

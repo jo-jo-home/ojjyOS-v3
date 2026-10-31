@@ -3,6 +3,7 @@ import Foundation
 import CoreFoundation
 import Virtualization
 import Darwin
+import CryptoKit
 
 struct HostError: Error, CustomStringConvertible {
     let description: String
@@ -91,26 +92,56 @@ struct LaunchSettings: Equatable {
         return result.validated(limits,log:log)
     }
     static func load(_ url: URL, limits: LaunchLimits, log: (String) -> Void) -> LaunchSettings {
+        snapshot(url,limits:limits,log:log).settings
+    }
+    static func revision(_ data: Data?) -> String {
+        guard let data = data else { return "missing" }
+        return SHA256.hash(data:data).map { String(format:"%02x",$0) }.joined()
+    }
+    static func snapshot(_ url: URL, limits: LaunchLimits, log: (String) -> Void) -> (settings: LaunchSettings, revision: String) {
         do {
             let file = try FileHandle(forReadingFrom:url)
             defer { try? file.close() }
-            return decode(try file.read(upToCount:65537) ?? Data(),limits:limits,log:log)
+            let data = try file.read(upToCount:65537) ?? Data()
+            return (decode(data,limits:limits,log:log),revision(data))
         }
-        catch { log("Launch settings missing or unreadable; using defaults"); return LaunchSettings().validated(limits,log:log) }
+        catch { log("Launch settings missing or unreadable; using defaults"); return (LaunchSettings().validated(limits,log:log),"missing") }
     }
     func encoded() throws -> Data {
         let object: [String:Any] = ["version":1,"memoryMB":memoryMB,"cpus":1,
             "screen":screen,"network":network,"fullScreen":fullScreen,"showAtStart":showAtStart]
         return try JSONSerialization.data(withJSONObject:object,options:[.sortedKeys,.prettyPrinted])
     }
-    func save(_ url: URL) throws {
+    @discardableResult func save(_ url: URL, expectedRevision: String? = nil) throws -> String {
+        let lock = url.deletingLastPathComponent().appendingPathComponent(".launch-settings.lock")
+        guard mkdir(lock.path,mode_t(0o700)) == 0 else { throw HostError("Launch settings busy; close and reopen settings before saving") }
+        defer { _ = rmdir(lock.path) }
+        var existing: Data?
+        if let attributes = try? FileManager.default.attributesOfItem(atPath:url.path) {
+            guard attributes[.type] as? FileAttributeType == .typeRegular else { throw HostError("Launch settings must be a regular file") }
+            let file = try FileHandle(forReadingFrom:url)
+            defer { try? file.close() }
+            existing = try file.read(upToCount:65537) ?? Data()
+            guard existing!.count <= 65536 else { throw HostError("Launch settings too large; refusing to overwrite") }
+        }
+        if let expected = expectedRevision, expected != LaunchSettings.revision(existing) {
+            throw HostError("Launch settings changed elsewhere; close and reopen settings before saving")
+        }
+        var object = existing.flatMap { try? JSONSerialization.jsonObject(with:$0) as? [String:Any] } ?? [:]
+        if let version = object["version"] {
+            guard let number = version as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+                  number.stringValue == "1" else { throw HostError("Unsupported launch settings version; refusing to overwrite") }
+        }
+        let known = try JSONSerialization.jsonObject(with:encoded()) as! [String:Any]
+        object.merge(known) { _, updated in updated }
+        let data = try JSONSerialization.data(withJSONObject:object,options:[.sortedKeys,.prettyPrinted])
+        guard data.count <= 65536 else { throw HostError("Launch settings too large") }
         // Same-directory exclusive temporary file + POSIX atomic rename.
         // Never truncate the old file, even if encoding/writing/rename fails.
         let temporary = url.deletingLastPathComponent().appendingPathComponent(".launch-\(UUID().uuidString).tmp")
         let fd = Darwin.open(temporary.path,O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,mode_t(0o600))
         guard fd >= 0 else { throw HostError("Cannot create launch settings temporary file") }
         defer { Darwin.close(fd); _ = unlink(temporary.path) }
-        let data = try encoded()
         try data.withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count {
@@ -121,5 +152,6 @@ struct LaunchSettings: Equatable {
             }
         }
         guard fsync(fd) == 0, rename(temporary.path,url.path) == 0 else { throw HostError("Cannot atomically save launch settings") }
+        return LaunchSettings.revision(data)
     }
 }

@@ -1,17 +1,24 @@
 # AGENTS.md — ojjyOS v3 (working context for AI sessions)
 
-## LATEST (2026-10-30): HW-14 launch-3 started
+## LATEST (2026-10-30): HW-14 shared launch settings verified (steps 2–3 done)
 
-HW-13 is published. Board 046904 owns ojjyOS-v3-hw-14 / hw-14;
-Control board 939692 owns sibling ojjy-control-hw-14 / hw-14.
-Contract/precedence/concurrency design: docs/hw-14-launch-settings.md;
-baseline host suite and Swift/Python parity pass (build/hw-14/).
-Native version-1 file stays the sole store; preserve unknown keys and
-reject stale editor saves. Next: runner + native writer, Control editor,
-cross-tool fixtures/private boots and full regression. Actual Intel screen
-tests exposed boot's hard-coded 1920x1080 choice; bounded fw_cfg preference
-now selects all three saved logical modes, with host-parser tests. User VM was running
-at start; never touch installed disk/settings/app or stop that VM.
+Board 046904 owns ojjyOS-v3-hw-14 / hw-14; Control board 939692 owns
+ojjy-control-hw-14 / hw-14. Native `vmapp/LaunchSettings.swift` + `main.swift`
+now compute raw-byte SHA-256 revisions, enforce cooperative
+`build/.launch-settings.lock` fail-fast directory locks, reject stale saves
+and future/oversized files, preserve unknown JSON keys, reload on settings
+reopen, and verify `window.backingScaleFactor` before publishing window
+screenshots. `scripts/run-qemu.sh` delegates to `scripts/qemu_launch.py`
+(reading `build/launch-settings.json` with validated `OJJY_*` overrides,
+`--dry-run`, 2x HVF vs 1x TCG/Intel scanout, and bounded `opt/ojjyOS/display`
+fw_cfg parsed in `boot/display_mode.h` + `boot/ojjy-boot.c`). Control adds
+guarded `GET|PUT /api/ojjyos/launch-settings` and React/classic Home editors
+(`8b1fac7`..`084f22b`). Verified: zero-warning ARM/Intel/vmapp dev builds,
+host + ASan/UBSan suites, 2149 Swift guards, 43/43 Deno + 16/16 Vitest,
+9/9 cross-tool parity cases, Control↔native menu light/dark round-trip
+(`build/hw-14/final3-control-native/report.json`), QEMU TCG/HVF/Intel smokes,
+and 4-case native VZ launch matrix (`build/hw-14/final3-vz-launch/report.json`).
+Next: data-preserving installed delivery and fast-forwarding both repos.
 
 ## LATEST (2026-10-30): HW-13 complete and safely delivered (launch-2 DONE)
 

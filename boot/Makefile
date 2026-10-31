@@ -37,7 +37,7 @@ OBJ = ojjy-boot.obj
 
 all: $(TARGET)
 
-$(OBJ): ojjy-boot.c efi_minimal.h
+$(OBJ): ojjy-boot.c efi_minimal.h display_mode.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 $(TARGET): $(OBJ)
@@ -89,7 +89,7 @@ OBJ = ojjy-boot.o
 
 all: $(TARGET)
 
-ojjy-boot.o: ojjy-boot.c
+ojjy-boot.o: ojjy-boot.c display_mode.h
 	$(CC) $(CFLAGS) -o $@ $<
 
 ojjy-boot.so: $(OBJ)

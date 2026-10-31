@@ -246,9 +246,9 @@ future work. Stop here, do not start launch-3 today.
 **Steps.**
 - [x] Read HW-12 schema/validation and ojjy Control AGENTS.md; document override — done 2026-10-30 (test: baseline.log, contract-v2.log, runner-intel-{1440,1600}/report.json in build/hw-14/)
   precedence and QEMU scanout vs logical size for HVF/TCG/Intel.
-- [ ] Wire QEMU RAM/screen/network/fullscreen and Control editor to the same
+- [x] Wire QEMU RAM/screen/network/fullscreen and Control editor to the same — done 2026-10-30 (test: scripts/qemu_launch.py, vmapp/LaunchSettings.swift, ojjy-control 8b1fac7; final2-host.log, final2-sanitize.log, final3-vmapp.log 2149 Swift guards)
   file with safe defaults, host clamps and atomic writes; preserve unknown keys.
-- [ ] Test missing/corrupt/partial files, overrides and cross-tool round trips;
+- [x] Test missing/corrupt/partial files, overrides and cross-tool round trips; — done 2026-10-30 (test: 9/9 Swift/Python/Control cross-tool cases, final3-control-native/report.json light/dark captures, final2-runner-{tcg,hvf,intel}/report.json, final3-vz-launch/report.json 4-case matrix)
   live boot QEMU and verify Control changes appear in the native launch menu.
 **Done when.**
 - [ ] No competing settings store; native app, QEMU and Control agree after
@@ -263,13 +263,12 @@ concurrent-writer loss; CPU stays 1 until SMP-01. Never reset user disks.
 **Decision.** Keep HW-12 version 1 and a single build/launch-settings.json;
 see docs/hw-14-launch-settings.md for override/scanout and cooperative
 revision/lock rules. Never modify installed images while a VM is running.
-**Handoff.** 2026-10-30 in ojjyOS-v3-hw-14 / hw-14; separate Control
-worktree ojjy-control-hw-14 / hw-14 owns the editor. Baseline passed;
-contract documents explicit overrides, scanout and lock/revision protocol.
-Runner/native guards, real ARM TCG/HVF and all three Intel screens pass;
-Intel required a bounded fw_cfg boot preference (old GOP code forced
-1920x1080). Next: final combined-source gates and Control/native round trip.
-Installed VM is running; do not modify installed settings/disks/app.
+**Handoff.** 2026-10-30 in ojjyOS-v3-hw-14 / hw-14 and ojjy-control-hw-14 /
+hw-14. Shared QEMU runner, native cooperative lock/revision guards, bounded
+Intel fw_cfg display preference, backing-scale capture guard, and Control
+React/classic editors all pass full unit, sanitizer, 9/9 cross-tool, live
+Control↔native menu light/dark, QEMU TCG/HVF/Intel, and 4-case VZ launch
+gates. Next: preserved-data installed delivery and fast-forwarding both repos.
 
 ### HW-11 — Research: Rosetta for Linux inside ojjyOS
 - Phase: P7 · Size: S · Status: todo

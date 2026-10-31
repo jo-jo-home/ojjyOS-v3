@@ -138,6 +138,9 @@ final class LaunchWindow: NSObject, NSWindowDelegate {
     func capture(_ path: String) throws -> Bool {
         window.displayIfNeeded()
         guard let image = CGWindowListCreateImage(.null,.optionIncludingWindow,CGWindowID(window.windowNumber),.boundsIgnoreFraming) else { return false }
+        let scale = Double(window.backingScaleFactor)
+        guard scale >= 1, abs(Double(image.width)/window.frame.width - scale) < 0.05,
+              abs(Double(image.height)/window.frame.height - scale) < 0.05 else { return false }
         let bitmap = NSBitmapImageRep(cgImage:image)
         let w = bitmap.pixelsWide, h = bitmap.pixelsHigh
         guard w > 10, h > 10 else { return false }

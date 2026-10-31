@@ -212,6 +212,12 @@ bash scripts/run-qemu.sh aarch64     # Apple Silicon: hardware virtualization (H
 <br>
 
 - `OJJY_ACCEL=tcg` uses software emulation instead of HVF.
+- QEMU reads the same `build/launch-settings.json` as the native menu and
+  ojjy Control. `OJJY_MEMORY_MB=4096`, `OJJY_SCREEN=1280x800`,
+  `OJJY_NETWORK=0` and `OJJY_FULLSCREEN=1` override this launch only.
+- Screen settings are logical: VZ/ARM HVF use 2x scanout, ARM TCG/Intel 1x.
+  CPU stays 1; Intel networking is not supported. `--dry-run` prints the
+  effective settings/argv without starting a VM or changing files.
 - `OJJY_RES=3200x1800` fits a 16:9 monitor; `OJJY_FULLSCREEN=1` starts in full screen.
 - `OJJY_DISPLAY=ramfb` switches back to the old 4:3 firmware display.
 - Intel builds: `ARCH=x86_64 bash scripts/build.sh` then `bash scripts/run-qemu.sh x86_64`.

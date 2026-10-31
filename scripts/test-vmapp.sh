@@ -11,4 +11,7 @@ fi
 swiftc -O -warnings-as-errors -D OJJY_VMAPP_TEST "$ROOT/vmapp/LaunchSettings.swift" "$ROOT/vmapp/LaunchWindow.swift" "$ROOT/vmapp/main.swift" "$ROOT/tests/test_vmapp.swift" \
     -framework Virtualization -framework AppKit -o "$OUT/test-vmapp"
 "$OUT/test-vmapp" "$OUT"
+swiftc -O -warnings-as-errors "$ROOT/vmapp/LaunchSettings.swift" "$ROOT/tests/launch_settings_probe.swift" \
+    -framework Virtualization -o "$OUT/launch-settings-probe"
+OJJY_LAUNCH_PROBE="$OUT/launch-settings-probe" python3 -B "$ROOT/tests/test_qemu_launch.py"
 python3 -B -m unittest discover -s "$ROOT/tests" -p test_vz_capture.py

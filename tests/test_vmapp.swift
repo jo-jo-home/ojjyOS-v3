@@ -56,6 +56,36 @@ func runVMHostTests() throws {
     try check(LaunchSettings.decode(try oldReader.readToEnd()!,limits:limits,log:{ _ in }) == custom,"open reader retains complete old JSON after atomic rename")
     try oldReader.close()
     try check(try FileManager.default.contentsOfDirectory(atPath:root.path).filter { $0.hasPrefix(".launch-") }.isEmpty,"temporary files cleaned")
+    try Data("{\"future\":{\"nested\":[1,true]},\"memoryMB\":4096}".utf8).write(to:settingsFile)
+    let snapshot = LaunchSettings.snapshot(settingsFile,limits:limits,log:{ _ in })
+    let savedRevision = try custom.save(settingsFile,expectedRevision:snapshot.revision)
+    let savedObject = try JSONSerialization.jsonObject(with:Data(contentsOf:settingsFile)) as! [String:Any]
+    try check(savedObject["future"] is [String:Any],"unknown nested fields survive native save")
+    try check(savedRevision == LaunchSettings.snapshot(settingsFile,limits:limits,log:{ _ in }).revision,"saved revision matches bytes")
+    var staleRejected = false
+    do { try defaults.save(settingsFile,expectedRevision:snapshot.revision) } catch { staleRejected = true }
+    try check(staleRejected && LaunchSettings.load(settingsFile,limits:limits,log:{ _ in }) == custom,"stale editor cannot overwrite newer settings")
+    let lock = root.appendingPathComponent(".launch-settings.lock")
+    try FileManager.default.createDirectory(at:lock,withIntermediateDirectories:false)
+    var busyRejected = false
+    do { try defaults.save(settingsFile) } catch { busyRejected = true }
+    try check(busyRejected && FileManager.default.fileExists(atPath:lock.path),"busy lock refused, never stolen")
+    try FileManager.default.removeItem(at:lock)
+    for protected in ["{\"version\":2,\"future\":true}", "{\"version\":true}", String(repeating:" ",count:65537)] {
+        let original = Data(protected.utf8)
+        try original.write(to:settingsFile)
+        var rejected = false
+        do { try defaults.save(settingsFile) } catch { rejected = true }
+        try check(rejected && (try Data(contentsOf:settingsFile)) == original,"future/oversized file never overwritten")
+        try check(!FileManager.default.fileExists(atPath:lock.path),"failed save releases lock")
+    }
+    try FileManager.default.removeItem(at:settingsFile)
+    let settingsSymlink = root.appendingPathComponent("settings-symlink")
+    try FileManager.default.createSymbolicLink(at:settingsSymlink,withDestinationURL:root.appendingPathComponent("absent"))
+    var linkRejected = false
+    do { try defaults.save(settingsSymlink) } catch { linkRejected = true }
+    try check(linkRejected,"symlink target refused")
+    try defaults.save(settingsFile,expectedRevision:"missing")
     let directoryTarget = root.appendingPathComponent("a-directory")
     try FileManager.default.createDirectory(at:directoryTarget,withIntermediateDirectories:false)
     var saveRejected = false

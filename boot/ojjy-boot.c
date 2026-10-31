@@ -18,6 +18,19 @@
 #include <efi.h>
 #include <efilib.h>
 #endif
+#ifdef __x86_64__
+#include "display_mode.h"
+static void BootDisplaySelect(unsigned short selector)
+{
+    __asm__ volatile("outw %0, %1" : : "a"(selector), "Nd"((unsigned short)0x510));
+}
+static unsigned char BootDisplayRead(void)
+{
+    unsigned char value;
+    __asm__ volatile("inb %1, %0" : "=a"(value) : "Nd"((unsigned short)0x511));
+    return value;
+}
+#endif
 
 /* Boot information passed to kernel */
 typedef struct {
@@ -263,6 +276,13 @@ SetupFramebuffer(BootInfo *info)
     UINTN num_modes, best_mode;
     UINT32 best_width = 0;
     BOOLEAN have_best = FALSE;
+    unsigned preferred_width = 0, preferred_height = 0;
+#ifdef __x86_64__
+    unsigned cpuid_eax = 1, cpuid_ebx, cpuid_ecx = 0, cpuid_edx;
+    __asm__ volatile("cpuid" : "+a"(cpuid_eax), "=b"(cpuid_ebx), "+c"(cpuid_ecx), "=d"(cpuid_edx));
+    if (cpuid_ecx & (1u << 31))
+        boot_display_config(BootDisplaySelect, BootDisplayRead, &preferred_width, &preferred_height);
+#endif
 
     /* Locate GOP */
     status = BS->LocateProtocol(&gop_guid, NULL, (void **)&gop);
@@ -279,6 +299,22 @@ SetupFramebuffer(BootInfo *info)
 
     /* Find best mode (prefer 1920x1080, otherwise largest available) */
     num_modes = gop->Mode->MaxMode;
+
+    if (preferred_width && preferred_height) {
+        for (UINTN index = 0; index < num_modes; ++index) {
+            status = gop->QueryMode(gop, index, &mode_info_size, &mode_info);
+            if (EFI_ERROR(status)) continue;
+            BOOLEAN matches = mode_info->PixelFormat == PixelBlueGreenRedReserved8BitPerColor &&
+                mode_info->HorizontalResolution == preferred_width &&
+                mode_info->VerticalResolution == preferred_height;
+            BS->FreePool(mode_info);
+            if (matches) {
+                best_mode = index;
+                have_best = TRUE;
+                goto mode_selected;
+            }
+        }
+    }
 
     for (UINTN i = 0; i < num_modes; i++) {
         status = gop->QueryMode(gop, i, &mode_info_size, &mode_info);
@@ -310,6 +346,7 @@ SetupFramebuffer(BootInfo *info)
         BS->FreePool(mode_info);
     }
 
+mode_selected:
     /* No usable mode at all? */
     if (!have_best) {
         return EFI_UNSUPPORTED;

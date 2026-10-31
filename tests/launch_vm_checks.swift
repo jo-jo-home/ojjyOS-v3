@@ -45,6 +45,14 @@ func beginLaunchIntegration(_ host: VMHost) {
                 let panel = host.launchWindow!
                 try check(panel.primary.title == "Save" && panel.notice.stringValue == "Changes apply after you shut down ojjyOS","real running save-only state")
                 guard try panel.capture(output.appendingPathComponent("running-settings.png").path) else { return }
+                var external = active
+                external.memoryMB = 6144
+                let externalRevision = try external.save(host.options.settingsURL,expectedRevision:host.settingsRevision)
+                panel.primary.performClick(nil)
+                try check(panel.window.isVisible && panel.notice.stringValue.contains("changed elsewhere"),"stale native menu cannot overwrite external writer")
+                try check(LaunchSettings.snapshot(host.options.settingsURL,limits:host.limits,log:{ _ in }).revision == externalRevision,"stale save preserves external bytes")
+                host.launchSettings()
+                try check(panel.selection().memoryMB == 6144,"reopening menu reloads external settings")
                 panel.memory.selectItem(withTag:4096); panel.screen.selectItem(at:0)
                 panel.network.state = active.network ? .off : .on
                 panel.primary.performClick(nil)

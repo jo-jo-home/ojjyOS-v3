@@ -151,6 +151,7 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     var held: Set<Int> = []
     let limits = LaunchLimits()
     var settings = LaunchSettings()
+    var settingsRevision = "missing"
     var activeSettings = LaunchSettings()
     var launchWindow: LaunchWindow?
     var isActive: Bool { machine != nil && machine?.state != .stopped && machine?.state != .error }
@@ -174,7 +175,8 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     }
     init(_ options: Options) { self.options = options }
     func applicationDidFinishLaunching(_ notification: Notification) {
-        settings = LaunchSettings.load(options.settingsURL,limits:limits,log:logSettings)
+        let snapshot = LaunchSettings.snapshot(options.settingsURL,limits:limits,log:logSettings)
+        settings = snapshot.settings; settingsRevision = snapshot.revision
         if let appearance = options.appearance { NSApp.appearance = NSAppearance(named:appearance == "dark" ? .darkAqua : .aqua) }
         makeMenus()
         window = NSWindow(contentRect: NSRect(x:0,y:0,width:1120,height:700),
@@ -281,12 +283,14 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
         }
     }
     @objc func launchSettings() {
+        let snapshot = LaunchSettings.snapshot(options.settingsURL,limits:limits,log:logSettings)
+        settings = snapshot.settings; settingsRevision = snapshot.revision
         if launchWindow == nil {
             let panel = LaunchWindow(limits:limits)
             panel.isActive = { [weak self] in self?.isActive ?? false }
             panel.onApply = { [weak self] selected in
                 guard let self = self else { return }
-                try selected.save(self.options.settingsURL)
+                self.settingsRevision = try selected.save(self.options.settingsURL,expectedRevision:self.settingsRevision)
                 self.settings = selected
                 self.logSettings("Launch settings saved; changes apply on next start")
                 if !self.isActive { try self.start() }
@@ -435,7 +439,9 @@ final class VMHost: NSObject, NSApplicationDelegate, NSWindowDelegate, VZVirtual
     func screenshot(_ path: String) throws -> Bool {
         guard let image = CGWindowListCreateImage(.null,.optionIncludingWindow,CGWindowID(window.windowNumber),.boundsIgnoreFraming) else { return false }
         let rect = window.convertToScreen(view.convert(view.bounds,to:nil))
+        let scale = Double(window.backingScaleFactor)
         let sx = Double(image.width)/window.frame.width, sy = Double(image.height)/window.frame.height
+        guard scale >= 1, abs(sx - scale) < 0.05, abs(sy - scale) < 0.05 else { return false }
         let crop = CGRect(x:(rect.minX-window.frame.minX)*sx,y:(window.frame.maxY-rect.maxY)*sy,width:rect.width*sx,height:rect.height*sy)
         guard let content = image.cropping(to:crop) else { return false }
         let bitmap = NSBitmapImageRep(cgImage:content)
